@@ -21,7 +21,8 @@ registrable_keys = [
 ]
 
 [profile.capabilities]
-"http://tizen.org/feature/platform.version" = "10.0"
+# Major.Minor.Patch (systeminfo_capability_keys.html).
+"http://tizen.org/feature/platform.version" = "10.0.0"
 "http://tizen.org/feature/profile" = "TV"
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
@@ -37,6 +38,11 @@ dotsPerInch = 40
 physicalWidth = 1210
 physicalHeight = 680
 language = "en_US"
-country = "US"
+# Both LANGUAGE_REGION (systeminfo.html#SystemInfoLocale).
+country = "en_US"
+networkType = "ETHERNET"
+cpuLoad = 0.1
+panelWidth = 3840
+panelHeight = 2160
 totalMemory = 3221225472
 availableMemory = 1610612736

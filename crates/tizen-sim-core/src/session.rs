@@ -16,6 +16,7 @@ use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::shim;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -57,10 +58,11 @@ pub enum KeyOutcome {
     },
 }
 
-/// A keyboard key going down or up.
+/// A keyboard key going down, auto-repeating while held, or going up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
     Down,
+    Repeat,
     Up,
 }
 
@@ -85,6 +87,10 @@ pub enum Lifecycle {
     AppLoaded {
         url: String,
     },
+    /// The App went to the background (`Application.hide()`).
+    Hidden,
+    /// The App came back to the foreground (`Session::resume`).
+    Shown,
     Failed {
         error: String,
     },
@@ -103,7 +109,8 @@ pub enum ExitReason {
     FailedToStart,
     /// The App ended itself (`tizen.application.getCurrentApplication().exit()`).
     AppExited,
-    /// The Back key was held, which makes a TV terminate the App.
+    /// The Exit key was pressed or the Back key held, which makes a TV
+    /// terminate the App.
     TerminatedByRemote,
 }
 
@@ -147,6 +154,8 @@ struct Inner {
     status: watch::Sender<Status>,
     /// Set once the App has loaded.
     loaded: OnceLock<Loaded>,
+    /// Ends the running App with a reason; set once the Bridge is up.
+    app_exit: OnceLock<mpsc::UnboundedSender<ExitReason>>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
 }
@@ -156,6 +165,10 @@ struct Loaded {
     cdp: Arc<Cdp>,
     profile: &'static VersionProfile,
     lenient: bool,
+    /// Whether the App keeps running while hidden (background support).
+    runs_in_background: bool,
+    /// Whether the App is in the background.
+    hidden: AtomicBool,
 }
 
 impl Session {
@@ -165,6 +178,7 @@ impl Session {
             log: EventLog::new(),
             status: watch::channel(Status::Starting).0,
             loaded: OnceLock::new(),
+            app_exit: OnceLock::new(),
             stop: Mutex::new(Some(stop_tx)),
             task: tokio::sync::Mutex::new(None),
         });
@@ -215,11 +229,26 @@ impl Session {
         action: KeyAction,
     ) -> Result<(), SessionError> {
         let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
-        let event_type = match action {
-            KeyAction::Down => "rawKeyDown",
-            KeyAction::Up => "keyUp",
+        let (event_type, repeat) = match action {
+            KeyAction::Down => ("rawKeyDown", false),
+            KeyAction::Repeat => ("rawKeyDown", true),
+            KeyAction::Up => ("keyUp", false),
         };
-        dispatch_key(&loaded.cdp, event_type, key.0, key.dom_key().as_deref()).await
+        dispatch_key(
+            &loaded.cdp,
+            event_type,
+            key.0,
+            key.dom_key().as_deref(),
+            repeat,
+        )
+        .await
+    }
+
+    /// Brings a hidden App back to the foreground, as returning to it on a TV
+    /// does: execution resumes and `visibilitychange` fires. Does nothing if
+    /// the App isn't hidden.
+    pub async fn resume(&self) -> Result<(), SessionError> {
+        self.inner.resume().await
     }
 
     /// Stops the Session: closes the Engine and every server. Returns once
@@ -277,6 +306,7 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
             ExitReason::Stopped
         }
         Some(reason) = running.app_exit.recv() => {
+            inner.hide_before_exit().await;
             close_engine(&mut running).await;
             reason
         }
@@ -305,6 +335,14 @@ impl Inner {
                 loaded.profile.version
             ));
         }
+        // The platform closes the App and shows the TV channel screen; the App
+        // never gets the key, registered or not (Samsung's development
+        // checklist, common.html CO-US-04 and CO-GE-07).
+        if key.name == EXIT_KEY {
+            drop_key("the platform terminates the App instead".into())?;
+            self.terminate(ExitReason::TerminatedByRemote);
+            return Ok(());
+        }
         if !key.mandatory {
             // The page holds the registrations (see the tvinputdevice Shim).
             let registered = loaded
@@ -330,13 +368,84 @@ impl Inner {
         }
 
         let dom_key = key.dom_key.as_deref();
-        dispatch_key(&loaded.cdp, "rawKeyDown", key.code, dom_key).await?;
-        dispatch_key(&loaded.cdp, "keyUp", key.code, dom_key).await?;
+        dispatch_key(&loaded.cdp, "rawKeyDown", key.code, dom_key, false).await?;
+        dispatch_key(&loaded.cdp, "keyUp", key.code, dom_key, false).await?;
         self.log.publish(SessionEvent::RemoteKey {
             key: name.to_string(),
             outcome: KeyOutcome::Delivered,
         });
         Ok(())
+    }
+
+    /// Sends the App to the background (TV guides/fundamentals/multitasking.html;
+    /// application.html#Application::hide). Minimizing the Engine window makes
+    /// `document.hidden` true and fires `visibilitychange`; then, unless the
+    /// App has background support, freezing the page pauses JavaScript and
+    /// rendering, as on a TV (TD guides/concepts/web-runtime.md).
+    async fn hide(&self) -> Result<(), SessionError> {
+        let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
+        if !loaded.go_to_background().await {
+            return Ok(());
+        }
+        if !loaded.runs_in_background {
+            // Old Engines lack the call; there the App only looks hidden.
+            if let Err(error) = loaded
+                .cdp
+                .call("Page.setWebLifecycleState", json!({ "state": "frozen" }))
+                .await
+            {
+                tracing::warn!(%error, "could not pause the hidden App");
+            }
+        }
+        self.log.publish(SessionEvent::Lifecycle(Lifecycle::Hidden));
+        Ok(())
+    }
+
+    async fn resume(&self) -> Result<(), SessionError> {
+        let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
+        if !loaded.hidden.swap(false, Ordering::SeqCst) {
+            return Ok(());
+        }
+        if !loaded.runs_in_background {
+            let _ = loaded
+                .cdp
+                .call("Page.setWebLifecycleState", json!({ "state": "active" }))
+                .await;
+        }
+        set_window_state(&loaded.cdp, "normal").await;
+        self.log.publish(SessionEvent::Lifecycle(Lifecycle::Shown));
+        Ok(())
+    }
+
+    /// `visibilitychange` fires when the App exits (TV
+    /// guides/fundamentals/multitasking.html), so hide a visible App and give
+    /// its handlers the chance to run before the Engine closes.
+    async fn hide_before_exit(&self) {
+        let Some(loaded) = self.loaded.get() else {
+            return;
+        };
+        if !loaded.go_to_background().await {
+            return;
+        }
+        // The event has been dispatched once the page reports itself hidden.
+        for _ in 0..20 {
+            match tokio::time::timeout(
+                Duration::from_millis(500),
+                loaded.cdp.evaluate("document.hidden"),
+            )
+            .await
+            {
+                Ok(Ok(Value::Bool(true))) | Ok(Err(_)) | Err(_) => return,
+                Ok(Ok(_)) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        }
+    }
+
+    /// Ends the running App, as the platform does.
+    fn terminate(&self, reason: ExitReason) {
+        if let Some(app_exit) = self.app_exit.get() {
+            let _ = app_exit.send(reason);
+        }
     }
 
     fn finish(&self, reason: ExitReason) {
@@ -352,6 +461,8 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         Some(version) => VersionProfile::find(version).map_err(|e| e.to_string())?,
         None => VersionProfile::latest(),
     };
+    app.check_installable_on(profile)
+        .map_err(|e| e.to_string())?;
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::Starting {
@@ -368,7 +479,8 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
 
     let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
     let (app_exit_tx, app_exit) = mpsc::unbounded_channel();
-    tokio::spawn(handle_bridge(bridge_rx, inner.clone(), app_exit_tx));
+    let _ = inner.app_exit.set(app_exit_tx);
+    tokio::spawn(handle_bridge(bridge_rx, inner.clone()));
     let shims = ShimSetup {
         data: shim::session_data(&app, profile, config.lenient, &config.key_map),
         token: bridge_token()?,
@@ -429,6 +541,8 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         cdp: cdp.clone(),
         profile,
         lenient: config.lenient,
+        runs_in_background: app.runs_in_background(),
+        hidden: AtomicBool::new(false),
     });
     inner
         .log
@@ -443,11 +557,7 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
 }
 
 /// Acts on what the Shims send over the Bridge.
-async fn handle_bridge(
-    mut messages: mpsc::UnboundedReceiver<BridgeMessage>,
-    inner: Arc<Inner>,
-    app_exit: mpsc::UnboundedSender<ExitReason>,
-) {
+async fn handle_bridge(mut messages: mpsc::UnboundedReceiver<BridgeMessage>, inner: Arc<Inner>) {
     while let Some(message) = messages.recv().await {
         match message.method.as_str() {
             "diagnostic" => {
@@ -459,13 +569,14 @@ async fn handle_bridge(
                 tracing::warn!(code = %diagnostic.code, "{}", diagnostic.message);
                 inner.log.publish(SessionEvent::Diagnostic(diagnostic));
             }
-            "application.exit" => {
-                let _ = app_exit.send(ExitReason::AppExited);
+            "application.exit" => inner.terminate(ExitReason::AppExited),
+            "application.hide" => {
+                if let Err(error) = inner.hide().await {
+                    tracing::warn!(%error, "could not hide the App");
+                }
             }
             // The Back key was held: the platform terminates the App.
-            "application.terminate" => {
-                let _ = app_exit.send(ExitReason::TerminatedByRemote);
-            }
+            "application.terminate" => inner.terminate(ExitReason::TerminatedByRemote),
             // A keyboard key the Shim mapped to a Remote Key.
             "keys.press" => {
                 let key = message.params["key"].as_str().unwrap_or_default();
@@ -542,6 +653,40 @@ fn console_text(args: &Value) -> String {
         .unwrap_or_default()
 }
 
+impl Loaded {
+    /// Marks the App hidden and minimizes the Engine window, which makes
+    /// `document.hidden` true and fires `visibilitychange`. False if it was
+    /// already hidden.
+    async fn go_to_background(&self) -> bool {
+        if self.hidden.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        set_window_state(&self.cdp, "minimized").await;
+        true
+    }
+}
+
+/// Minimizes or restores the Engine window. Engines without the Browser
+/// domain keep their window as it is.
+async fn set_window_state(cdp: &Cdp, state: &str) {
+    let window = match cdp.call("Browser.getWindowForTarget", json!({})).await {
+        Ok(window) => window["windowId"].clone(),
+        Err(error) => {
+            tracing::warn!(%error, "could not find the Engine window");
+            return;
+        }
+    };
+    if let Err(error) = cdp
+        .call(
+            "Browser.setWindowBounds",
+            json!({ "windowId": window, "bounds": { "windowState": state } }),
+        )
+        .await
+    {
+        tracing::warn!(%error, state, "could not change the Engine window state");
+    }
+}
+
 async fn close_engine(running: &mut Running) {
     // Ask politely so the Engine flushes its profile, then make sure.
     let _ = tokio::time::timeout(
@@ -572,6 +717,9 @@ fn sanitize(id: &str) -> String {
         })
         .collect()
 }
+
+/// The Remote Key that makes the platform close the App.
+const EXIT_KEY: &str = "Exit";
 
 const HISTORY_LIMIT: usize = 10_000;
 
@@ -635,11 +783,13 @@ async fn dispatch_key(
     event_type: &str,
     key_code: u16,
     dom_key: Option<&str>,
+    auto_repeat: bool,
 ) -> Result<(), SessionError> {
     let mut params = json!({
         "type": event_type,
         "windowsVirtualKeyCode": key_code,
         "nativeVirtualKeyCode": key_code,
+        "autoRepeat": auto_repeat,
     });
     if let Some(dom_key) = dom_key {
         params["key"] = Value::String(dom_key.to_string());

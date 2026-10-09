@@ -5,8 +5,12 @@
     <title>Remote keys fixture</title>
     <script>
         window.keyLog = [];
+        window.keyUpLog = [];
         window.addEventListener('keydown', function (e) {
             window.keyLog.push(e.keyCode);
+        });
+        window.addEventListener('keyup', function (e) {
+            window.keyUpLog.push(e.keyCode);
         });
     </script>
 </head>

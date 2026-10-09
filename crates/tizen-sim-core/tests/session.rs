@@ -167,3 +167,15 @@ async fn invalid_config_fails_the_session_with_the_problem_named() {
     })
     .await;
 }
+
+/// Installation fails when the TV's Tizen version is lower than the App's
+/// `required_version` (TD guides/concepts/web-runtime.md).
+#[tokio::test]
+async fn an_app_requiring_a_newer_tizen_fails_to_start() {
+    let t = start("required-version-too-high");
+    let err = t.session.wait_until_loaded().await.unwrap_err();
+    let msg = err.to_string();
+    for word in ["required_version", "99.0", "10.0"] {
+        assert!(msg.contains(word), "`{word}` missing from: {msg}");
+    }
+}

@@ -106,13 +106,15 @@ async fn run(config: SessionConfig) -> Result<()> {
                             println!("  DevTools endpoint: {debugger_url}");
                         }
                         Lifecycle::AppLoaded { url } => println!("App loaded: {url} (Ctrl+C to stop)"),
+                        Lifecycle::Hidden => println!("The App is hidden (in the background)."),
+                        Lifecycle::Shown => println!("The App is back in the foreground."),
                         Lifecycle::Failed { error } => bail!(error),
                         Lifecycle::Exited { reason } => {
                             match reason {
                                 ExitReason::Stopped => println!("Stopped."),
                                 ExitReason::EngineClosed => println!("The Engine window was closed."),
                                 ExitReason::AppExited => println!("The App exited."),
-                                ExitReason::TerminatedByRemote => println!("Back was held: the App was terminated, as on a TV."),
+                                ExitReason::TerminatedByRemote => println!("Exit was pressed or Back held: the App was terminated, as on a TV."),
                                 ExitReason::FailedToStart => {}
                             }
                             return Ok(());
