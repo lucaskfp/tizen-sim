@@ -1,0 +1,6 @@
+# Version Profiles: one entry per Tizen TV release.
+# Engine milestones: https://developer.samsung.com/smarttv/develop/specifications/web-engine-specifications.html
+
+[[profile]]
+version = "10.0"
+milestone = 130

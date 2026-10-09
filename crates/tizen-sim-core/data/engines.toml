@@ -1,0 +1,19 @@
+# Engine Manifest: where to get the Engine for each Version Profile on each
+# platform. `sha256` is of the downloaded archive; `executable` is relative to
+# the archive root.
+
+[[engine]]
+profile = "10.0"
+milestone = 130
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chrome-for-testing-public/130.0.6723.116/win64/chrome-win64.zip"
+sha256 = "d9909d776ac4e8d381ed2f619826dd7278d003a2fd82ffd9e3777c0b69b1a040"
+executable = "chrome-win64/chrome.exe"
+
+[[engine]]
+profile = "10.0"
+milestone = 130
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chrome-for-testing-public/130.0.6723.116/linux64/chrome-linux64.zip"
+sha256 = "3e71b99204dc191a8692048526a4ad41803b8b9035ea4ef14eb9b1d37331e1f1"
+executable = "chrome-linux64/chrome"

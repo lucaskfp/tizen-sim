@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets">
+    <tizen:application id="Fixture003.NoEntry" package="Fixture003" required_version="2.3"/>
+    <content src="main.html"/>
+</widget>
