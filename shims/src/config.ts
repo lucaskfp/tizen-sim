@@ -11,11 +11,19 @@ interface AppConfig {
   installedAt: number;
 }
 
+interface RemoteKeyConfig {
+  name: string;
+  code: number;
+  mandatory: boolean;
+}
+
 interface ProfileConfig {
   version: string;
   milestone: number;
   capabilities: { [key: string]: boolean | number | string };
   device: { [key: string]: any };
+  // Every Remote Key these TVs have, Mandatory and Registrable.
+  remoteKeys: RemoteKeyConfig[];
 }
 
 interface SimConfig {
@@ -23,6 +31,10 @@ interface SimConfig {
   lenient: boolean;
   app: AppConfig;
   profile: ProfileConfig;
+  // Keyboard keyCode -> Remote Key name, for keys with no meaning on a TV.
+  keyMap: { [keyCode: string]: string };
+  // Hooks the Host calls through CDP; installed by the Shims.
+  keys?: { isRegistered: (name: string) => boolean };
 }
 
 var config: SimConfig = (window as any).__TIZEN_SIM__;

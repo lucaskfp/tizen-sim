@@ -181,10 +181,203 @@ var application = {
         }, 0);
     },
 };
+var TV_INPUT_PRIVILEGE = "http://tizen.org/privilege/tv.inputdevice";
+var registeredKeys = {};
+function findRemoteKey(name) {
+    var keys = config.profile.remoteKeys;
+    for (var i = 0; i < keys.length; i++) {
+        if (keys[i].name === name) {
+            return keys[i];
+        }
+    }
+    return null;
+}
+function findRemoteKeyByCode(code) {
+    var keys = config.profile.remoteKeys;
+    for (var i = 0; i < keys.length; i++) {
+        if (keys[i].code === code) {
+            return keys[i];
+        }
+    }
+    return null;
+}
+function isKeyRegistered(name) {
+    return registeredKeys.hasOwnProperty(name);
+}
+function requireRegistrable(name) {
+    var key = findRemoteKey(name);
+    if (!key) {
+        throw new WebAPIException("InvalidValuesError", "Unsupported key: " + name);
+    }
+    if (key.mandatory) {
+        throw new WebAPIException("InvalidValuesError", name + " is a Mandatory Key and can't be registered");
+    }
+}
+function warnIfExit(name) {
+    if (name === "Exit") {
+        raiseDiagnostic("exit-key-registered", "Registering Exit captures the Back key's long press, which on a TV terminates the App; " +
+            "Samsung's guidelines say: do not register the Return/Exit key long-press.");
+    }
+}
+function keyInfo(key) {
+    return { name: key.name, code: key.code };
+}
+function changeRegistration(api, names, register, successCallback, errorCallback) {
+    requirePrivilege(TV_INPUT_PRIVILEGE, api);
+    try {
+        for (var i = 0; i < names.length; i++) {
+            requireRegistrable(names[i]);
+        }
+    }
+    catch (e) {
+        var error = e;
+        failLater(errorCallback, error.name, error.message);
+        return;
+    }
+    for (var j = 0; j < names.length; j++) {
+        if (register) {
+            warnIfExit(names[j]);
+            registeredKeys[names[j]] = true;
+        }
+        else {
+            delete registeredKeys[names[j]];
+        }
+    }
+    if (typeof successCallback === "function") {
+        setTimeout(successCallback, 0);
+    }
+}
+var tvinputdevice = {
+    getSupportedKeys: function () {
+        requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.getSupportedKeys");
+        var supported = [];
+        var keys = config.profile.remoteKeys;
+        for (var i = 0; i < keys.length; i++) {
+            if (!keys[i].mandatory) {
+                supported.push(keyInfo(keys[i]));
+            }
+        }
+        return supported;
+    },
+    getKey: function (name) {
+        requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.getKey");
+        var key = findRemoteKey(name);
+        return key && !key.mandatory ? keyInfo(key) : null;
+    },
+    registerKey: function (name) {
+        requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.registerKey");
+        requireRegistrable(name);
+        warnIfExit(name);
+        registeredKeys[name] = true;
+    },
+    unregisterKey: function (name) {
+        requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.unregisterKey");
+        requireRegistrable(name);
+        delete registeredKeys[name];
+    },
+    registerKeyBatch: function (names, successCallback, errorCallback) {
+        changeRegistration("tizen.tvinputdevice.registerKeyBatch", names, true, successCallback, errorCallback);
+    },
+    unregisterKeyBatch: function (names, successCallback, errorCallback) {
+        changeRegistration("tizen.tvinputdevice.unregisterKeyBatch", names, false, successCallback, errorCallback);
+    },
+};
+config.keys = { isRegistered: isKeyRegistered };
+var LONG_PRESS_MS = 1000;
+var TERMINATE = "";
+var LONG_PRESS = {
+    Back: TERMINATE,
+    MediaRewind: "MediaTrackPrevious",
+    MediaFastForward: "MediaTrackNext",
+};
+var held = {
+    keyCode: -1,
+    timer: 0,
+    sentLongPress: false,
+};
+function pressRemoteKey(name) {
+    bridge.notify("keys.press", { key: name });
+}
+function swallow(e) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+}
+function isTextField(target) {
+    var element = target;
+    if (!element || !element.tagName) {
+        return false;
+    }
+    var tag = element.tagName.toLowerCase();
+    return tag === "input" || tag === "textarea" || element.isContentEditable;
+}
+function onMappedKeyDown(e, mapped) {
+    if (!LONG_PRESS.hasOwnProperty(mapped)) {
+        if (!e.repeat) {
+            pressRemoteKey(mapped);
+        }
+        return;
+    }
+    var longPress = LONG_PRESS[mapped];
+    if (held.keyCode === -1) {
+        held.keyCode = e.keyCode;
+        held.sentLongPress = false;
+        held.timer = window.setTimeout(function () {
+            held.sentLongPress = true;
+            if (longPress === TERMINATE) {
+                bridge.notify("application.terminate");
+            }
+            else {
+                pressRemoteKey(longPress);
+            }
+        }, LONG_PRESS_MS);
+    }
+}
+function onKeyDown(e) {
+    if (e.isTrusted === false) {
+        return;
+    }
+    var mapped = config.keyMap[String(e.keyCode)];
+    if (mapped) {
+        swallow(e);
+        onMappedKeyDown(e, mapped);
+        return;
+    }
+    var key = findRemoteKeyByCode(e.keyCode);
+    if (!key || key.mandatory || isKeyRegistered(key.name) || e.repeat || isTextField(e.target)) {
+        return;
+    }
+    var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
+    if (config.lenient) {
+        raiseDiagnostic("key-not-registered", reason + "; delivered anyway in Lenient Mode, a TV would drop it");
+        return;
+    }
+    swallow(e);
+    bridge.notify("keys.dropped", { key: key.name, reason: reason });
+}
+function onKeyUp(e) {
+    if (e.isTrusted === false) {
+        return;
+    }
+    var mapped = config.keyMap[String(e.keyCode)];
+    if (!mapped) {
+        return;
+    }
+    swallow(e);
+    if (e.keyCode === held.keyCode) {
+        window.clearTimeout(held.timer);
+        if (!held.sentLongPress) {
+            pressRemoteKey(mapped);
+        }
+        held.keyCode = -1;
+    }
+}
+window.addEventListener("keydown", onKeyDown, true);
+window.addEventListener("keyup", onKeyUp, true);
 window.tizen = {
     WebAPIException: WebAPIException,
     WebAPIError: WebAPIError,
     application: application,
     systeminfo: systeminfo,
+    tvinputdevice: tvinputdevice,
 };
 })();

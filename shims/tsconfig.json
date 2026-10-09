@@ -19,6 +19,8 @@
     "src/privileges.ts",
     "src/systeminfo.ts",
     "src/application.ts",
+    "src/tvinputdevice.ts",
+    "src/keyboard.ts",
     "src/install.ts"
   ]
 }

@@ -8,6 +8,17 @@
 [[profile]]
 version = "10.0"
 milestone = 130
+# Registrable Keys these TVs support; Mandatory Keys are always available.
+registrable_keys = [
+  "Exit", "ColorF0Red", "ColorF1Green", "ColorF2Yellow", "ColorF3Blue",
+  "MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "MediaRewind",
+  "MediaFastForward", "MediaRecord", "MediaTrackPrevious", "MediaTrackNext",
+  "ChannelUp", "ChannelDown", "VolumeUp", "VolumeDown", "VolumeMute",
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "Minus",
+  "ChannelList", "PreviousChannel", "Menu", "Tools", "Info", "Source",
+  "Caption", "E-Manual", "3D", "Extra", "PictureSize", "Soccer", "Teletext",
+  "MTS", "Search", "Guide",
+]
 
 [profile.capabilities]
 "http://tizen.org/feature/platform.version" = "10.0"

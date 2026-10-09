@@ -3,6 +3,7 @@
 
 use crate::app::App;
 use crate::profile::VersionProfile;
+use crate::remote_keys::{KeyMap, RemoteKey};
 use serde_json::{Value, json};
 
 /// The compiled Shims (`npm run build` in `shims/`), ES5 so they run on M47.
@@ -15,9 +16,15 @@ pub const BRIDGE_PATH: &str = "/__tizen-sim/bridge";
 
 /// The Session data the Shims need, minus the Bridge address, which only the
 /// dev server knows.
-pub fn session_data(app: &App, profile: &VersionProfile, lenient: bool) -> Value {
+pub fn session_data(app: &App, profile: &VersionProfile, lenient: bool, key_map: &KeyMap) -> Value {
+    let remote_keys: Vec<Value> = RemoteKey::all()
+        .iter()
+        .filter(|key| profile.supports_key(key))
+        .map(|key| json!({ "name": key.name, "code": key.code, "mandatory": key.mandatory }))
+        .collect();
     json!({
         "lenient": lenient,
+        "keyMap": key_map.to_json(),
         "app": {
             "id": app.id(),
             "packageId": app.package(),
@@ -31,6 +38,7 @@ pub fn session_data(app: &App, profile: &VersionProfile, lenient: bool) -> Value
             "milestone": profile.milestone,
             "capabilities": profile.capabilities,
             "device": profile.device,
+            "remoteKeys": remote_keys,
         },
     })
 }

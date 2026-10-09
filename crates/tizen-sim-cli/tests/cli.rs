@@ -93,3 +93,20 @@ fn invalid_app_fails_with_the_problem_named() {
         "{stderr}"
     );
 }
+
+#[test]
+fn map_key_rejects_unknown_keys() {
+    for (mapping, expected) in [
+        ("F5=NotAKey", "unknown Remote Key `NotAKey`"),
+        ("Hyper=Back", "unknown keyboard key `Hyper`"),
+        ("F5", "expected KEY=REMOTE_KEY"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
+            .args(["run", &fixture("hello"), "--headless", "--map-key", mapping])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{mapping} was accepted");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{mapping}: {stderr}");
+    }
+}

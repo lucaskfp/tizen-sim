@@ -9,3 +9,4 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `missing-entry-point`: `<content src>` names a file that doesn't exist.
 - `tizen-apis`: an App that declares no privileges, for the Tizen API Shims. Its first script records whether `tizen` already existed.
 - `tizen-apis-privileged`: the same App, declaring `http://tizen.org/privilege/application.info`.
+- `remote-keys`: declares `tv.inputdevice` and records every keydown `keyCode` in `window.keyLog`.
