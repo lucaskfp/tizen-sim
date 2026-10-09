@@ -12,6 +12,7 @@ use crate::engine::{
 };
 use crate::home::Home;
 use crate::profile::VersionProfile;
+use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::shim;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -29,6 +30,8 @@ pub struct SessionConfig {
     /// Lenient Mode: allow calls a TV would refuse (undeclared privileges),
     /// still raising a Diagnostic for each.
     pub lenient: bool,
+    /// Which keyboard keys act as which Remote Keys in the Engine window.
+    pub key_map: KeyMap,
     pub home: Home,
 }
 
@@ -38,6 +41,27 @@ pub enum SessionEvent {
     Console(ConsoleMessage),
     EngineDownload(DownloadProgress),
     Diagnostic(Diagnostic),
+    /// A Remote Key press and what became of it.
+    RemoteKey {
+        key: String,
+        outcome: KeyOutcome,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyOutcome {
+    Delivered,
+    /// Not delivered, as a TV wouldn't; `reason` says why.
+    Dropped {
+        reason: String,
+    },
+}
+
+/// A keyboard key going down or up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    Down,
+    Up,
 }
 
 /// Something the App did that would behave differently or fail on a real TV.
@@ -98,6 +122,8 @@ pub enum SessionError {
     Exited,
     #[error("the App is not loaded yet")]
     NotLoaded,
+    #[error("unknown Remote Key `{0}`")]
+    UnknownRemoteKey(String),
     #[error(transparent)]
     Cdp(#[from] CdpError),
 }
@@ -117,9 +143,17 @@ pub struct Session {
 struct Inner {
     log: EventLog,
     status: watch::Sender<Status>,
-    cdp: OnceLock<Arc<Cdp>>,
+    /// Set once the App has loaded.
+    loaded: OnceLock<Loaded>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+}
+
+/// What a Session can act on once its App has loaded.
+struct Loaded {
+    cdp: Arc<Cdp>,
+    profile: &'static VersionProfile,
+    lenient: bool,
 }
 
 impl Session {
@@ -128,7 +162,7 @@ impl Session {
         let inner = Arc::new(Inner {
             log: EventLog::new(),
             status: watch::channel(Status::Starting).0,
-            cdp: OnceLock::new(),
+            loaded: OnceLock::new(),
             stop: Mutex::new(Some(stop_tx)),
             task: tokio::sync::Mutex::new(None),
         });
@@ -159,8 +193,31 @@ impl Session {
 
     /// Evaluates a JavaScript expression in the App's page.
     pub async fn evaluate(&self, expression: &str) -> Result<Value, SessionError> {
-        let cdp = self.inner.cdp.get().ok_or(SessionError::NotLoaded)?;
+        let cdp = &self.inner.loaded.get().ok_or(SessionError::NotLoaded)?.cdp;
         Ok(cdp.evaluate(expression).await?)
+    }
+
+    /// Presses a Remote Key, as on the TV remote: delivered if it's a
+    /// Mandatory Key or the App registered it, otherwise dropped (or, in
+    /// Lenient Mode, delivered with a Diagnostic). The outcome is reported as
+    /// a `RemoteKey` event.
+    pub async fn press_key(&self, name: &str) -> Result<(), SessionError> {
+        self.inner.press_key(name).await
+    }
+
+    /// Presses or releases a key on the desktop keyboard in the Engine window,
+    /// exactly as if the developer typed it, so the keyboard mapping applies.
+    pub async fn physical_key(
+        &self,
+        key: PhysicalKey,
+        action: KeyAction,
+    ) -> Result<(), SessionError> {
+        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let event_type = match action {
+            KeyAction::Down => "rawKeyDown",
+            KeyAction::Up => "keyUp",
+        };
+        dispatch_key(&loaded.cdp, event_type, key.0, key.dom_key().as_deref()).await
     }
 
     /// Stops the Session: closes the Engine and every server. Returns once
@@ -228,6 +285,58 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
 }
 
 impl Inner {
+    async fn press_key(&self, name: &str) -> Result<(), SessionError> {
+        let key = RemoteKey::find(name)
+            .ok_or_else(|| SessionError::UnknownRemoteKey(name.to_string()))?;
+        let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let drop_key = |reason: String| {
+            self.log.publish(SessionEvent::RemoteKey {
+                key: name.to_string(),
+                outcome: KeyOutcome::Dropped { reason },
+            });
+            Ok(())
+        };
+
+        if !loaded.profile.supports_key(key) {
+            return drop_key(format!(
+                "{name} does not exist on Tizen {} TVs",
+                loaded.profile.version
+            ));
+        }
+        if !key.mandatory {
+            // The page holds the registrations (see the tvinputdevice Shim).
+            let registered = loaded
+                .cdp
+                .evaluate(&format!(
+                    "window.__TIZEN_SIM__.keys.isRegistered({})",
+                    Value::String(name.to_string())
+                ))
+                .await?;
+            if registered != Value::Bool(true) {
+                let reason =
+                    format!("{name} is not registered (call tizen.tvinputdevice.registerKey)");
+                if !loaded.lenient {
+                    return drop_key(reason);
+                }
+                self.log.publish(SessionEvent::Diagnostic(Diagnostic {
+                    code: "key-not-registered".into(),
+                    message: format!(
+                        "{reason}; delivered anyway in Lenient Mode, a TV would drop it"
+                    ),
+                }));
+            }
+        }
+
+        let dom_key = key.dom_key.as_deref();
+        dispatch_key(&loaded.cdp, "rawKeyDown", key.code, dom_key).await?;
+        dispatch_key(&loaded.cdp, "keyUp", key.code, dom_key).await?;
+        self.log.publish(SessionEvent::RemoteKey {
+            key: name.to_string(),
+            outcome: KeyOutcome::Delivered,
+        });
+        Ok(())
+    }
+
     fn finish(&self, reason: ExitReason) {
         self.log
             .publish(SessionEvent::Lifecycle(Lifecycle::Exited { reason }));
@@ -259,7 +368,7 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
     let (app_exit_tx, app_exit) = mpsc::unbounded_channel();
     tokio::spawn(handle_bridge(bridge_rx, inner.clone(), app_exit_tx));
     let shims = ShimSetup {
-        data: shim::session_data(&app, profile, config.lenient),
+        data: shim::session_data(&app, profile, config.lenient, &config.key_map),
         token: bridge_token()?,
     };
     let server = DevServer::start(app.root(), shims, bridge_tx)
@@ -309,7 +418,16 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         .await
         .map_err(|_| format!("the App at {url} did not finish loading within 30s"))?;
 
-    let _ = inner.cdp.set(cdp.clone());
+    // Key events only reach a focused page (#24 prototype). Older Engines
+    // lack Page.bringToFront, so its failure is ignored.
+    let _ = cdp.call("Page.bringToFront", json!({})).await;
+    let _ = cdp.evaluate("window.focus(); 0").await;
+
+    let _ = inner.loaded.set(Loaded {
+        cdp: cdp.clone(),
+        profile,
+        lenient: config.lenient,
+    });
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::AppLoaded { url }));
@@ -341,6 +459,29 @@ async fn handle_bridge(
             }
             "application.exit" => {
                 let _ = app_exit.send(());
+            }
+            // A keyboard key the Shim mapped to a Remote Key.
+            "keys.press" => {
+                let key = message.params["key"].as_str().unwrap_or_default();
+                if let Err(error) = inner.press_key(key).await {
+                    tracing::warn!(%error, key, "could not press the mapped Remote Key");
+                    inner.log.publish(SessionEvent::RemoteKey {
+                        key: key.to_string(),
+                        outcome: KeyOutcome::Dropped {
+                            reason: format!("could not deliver it: {error}"),
+                        },
+                    });
+                }
+            }
+            // A keyboard key the Shim dropped because the App hasn't registered it.
+            "keys.dropped" => {
+                let text = |key: &str| message.params[key].as_str().unwrap_or_default().to_string();
+                inner.log.publish(SessionEvent::RemoteKey {
+                    key: text("key"),
+                    outcome: KeyOutcome::Dropped {
+                        reason: text("reason"),
+                    },
+                });
             }
             other => tracing::debug!(method = other, "unknown Bridge message"),
         }
@@ -480,4 +621,23 @@ impl Events {
             }
         }
     }
+}
+
+/// Sends one key event to the page as trusted input.
+async fn dispatch_key(
+    cdp: &Cdp,
+    event_type: &str,
+    key_code: u16,
+    dom_key: Option<&str>,
+) -> Result<(), SessionError> {
+    let mut params = json!({
+        "type": event_type,
+        "windowsVirtualKeyCode": key_code,
+        "nativeVirtualKeyCode": key_code,
+    });
+    if let Some(dom_key) = dom_key {
+        params["key"] = Value::String(dom_key.to_string());
+    }
+    cdp.call("Input.dispatchKeyEvent", params).await?;
+    Ok(())
 }

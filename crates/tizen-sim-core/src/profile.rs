@@ -14,6 +14,17 @@ pub struct VersionProfile {
     /// Values the system info Shims report (model, display, locale, ...).
     #[serde(default)]
     pub(crate) device: toml::Table,
+    /// Names of the Registrable Keys these TVs support.
+    #[serde(default)]
+    pub(crate) registrable_keys: Vec<String>,
+}
+
+impl VersionProfile {
+    /// Whether these TVs have the Remote Key: every Mandatory Key, plus the
+    /// Registrable Keys the profile lists.
+    pub(crate) fn supports_key(&self, key: &crate::remote_keys::RemoteKey) -> bool {
+        key.mandatory || self.registrable_keys.contains(&key.name)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

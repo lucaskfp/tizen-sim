@@ -1,0 +1,167 @@
+# The Remote Key catalog: Tizen key names and the keyCode Apps receive.
+# Source: https://developer.samsung.com/smarttv/develop/guides/user-interaction/remote-control.html
+#
+# Mandatory Keys are always delivered and can't be registered; every other
+# key is a Registrable Key. `dom_key` is the KeyboardEvent.key value, where
+# the key has a standard one.
+
+[[key]]
+name = "ArrowLeft"
+code = 37
+mandatory = true
+dom_key = "ArrowLeft"
+
+[[key]]
+name = "ArrowUp"
+code = 38
+mandatory = true
+dom_key = "ArrowUp"
+
+[[key]]
+name = "ArrowRight"
+code = 39
+mandatory = true
+dom_key = "ArrowRight"
+
+[[key]]
+name = "ArrowDown"
+code = 40
+mandatory = true
+dom_key = "ArrowDown"
+
+[[key]]
+name = "Enter"
+code = 13
+mandatory = true
+dom_key = "Enter"
+
+[[key]]
+name = "Back"
+code = 10009
+mandatory = true
+
+[[key]]
+name = "Exit"
+code = 10182
+
+[[key]]
+name = "ColorF0Red"
+code = 403
+
+[[key]]
+name = "ColorF1Green"
+code = 404
+
+[[key]]
+name = "ColorF2Yellow"
+code = 405
+
+[[key]]
+name = "ColorF3Blue"
+code = 406
+
+[[key]]
+name = "MediaPlay"
+code = 415
+
+[[key]]
+name = "MediaPause"
+code = 19
+
+[[key]]
+name = "MediaPlayPause"
+code = 10252
+
+[[key]]
+name = "MediaStop"
+code = 413
+
+[[key]]
+name = "MediaRewind"
+code = 412
+
+[[key]]
+name = "MediaFastForward"
+code = 417
+
+[[key]]
+name = "MediaRecord"
+code = 416
+
+[[key]]
+name = "MediaTrackPrevious"
+code = 10232
+
+[[key]]
+name = "MediaTrackNext"
+code = 10233
+
+[[key]]
+name = "ChannelUp"
+code = 427
+
+[[key]]
+name = "ChannelDown"
+code = 428
+
+[[key]]
+name = "VolumeUp"
+code = 447
+
+[[key]]
+name = "VolumeDown"
+code = 448
+
+[[key]]
+name = "VolumeMute"
+code = 449
+
+[[key]]
+name = "0"
+code = 48
+dom_key = "0"
+
+[[key]]
+name = "1"
+code = 49
+dom_key = "1"
+
+[[key]]
+name = "2"
+code = 50
+dom_key = "2"
+
+[[key]]
+name = "3"
+code = 51
+dom_key = "3"
+
+[[key]]
+name = "4"
+code = 52
+dom_key = "4"
+
+[[key]]
+name = "5"
+code = 53
+dom_key = "5"
+
+[[key]]
+name = "6"
+code = 54
+dom_key = "6"
+
+[[key]]
+name = "7"
+code = 55
+dom_key = "7"
+
+[[key]]
+name = "8"
+code = 56
+dom_key = "8"
+
+[[key]]
+name = "9"
+code = 57
+dom_key = "9"

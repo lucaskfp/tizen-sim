@@ -7,5 +7,6 @@ mod dev_server;
 pub mod engine;
 pub mod home;
 pub mod profile;
+pub mod remote_keys;
 pub mod session;
 mod shim;

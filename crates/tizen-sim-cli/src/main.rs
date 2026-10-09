@@ -1,11 +1,14 @@
-use anyhow::{Result, bail};
-use clap::{Parser, Subcommand};
+use anyhow::{Context, Result, bail};
+use clap::{Args, Parser, Subcommand};
 use std::io::Write;
 use std::path::PathBuf;
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::engine::DownloadProgress;
 use tizen_sim_core::home::Home;
-use tizen_sim_core::session::{ExitReason, Lifecycle, Session, SessionConfig, SessionEvent};
+use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
+use tizen_sim_core::session::{
+    ExitReason, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
+};
 
 /// A fast simulator for Tizen TV web apps.
 #[derive(Parser)]
@@ -18,19 +21,51 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run an App and stream its console until Ctrl+C.
-    Run {
-        /// A Project Folder containing config.xml.
-        app: PathBuf,
-        /// Version Profile to use (defaults to the latest).
-        #[arg(long)]
-        profile: Option<String>,
-        /// Run the Engine without a window.
-        #[arg(long)]
-        headless: bool,
-        /// Lenient Mode: allow calls a TV would refuse, reporting each as a Diagnostic.
-        #[arg(long)]
-        lenient: bool,
-    },
+    Run(RunArgs),
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// A Project Folder containing config.xml.
+    app: PathBuf,
+    /// Version Profile to use (defaults to the latest).
+    #[arg(long)]
+    profile: Option<String>,
+    /// Run the Engine without a window.
+    #[arg(long)]
+    headless: bool,
+    /// Lenient Mode: allow calls a TV would refuse, reporting each as a Diagnostic.
+    #[arg(long)]
+    lenient: bool,
+    /// Map a keyboard key to a Remote Key, e.g. `--map-key F5=MediaPlayPause`.
+    /// Adds to (or overrides) the defaults: Backspace/Escape=Back,
+    /// F1-F4=colour keys, PageUp/PageDown=ChannelUp/ChannelDown.
+    #[arg(long = "map-key", value_name = "KEY=REMOTE_KEY")]
+    map_keys: Vec<String>,
+}
+
+impl RunArgs {
+    fn into_config(self) -> Result<SessionConfig> {
+        let mut key_map = KeyMap::default();
+        for mapping in &self.map_keys {
+            let (physical, remote) = mapping
+                .split_once('=')
+                .with_context(|| format!("--map-key {mapping}: expected KEY=REMOTE_KEY"))?;
+            let physical = PhysicalKey::parse(physical.trim())
+                .with_context(|| format!("--map-key {mapping}"))?;
+            key_map
+                .insert(physical, remote.trim())
+                .with_context(|| format!("--map-key {mapping}"))?;
+        }
+        Ok(SessionConfig {
+            source: AppSource::ProjectFolder(self.app),
+            profile: self.profile,
+            headless: self.headless,
+            lenient: self.lenient,
+            key_map,
+            home: Home::from_env(),
+        })
+    }
 }
 
 #[tokio::main]
@@ -41,23 +76,12 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Command::Run {
-            app,
-            profile,
-            headless,
-            lenient,
-        } => run(app, profile, headless, lenient).await,
+        Command::Run(args) => run(args.into_config()?).await,
     }
 }
 
-async fn run(app: PathBuf, profile: Option<String>, headless: bool, lenient: bool) -> Result<()> {
-    let session = Session::start(SessionConfig {
-        source: AppSource::ProjectFolder(app),
-        profile,
-        headless,
-        lenient,
-        home: Home::from_env(),
-    });
+async fn run(config: SessionConfig) -> Result<()> {
+    let session = Session::start(config);
     let mut events = session.events();
     let mut stopping = false;
 
@@ -69,6 +93,10 @@ async fn run(app: PathBuf, profile: Option<String>, headless: bool, lenient: boo
                     SessionEvent::EngineDownload(progress) => print_progress(&progress),
                     SessionEvent::Console(message) => println!("[console.{}] {}", message.level, message.text),
                     SessionEvent::Diagnostic(diagnostic) => println!("[diagnostic:{}] {}", diagnostic.code, diagnostic.message),
+                    SessionEvent::RemoteKey { key, outcome: KeyOutcome::Dropped { reason } } => {
+                        println!("[key dropped] {key}: {reason}");
+                    }
+                    SessionEvent::RemoteKey { .. } => {}
                     SessionEvent::Lifecycle(lifecycle) => match lifecycle {
                         Lifecycle::Starting { app_id, profile } => {
                             println!("Starting {app_id} on Tizen {profile}");

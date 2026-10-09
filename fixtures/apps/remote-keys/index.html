@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Remote keys fixture</title>
+    <script>
+        window.keyLog = [];
+        window.addEventListener('keydown', function (e) {
+            window.keyLog.push(e.keyCode);
+        });
+    </script>
+</head>
+<body>Press keys</body>
+</html>

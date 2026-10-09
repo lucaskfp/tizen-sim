@@ -5,4 +5,5 @@
   WebAPIError: WebAPIError,
   application: application,
   systeminfo: systeminfo,
+  tvinputdevice: tvinputdevice,
 };
