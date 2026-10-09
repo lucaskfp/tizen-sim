@@ -12,3 +12,4 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `remote-keys`: declares `tv.inputdevice` and records every keydown `keyCode` in `window.keyLog` and every keyup `keyCode` in `window.keyUpLog`.
 - `background-support`: enables `background-support` with a `media` background category, so it keeps running while hidden.
 - `required-version-too-high`: declares `required_version="99.0"`, newer than any Version Profile.
+- `hot-reload`: loads `style.css` and `app.js`, which sets `window.scriptVersion`. Tests copy it to a temporary folder and edit the copy.

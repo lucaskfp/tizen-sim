@@ -28,8 +28,16 @@ pub fn start(fixture_name: &str) -> TestSession {
 
 /// Like `start`, with a chance to adjust the Session's configuration.
 pub fn start_with(fixture_name: &str, adjust: impl FnOnce(&mut SessionConfig)) -> TestSession {
+    start_folder(&fixture(fixture_name), adjust)
+}
+
+/// A Session on any Project Folder, e.g. a copy of a fixture a test edits.
+pub fn start_folder(
+    folder: &std::path::Path,
+    adjust: impl FnOnce(&mut SessionConfig),
+) -> TestSession {
     let state = tempfile::tempdir().unwrap();
-    let mut config = config(fixture_name, state.path());
+    let mut config = config(folder, state.path());
     adjust(&mut config);
     let session = Session::start(config);
     let events = session.events();
@@ -42,12 +50,22 @@ pub fn start_with(fixture_name: &str, adjust: impl FnOnce(&mut SessionConfig)) -
 
 /// A Session whose per-App state lives in `state`, so tests can share it.
 pub fn start_session(fixture_name: &str, state: &std::path::Path) -> Session {
-    Session::start(config(fixture_name, state))
+    Session::start(config(&fixture(fixture_name), state))
 }
 
-fn config(fixture_name: &str, state: &std::path::Path) -> SessionConfig {
+/// A copy of a fixture App in a throwaway directory, for tests that edit it.
+pub fn copy_fixture(fixture_name: &str) -> tempfile::TempDir {
+    let copy = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(fixture(fixture_name)).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), copy.path().join(entry.file_name())).unwrap();
+    }
+    copy
+}
+
+fn config(folder: &std::path::Path, state: &std::path::Path) -> SessionConfig {
     SessionConfig {
-        source: AppSource::ProjectFolder(fixture(fixture_name)),
+        source: AppSource::ProjectFolder(folder.to_path_buf()),
         profile: None,
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,

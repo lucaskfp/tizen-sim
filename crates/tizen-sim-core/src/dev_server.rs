@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
@@ -35,13 +35,16 @@ pub struct ShimSetup {
 
 pub struct DevServer {
     addr: SocketAddr,
+    state: Arc<ServerState>,
     shutdown: oneshot::Sender<()>,
     task: JoinHandle<()>,
 }
 
 struct ServerState {
     root: PathBuf,
-    bootstrap: String,
+    bridge_url: String,
+    /// Replaced when the Session restarts with a re-read `config.xml`.
+    bootstrap: RwLock<String>,
     token: String,
     bridge: mpsc::UnboundedSender<BridgeMessage>,
 }
@@ -57,7 +60,8 @@ impl DevServer {
         let bridge_url = format!("ws://{addr}{BRIDGE_PATH}?token={}", shims.token);
         let state = Arc::new(ServerState {
             root: root.to_path_buf(),
-            bootstrap: shim::bootstrap_script(shims.data, &bridge_url),
+            bootstrap: RwLock::new(shim::bootstrap_script(shims.data, &bridge_url)),
+            bridge_url,
             token: shims.token,
             bridge,
         });
@@ -65,7 +69,7 @@ impl DevServer {
             .route(BOOTSTRAP_PATH, get(serve_bootstrap))
             .route(BRIDGE_PATH, get(open_bridge))
             .fallback(serve_app_file)
-            .with_state(state);
+            .with_state(state.clone());
         let (shutdown, shutdown_rx) = oneshot::channel::<()>();
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router)
@@ -76,6 +80,7 @@ impl DevServer {
         });
         Ok(DevServer {
             addr,
+            state,
             shutdown,
             task,
         })
@@ -84,6 +89,12 @@ impl DevServer {
     /// The URL of a path inside the App, e.g. its entry point.
     pub fn url(&self, path: &str) -> String {
         format!("http://{}/{}", self.addr, path.trim_start_matches('/'))
+    }
+
+    /// Serves new Session data to the pages loaded from now on.
+    pub fn set_shim_data(&self, data: Value) {
+        *self.state.bootstrap.write().unwrap() =
+            shim::bootstrap_script(data, &self.state.bridge_url);
     }
 
     pub async fn stop(self) {
@@ -98,7 +109,7 @@ async fn serve_bootstrap(State(state): State<Arc<ServerState>>) -> Response {
             (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        state.bootstrap.clone(),
+        state.bootstrap.read().unwrap().clone(),
     )
         .into_response()
 }
@@ -119,7 +130,14 @@ async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request)
             .into_response();
     }
     match ServeDir::new(&state.root).oneshot(request).await {
-        Ok(response) => response.into_response(),
+        // Revalidate every time, so a hot reload never runs a stale file.
+        Ok(mut response) => {
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-cache"),
+            );
+            response.into_response()
+        }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }

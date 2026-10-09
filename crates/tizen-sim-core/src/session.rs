@@ -14,6 +14,7 @@ use crate::home::Home;
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::shim;
+use crate::watcher::{Action, Batch, FolderWatcher};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +48,25 @@ pub enum SessionEvent {
         key: String,
         outcome: KeyOutcome,
     },
+    HotReload(HotReload),
+}
+
+/// The Session following edits to its Project Folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HotReload {
+    /// Files changed together; paths relative to the Project Folder,
+    /// `/`-separated. One of the other events follows.
+    FilesChanged { paths: Vec<String> },
+    /// Only stylesheets changed, and they were swapped in place: the page
+    /// keeps its state.
+    StylesSwapped,
+    /// The App was reloaded to pick up the changes.
+    Reloaded,
+    /// `config.xml` changed, so the App was re-read (privileges, Access
+    /// Policy, entry point) and started afresh.
+    Restarted { app_id: String },
+    /// The changes couldn't be applied; the App keeps running as it was.
+    Failed { error: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,7 +186,8 @@ struct Loaded {
     profile: &'static VersionProfile,
     lenient: bool,
     /// Whether the App keeps running while hidden (background support).
-    runs_in_background: bool,
+    /// Re-read when a hot reload restarts the App.
+    runs_in_background: AtomicBool,
     /// Whether the App is in the background.
     hidden: AtomicBool,
 }
@@ -270,11 +291,17 @@ struct Running {
     cdp: Arc<Cdp>,
     /// Fires when the App asks to exit.
     app_exit: mpsc::UnboundedReceiver<ExitReason>,
+    /// Fires each time the page finishes loading.
+    page_loads: mpsc::UnboundedReceiver<()>,
+    /// The id of the running App, which a restart may not change.
+    app_id: String,
+    /// Changes to the Project Folder; `None` if it can't be watched.
+    watcher: Option<FolderWatcher>,
 }
 
 async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiver<()>) {
     let started = tokio::select! {
-        result = startup(config, &inner) => result,
+        result = startup(&config, &inner) => result,
         _ = &mut stop => {
             // Dropping the startup future kills a half-started Engine and server.
             inner.finish(ExitReason::Stopped);
@@ -300,17 +327,22 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
         }
     };
 
-    let reason = tokio::select! {
-        _ = &mut stop => {
-            close_engine(&mut running).await;
-            ExitReason::Stopped
+    let reason = loop {
+        tokio::select! {
+            _ = &mut stop => {
+                close_engine(&mut running).await;
+                break ExitReason::Stopped;
+            }
+            Some(reason) = running.app_exit.recv() => {
+                inner.hide_before_exit().await;
+                close_engine(&mut running).await;
+                break reason;
+            }
+            _ = running.engine.child.wait() => break ExitReason::EngineClosed,
+            Some(batch) = next_batch(&mut running.watcher) => {
+                inner.hot_reload(&config, &mut running, batch).await;
+            }
         }
-        Some(reason) = running.app_exit.recv() => {
-            inner.hide_before_exit().await;
-            close_engine(&mut running).await;
-            reason
-        }
-        _ = running.engine.child.wait() => ExitReason::EngineClosed,
     };
     stop_server(running.server).await;
     inner.finish(reason);
@@ -387,7 +419,7 @@ impl Inner {
         if !loaded.go_to_background().await {
             return Ok(());
         }
-        if !loaded.runs_in_background {
+        if !loaded.runs_in_background.load(Ordering::SeqCst) {
             // Old Engines lack the call; there the App only looks hidden.
             if let Err(error) = loaded
                 .cdp
@@ -406,7 +438,7 @@ impl Inner {
         if !loaded.hidden.swap(false, Ordering::SeqCst) {
             return Ok(());
         }
-        if !loaded.runs_in_background {
+        if !loaded.runs_in_background.load(Ordering::SeqCst) {
             let _ = loaded
                 .cdp
                 .call("Page.setWebLifecycleState", json!({ "state": "active" }))
@@ -441,6 +473,90 @@ impl Inner {
         }
     }
 
+    /// Applies a batch of Project Folder changes to the running App.
+    async fn hot_reload(&self, config: &SessionConfig, running: &mut Running, batch: Batch) {
+        self.publish_hot_reload(HotReload::FilesChanged {
+            paths: batch.paths.clone(),
+        });
+        // A hidden App may be frozen, and a frozen page doesn't load or
+        // restyle; the developer wants to see the change anyway.
+        if let Err(error) = self.resume().await {
+            tracing::warn!(%error, "could not bring the App back before a hot reload");
+        }
+        let result = match batch.action() {
+            Action::SwapStyles => self.swap_styles(running).await,
+            Action::Reload => self.reload(running).await,
+            Action::Restart => self.restart(config, running).await,
+        };
+        if let Err(error) = result {
+            tracing::warn!(%error, "hot reload failed");
+            self.publish_hot_reload(HotReload::Failed { error });
+        }
+    }
+
+    /// Re-fetches every stylesheet the page links, so focus and navigation
+    /// state survive. Reloads instead if the page links none, since the
+    /// change must then reach it some other way (an `@import` in a `<style>`,
+    /// a frame).
+    async fn swap_styles(&self, running: &mut Running) -> Result<(), String> {
+        let swapped = running
+            .cdp
+            .evaluate(SWAP_STYLESHEETS)
+            .await
+            .map_err(|e| format!("could not swap the stylesheets: {e}"))?;
+        if swapped.as_u64().unwrap_or(0) == 0 {
+            return self.reload(running).await;
+        }
+        self.publish_hot_reload(HotReload::StylesSwapped);
+        Ok(())
+    }
+
+    async fn reload(&self, running: &mut Running) -> Result<(), String> {
+        load_page(running, "Page.reload", json!({ "ignoreCache": true })).await?;
+        self.publish_hot_reload(HotReload::Reloaded);
+        Ok(())
+    }
+
+    /// Re-reads `config.xml` and starts the App afresh in the same Engine.
+    /// This approximates reinstalling and relaunching the App, keeping its
+    /// Engine data; it is a simulator shortcut, not documented TV behaviour.
+    /// The dev server keeps serving the same Project Folder; only the Session
+    /// data the Shims see changes.
+    async fn restart(&self, config: &SessionConfig, running: &mut Running) -> Result<(), String> {
+        let loaded = self.loaded.get().ok_or("the App is not loaded yet")?;
+        let app = App::load(&config.source).map_err(|e| e.to_string())?;
+        app.check_installable_on(loaded.profile)
+            .map_err(|e| e.to_string())?;
+        // The Engine's data belongs to the App id, so another App would
+        // inherit this one's storage.
+        if app.id() != running.app_id {
+            return Err(format!(
+                "the application id changed from {} to {}; restart the Session to run the new App",
+                running.app_id,
+                app.id()
+            ));
+        }
+        running.server.set_shim_data(shim::session_data(
+            &app,
+            loaded.profile,
+            loaded.lenient,
+            &config.key_map,
+        ));
+        loaded
+            .runs_in_background
+            .store(app.runs_in_background(), Ordering::SeqCst);
+        let url = running.server.url(app.entry_point());
+        load_page(running, "Page.navigate", json!({ "url": url })).await?;
+        self.publish_hot_reload(HotReload::Restarted {
+            app_id: app.id().to_string(),
+        });
+        Ok(())
+    }
+
+    fn publish_hot_reload(&self, event: HotReload) {
+        self.log.publish(SessionEvent::HotReload(event));
+    }
+
     /// Ends the running App, as the platform does.
     fn terminate(&self, reason: ExitReason) {
         if let Some(app_exit) = self.app_exit.get() {
@@ -455,7 +571,7 @@ impl Inner {
     }
 }
 
-async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
+async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
     let app = App::load(&config.source).map_err(|e| e.to_string())?;
     let profile = match &config.profile {
         Some(version) => VersionProfile::find(version).map_err(|e| e.to_string())?,
@@ -508,8 +624,8 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         .await
         .map_err(|e| e.to_string())?;
     let cdp = Arc::new(cdp);
-    let (loaded_tx, mut loaded_rx) = mpsc::unbounded_channel();
-    tokio::spawn(forward_events(events, inner.clone(), loaded_tx));
+    let (page_loads_tx, page_loads) = mpsc::unbounded_channel();
+    tokio::spawn(forward_events(events, inner.clone(), page_loads_tx));
     // Attach before navigating so no console output from the first script is lost.
     cdp.call("Runtime.enable", json!({}))
         .await
@@ -524,37 +640,98 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
             debugger_url: engine.page_ws_url.clone(),
         }));
 
-    let url = server.url(app.entry_point());
-    cdp.call("Page.navigate", json!({ "url": url }))
-        .await
-        .map_err(|e| e.to_string())?;
-    tokio::time::timeout(Duration::from_secs(30), loaded_rx.recv())
-        .await
-        .map_err(|_| format!("the App at {url} did not finish loading within 30s"))?;
+    // Watch before the first load, so no edit made once the App is up is missed.
+    let watcher = match &config.source {
+        AppSource::ProjectFolder(root) => FolderWatcher::start(root)
+            .inspect_err(|error| {
+                tracing::warn!(%error, "could not watch the Project Folder; hot reload is off");
+            })
+            .ok(),
+    };
 
-    // Key events only reach a focused page (#24 prototype). Older Engines
-    // lack Page.bringToFront, so its failure is ignored.
-    let _ = cdp.call("Page.bringToFront", json!({})).await;
-    let _ = cdp.evaluate("window.focus(); 0").await;
+    let url = server.url(app.entry_point());
+    let mut running = Running {
+        engine,
+        server,
+        cdp: cdp.clone(),
+        app_exit,
+        page_loads,
+        app_id: app.id().to_string(),
+        watcher,
+    };
+    load_page(&mut running, "Page.navigate", json!({ "url": url }))
+        .await
+        .map_err(|e| format!("could not load the App at {url}: {e}"))?;
 
     let _ = inner.loaded.set(Loaded {
-        cdp: cdp.clone(),
+        cdp,
         profile,
         lenient: config.lenient,
-        runs_in_background: app.runs_in_background(),
+        runs_in_background: AtomicBool::new(app.runs_in_background()),
         hidden: AtomicBool::new(false),
     });
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::AppLoaded { url }));
     inner.status.send_replace(Status::Loaded);
-    Ok(Running {
-        engine,
-        server,
-        cdp,
-        app_exit,
-    })
+    Ok(running)
 }
+
+/// Loads a page with a `Page.navigate` or `Page.reload` call and waits for it
+/// to finish loading, then focuses it.
+async fn load_page(running: &mut Running, method: &str, params: Value) -> Result<(), String> {
+    // Forget loads that finished before this one started.
+    while running.page_loads.try_recv().is_ok() {}
+    running
+        .cdp
+        .call(method, params)
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::time::timeout(Duration::from_secs(30), running.page_loads.recv())
+        .await
+        .map_err(|_| "the App did not finish loading within 30s".to_string())?;
+
+    // Key events only reach a focused page (#24 prototype). Older Engines
+    // lack Page.bringToFront, so its failure is ignored.
+    let _ = running.cdp.call("Page.bringToFront", json!({})).await;
+    let _ = running.cdp.evaluate("window.focus(); 0").await;
+    Ok(())
+}
+
+async fn next_batch(watcher: &mut Option<FolderWatcher>) -> Option<Batch> {
+    match watcher {
+        Some(watcher) => watcher.next().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Replaces each same-origin `<link rel="stylesheet">` with a copy that
+/// re-fetches it, removing the old one once the new one has loaded so the
+/// page never shows unstyled. Evaluates to how many it replaced. ES5, for
+/// old Engines.
+const SWAP_STYLESHEETS: &str = r#"(function () {
+  var links = document.querySelectorAll('link[rel~="stylesheet"]');
+  var parser = document.createElement('a');
+  var stamp = 'tizen-sim-reload=' + Date.now();
+  var swapped = 0;
+  for (var i = 0; i < links.length; i++) {
+    var link = links[i];
+    parser.href = link.href;
+    if (!link.parentNode || parser.host !== location.host) continue;
+    var search = parser.search.replace(/[?&]tizen-sim-reload=\d+/, '').replace(/^&/, '?');
+    var fresh = link.cloneNode(false);
+    fresh.href = parser.protocol + '//' + parser.host + parser.pathname +
+      (search ? search + '&' : '?') + stamp + parser.hash;
+    var done = (function (old) {
+      return function () { if (old.parentNode) old.parentNode.removeChild(old); };
+    })(link);
+    fresh.onload = done;
+    fresh.onerror = done;
+    link.parentNode.insertBefore(fresh, link.nextSibling);
+    swapped++;
+  }
+  return swapped;
+})()"#;
 
 /// Acts on what the Shims send over the Bridge.
 async fn handle_bridge(mut messages: mpsc::UnboundedReceiver<BridgeMessage>, inner: Arc<Inner>) {
