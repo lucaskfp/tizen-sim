@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Tauri
+**/src-tauri/target/
+**/src-tauri/gen/schemas/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Local scratch (local-markdown tickets, experiments)
+.scratch/
