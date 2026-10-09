@@ -7,7 +7,7 @@ use tizen_sim_core::engine::DownloadProgress;
 use tizen_sim_core::home::Home;
 use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
 use tizen_sim_core::session::{
-    ExitReason, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
+    ExitReason, HotReload, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
 };
 
 /// A fast simulator for Tizen TV web apps.
@@ -97,6 +97,13 @@ async fn run(config: SessionConfig) -> Result<()> {
                         println!("[key dropped] {key}: {reason}");
                     }
                     SessionEvent::RemoteKey { .. } => {}
+                    SessionEvent::HotReload(hot_reload) => match hot_reload {
+                        HotReload::FilesChanged { paths } => println!("[changed] {}", paths.join(", ")),
+                        HotReload::StylesSwapped => println!("Stylesheets swapped in place."),
+                        HotReload::Reloaded => println!("App reloaded."),
+                        HotReload::Restarted { app_id } => println!("config.xml changed: restarted {app_id}."),
+                        HotReload::Failed { error } => println!("[hot reload failed] {error}"),
+                    },
                     SessionEvent::Lifecycle(lifecycle) => match lifecycle {
                         Lifecycle::Starting { app_id, profile } => {
                             println!("Starting {app_id} on Tizen {profile}");
