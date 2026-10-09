@@ -112,6 +112,7 @@ async fn run(config: SessionConfig) -> Result<()> {
                                 ExitReason::Stopped => println!("Stopped."),
                                 ExitReason::EngineClosed => println!("The Engine window was closed."),
                                 ExitReason::AppExited => println!("The App exited."),
+                                ExitReason::TerminatedByRemote => println!("Back was held: the App was terminated, as on a TV."),
                                 ExitReason::FailedToStart => {}
                             }
                             return Ok(());

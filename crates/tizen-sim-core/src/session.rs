@@ -103,6 +103,8 @@ pub enum ExitReason {
     FailedToStart,
     /// The App ended itself (`tizen.application.getCurrentApplication().exit()`).
     AppExited,
+    /// The Back key was held, which makes a TV terminate the App.
+    TerminatedByRemote,
 }
 
 /// A message the App wrote to its console.
@@ -238,7 +240,7 @@ struct Running {
     server: DevServer,
     cdp: Arc<Cdp>,
     /// Fires when the App asks to exit.
-    app_exit: mpsc::UnboundedReceiver<()>,
+    app_exit: mpsc::UnboundedReceiver<ExitReason>,
 }
 
 async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiver<()>) {
@@ -274,9 +276,9 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
             close_engine(&mut running).await;
             ExitReason::Stopped
         }
-        Some(()) = running.app_exit.recv() => {
+        Some(reason) = running.app_exit.recv() => {
             close_engine(&mut running).await;
-            ExitReason::AppExited
+            reason
         }
         _ = running.engine.child.wait() => ExitReason::EngineClosed,
     };
@@ -444,7 +446,7 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
 async fn handle_bridge(
     mut messages: mpsc::UnboundedReceiver<BridgeMessage>,
     inner: Arc<Inner>,
-    app_exit: mpsc::UnboundedSender<()>,
+    app_exit: mpsc::UnboundedSender<ExitReason>,
 ) {
     while let Some(message) = messages.recv().await {
         match message.method.as_str() {
@@ -458,7 +460,11 @@ async fn handle_bridge(
                 inner.log.publish(SessionEvent::Diagnostic(diagnostic));
             }
             "application.exit" => {
-                let _ = app_exit.send(());
+                let _ = app_exit.send(ExitReason::AppExited);
+            }
+            // The Back key was held: the platform terminates the App.
+            "application.terminate" => {
+                let _ = app_exit.send(ExitReason::TerminatedByRemote);
             }
             // A keyboard key the Shim mapped to a Remote Key.
             "keys.press" => {

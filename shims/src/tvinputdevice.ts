@@ -44,6 +44,17 @@ function requireRegistrable(name: string) {
   }
 }
 
+/** Exit is the Back key's long press, which Samsung says Apps must not register. */
+function warnIfExit(name: string) {
+  if (name === "Exit") {
+    raiseDiagnostic(
+      "exit-key-registered",
+      "Registering Exit captures the Back key's long press, which on a TV terminates the App; " +
+        "Samsung's guidelines say: do not register the Return/Exit key long-press.",
+    );
+  }
+}
+
 function keyInfo(key: RemoteKeyConfig) {
   return { name: key.name, code: key.code };
 }
@@ -67,6 +78,7 @@ function changeRegistration(
   }
   for (var j = 0; j < names.length; j++) {
     if (register) {
+      warnIfExit(names[j]);
       registeredKeys[names[j]] = true;
     } else {
       delete registeredKeys[names[j]];
@@ -99,6 +111,7 @@ var tvinputdevice = {
   registerKey: function (name: string) {
     requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.registerKey");
     requireRegistrable(name);
+    warnIfExit(name);
     registeredKeys[name] = true;
   },
 

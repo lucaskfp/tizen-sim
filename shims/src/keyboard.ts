@@ -11,9 +11,15 @@
 
 var LONG_PRESS_MS = 1000;
 
-// Remote Keys that send a different key when held (remote control guide, tables 1 and 2).
+// Holding Back makes the platform terminate the App; the App never sees a key
+// (terminating-applications guide: "Long-pressing the Return/Exit key forces
+// the application to terminate").
+var TERMINATE = "";
+
+// What holding a Remote Key does instead of pressing it (remote control
+// guide, tables 1 and 2).
 var LONG_PRESS: { [name: string]: string } = {
-  Back: "Exit",
+  Back: TERMINATE,
   MediaRewind: "MediaTrackPrevious",
   MediaFastForward: "MediaTrackNext",
 };
@@ -43,20 +49,24 @@ function isTextField(target: EventTarget | null): boolean {
 }
 
 function onMappedKeyDown(e: KeyboardEvent, mapped: string) {
-  var longPress = LONG_PRESS[mapped];
-  if (!longPress) {
+  if (!LONG_PRESS.hasOwnProperty(mapped)) {
     if (!e.repeat) {
       pressRemoteKey(mapped);
     }
     return;
   }
-  // Sent on release; held long enough, it's the long-press key instead.
+  // Sent on release; held long enough, the long-press action happens instead.
+  var longPress = LONG_PRESS[mapped];
   if (held.keyCode === -1) {
     held.keyCode = e.keyCode;
     held.sentLongPress = false;
     held.timer = window.setTimeout(function () {
       held.sentLongPress = true;
-      pressRemoteKey(longPress);
+      if (longPress === TERMINATE) {
+        bridge.notify("application.terminate");
+      } else {
+        pressRemoteKey(longPress);
+      }
     }, LONG_PRESS_MS);
   }
 }

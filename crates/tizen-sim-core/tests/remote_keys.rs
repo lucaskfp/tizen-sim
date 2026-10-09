@@ -7,7 +7,7 @@ use serde_json::json;
 use std::time::Duration;
 use support::{eventually_equals, expect_event, start, start_with};
 use tizen_sim_core::remote_keys::PhysicalKey;
-use tizen_sim_core::session::{KeyAction, KeyOutcome, SessionEvent};
+use tizen_sim_core::session::{ExitReason, KeyAction, KeyOutcome, Lifecycle, SessionEvent};
 
 const BACKSPACE: PhysicalKey = PhysicalKey(8);
 const F5: PhysicalKey = PhysicalKey(116);
@@ -123,23 +123,41 @@ async fn supported_keys_are_the_registrable_keys_of_the_version_profile() {
 }
 
 #[tokio::test]
-async fn a_long_press_of_back_delivers_exit() {
-    let t = start("remote-keys");
+/// "Long-pressing the Return/Exit key forces the application to terminate"
+/// (Samsung's terminating-applications guide): the App gets no key at all.
+async fn a_long_press_of_back_terminates_the_app() {
+    let mut t = start("remote-keys");
     t.session.wait_until_loaded().await.unwrap();
-    t.session
-        .evaluate("tizen.tvinputdevice.registerKey('Exit'); 0")
-        .await
-        .unwrap();
     t.session
         .physical_key(BACKSPACE, KeyAction::Down)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1300)).await;
+    expect_event(&mut t.events, 10, |e| {
+        matches!(
+            e,
+            SessionEvent::Lifecycle(Lifecycle::Exited {
+                reason: ExitReason::TerminatedByRemote
+            })
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn registering_the_exit_key_raises_a_diagnostic() {
+    let mut t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
     t.session
-        .physical_key(BACKSPACE, KeyAction::Up)
+        .evaluate("tizen.tvinputdevice.registerKey('Exit'); 0")
         .await
         .unwrap();
-    eventually_equals(&t.session, "window.keyLog", json!([10182])).await;
+    expect_event(
+        &mut t.events,
+        10,
+        |e| matches!(e, SessionEvent::Diagnostic(d) if d.code == "exit-key-registered"),
+    )
+    .await;
     t.session.stop().await;
 }
 

@@ -213,6 +213,12 @@ function requireRegistrable(name) {
         throw new WebAPIException("InvalidValuesError", name + " is a Mandatory Key and can't be registered");
     }
 }
+function warnIfExit(name) {
+    if (name === "Exit") {
+        raiseDiagnostic("exit-key-registered", "Registering Exit captures the Back key's long press, which on a TV terminates the App; " +
+            "Samsung's guidelines say: do not register the Return/Exit key long-press.");
+    }
+}
 function keyInfo(key) {
     return { name: key.name, code: key.code };
 }
@@ -230,6 +236,7 @@ function changeRegistration(api, names, register, successCallback, errorCallback
     }
     for (var j = 0; j < names.length; j++) {
         if (register) {
+            warnIfExit(names[j]);
             registeredKeys[names[j]] = true;
         }
         else {
@@ -260,6 +267,7 @@ var tvinputdevice = {
     registerKey: function (name) {
         requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.registerKey");
         requireRegistrable(name);
+        warnIfExit(name);
         registeredKeys[name] = true;
     },
     unregisterKey: function (name) {
@@ -276,8 +284,9 @@ var tvinputdevice = {
 };
 config.keys = { isRegistered: isKeyRegistered };
 var LONG_PRESS_MS = 1000;
+var TERMINATE = "";
 var LONG_PRESS = {
-    Back: "Exit",
+    Back: TERMINATE,
     MediaRewind: "MediaTrackPrevious",
     MediaFastForward: "MediaTrackNext",
 };
@@ -302,19 +311,24 @@ function isTextField(target) {
     return tag === "input" || tag === "textarea" || element.isContentEditable;
 }
 function onMappedKeyDown(e, mapped) {
-    var longPress = LONG_PRESS[mapped];
-    if (!longPress) {
+    if (!LONG_PRESS.hasOwnProperty(mapped)) {
         if (!e.repeat) {
             pressRemoteKey(mapped);
         }
         return;
     }
+    var longPress = LONG_PRESS[mapped];
     if (held.keyCode === -1) {
         held.keyCode = e.keyCode;
         held.sentLongPress = false;
         held.timer = window.setTimeout(function () {
             held.sentLongPress = true;
-            pressRemoteKey(longPress);
+            if (longPress === TERMINATE) {
+                bridge.notify("application.terminate");
+            }
+            else {
+                pressRemoteKey(longPress);
+            }
         }, LONG_PRESS_MS);
     }
 }
