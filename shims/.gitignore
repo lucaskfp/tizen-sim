@@ -1,0 +1,4 @@
+node_modules/
+build/
+# The compiled bundle is committed: the Rust core embeds it.
+!/dist/

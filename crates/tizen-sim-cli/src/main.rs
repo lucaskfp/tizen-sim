@@ -27,6 +27,9 @@ enum Command {
         /// Run the Engine without a window.
         #[arg(long)]
         headless: bool,
+        /// Lenient Mode: allow calls a TV would refuse, reporting each as a Diagnostic.
+        #[arg(long)]
+        lenient: bool,
     },
 }
 
@@ -42,15 +45,17 @@ async fn main() -> Result<()> {
             app,
             profile,
             headless,
-        } => run(app, profile, headless).await,
+            lenient,
+        } => run(app, profile, headless, lenient).await,
     }
 }
 
-async fn run(app: PathBuf, profile: Option<String>, headless: bool) -> Result<()> {
+async fn run(app: PathBuf, profile: Option<String>, headless: bool, lenient: bool) -> Result<()> {
     let session = Session::start(SessionConfig {
         source: AppSource::ProjectFolder(app),
         profile,
         headless,
+        lenient,
         home: Home::from_env(),
     });
     let mut events = session.events();
@@ -63,6 +68,7 @@ async fn run(app: PathBuf, profile: Option<String>, headless: bool) -> Result<()
                 match event {
                     SessionEvent::EngineDownload(progress) => print_progress(&progress),
                     SessionEvent::Console(message) => println!("[console.{}] {}", message.level, message.text),
+                    SessionEvent::Diagnostic(diagnostic) => println!("[diagnostic:{}] {}", diagnostic.code, diagnostic.message),
                     SessionEvent::Lifecycle(lifecycle) => match lifecycle {
                         Lifecycle::Starting { app_id, profile } => {
                             println!("Starting {app_id} on Tizen {profile}");
@@ -77,6 +83,7 @@ async fn run(app: PathBuf, profile: Option<String>, headless: bool) -> Result<()
                             match reason {
                                 ExitReason::Stopped => println!("Stopped."),
                                 ExitReason::EngineClosed => println!("The Engine window was closed."),
+                                ExitReason::AppExited => println!("The App exited."),
                                 ExitReason::FailedToStart => {}
                             }
                             return Ok(());

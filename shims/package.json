@@ -1,0 +1,14 @@
+{
+  "name": "tizen-sim-shims",
+  "private": true,
+  "description": "In-page Shims of the Tizen platform APIs, compiled to ES5 so they run on every Engine down to M47.",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "build": "tsc && node scripts/bundle.mjs",
+    "check-es5": "node scripts/check-es5.mjs"
+  },
+  "devDependencies": {
+    "acorn": "8.19.0",
+    "typescript": "5.9.3"
+  }
+}

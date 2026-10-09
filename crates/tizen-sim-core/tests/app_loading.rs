@@ -44,3 +44,21 @@ fn missing_entry_point_file_is_named() {
     assert!(matches!(err, AppError::EntryPointMissing { .. }), "{err:?}");
     assert!(err.to_string().contains("main.html"), "{err}");
 }
+
+#[test]
+fn reads_name_version_package_and_privileges() {
+    let app = load("tizen-apis-privileged").unwrap();
+    assert_eq!(app.name(), "Tizen APIs fixture");
+    assert_eq!(app.version(), "1.2.3");
+    assert_eq!(app.package(), "Fixture005");
+    assert_eq!(
+        app.privileges(),
+        ["http://tizen.org/privilege/application.info"]
+    );
+}
+
+#[test]
+fn an_app_without_privileges_declares_none() {
+    let app = load("tizen-apis").unwrap();
+    assert!(app.privileges().is_empty());
+}

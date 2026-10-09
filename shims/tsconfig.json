@@ -1,0 +1,24 @@
+{
+  // TypeScript is pinned to 5.9: TypeScript 7 removed the ES5 target, and
+  // the Shims must run on Chromium M47 (Tizen 3.0).
+  "compilerOptions": {
+    "target": "ES5",
+    "lib": ["ES5", "DOM"],
+    "module": "none",
+    "outFile": "build/shims.js",
+    "strict": true,
+    "noEmitOnError": true,
+    "removeComments": true,
+    "newLine": "lf"
+  },
+  // Order matters: the files are concatenated into one script.
+  "files": [
+    "src/config.ts",
+    "src/bridge.ts",
+    "src/errors.ts",
+    "src/privileges.ts",
+    "src/systeminfo.ts",
+    "src/application.ts",
+    "src/install.ts"
+  ]
+}

@@ -1,6 +1,31 @@
 # Version Profiles: one entry per Tizen TV release.
 # Engine milestones: https://developer.samsung.com/smarttv/develop/specifications/web-engine-specifications.html
+#
+# `capabilities` answers tizen.systeminfo.getCapability; `device` holds the
+# values the system info Shims report. Values are plausible defaults for a TV
+# of that generation, not measurements of a specific model.
 
 [[profile]]
 version = "10.0"
 milestone = 130
+
+[profile.capabilities]
+"http://tizen.org/feature/platform.version" = "10.0"
+"http://tizen.org/feature/profile" = "TV"
+"http://tizen.org/feature/screen.width" = 1920
+"http://tizen.org/feature/screen.height" = 1080
+"http://tizen.org/feature/web.service" = true
+
+[profile.device]
+model = "TIZEN-SIM-TV"
+manufacturer = "tizen-sim"
+buildVersion = "T-SIM-10.0"
+resolutionWidth = 1920
+resolutionHeight = 1080
+dotsPerInch = 40
+physicalWidth = 1210
+physicalHeight = 680
+language = "en_US"
+country = "US"
+totalMemory = 3221225472
+availableMemory = 1610612736
