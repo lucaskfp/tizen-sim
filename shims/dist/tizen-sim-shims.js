@@ -39,23 +39,56 @@ function raiseDiagnostic(code, message) {
     }
     bridge.notify("diagnostic", { code: code, message: message });
 }
+var ERROR_CONSTANTS = {
+    INDEX_SIZE_ERR: 1,
+    DOMSTRING_SIZE_ERR: 2,
+    HIERARCHY_REQUEST_ERR: 3,
+    WRONG_DOCUMENT_ERR: 4,
+    INVALID_CHARACTER_ERR: 5,
+    NO_DATA_ALLOWED_ERR: 6,
+    NO_MODIFICATION_ALLOWED_ERR: 7,
+    NOT_FOUND_ERR: 8,
+    NOT_SUPPORTED_ERR: 9,
+    INUSE_ATTRIBUTE_ERR: 10,
+    INVALID_STATE_ERR: 11,
+    SYNTAX_ERR: 12,
+    INVALID_MODIFICATION_ERR: 13,
+    NAMESPACE_ERR: 14,
+    INVALID_ACCESS_ERR: 15,
+    VALIDATION_ERR: 16,
+    TYPE_MISMATCH_ERR: 17,
+    SECURITY_ERR: 18,
+    NETWORK_ERR: 19,
+    ABORT_ERR: 20,
+    URL_MISMATCH_ERR: 21,
+    QUOTA_EXCEEDED_ERR: 22,
+    TIMEOUT_ERR: 23,
+    INVALID_NODE_TYPE_ERR: 24,
+    DATA_CLONE_ERR: 25,
+};
 var ERROR_CODES = {
     NotFoundError: 8,
     NotSupportedError: 9,
-    InvalidValuesError: 0,
+    InvalidStateError: 11,
     TypeMismatchError: 17,
     SecurityError: 18,
-    UnknownError: 0,
+    NetworkError: 19,
+    AbortError: 20,
+    QuotaExceededError: 22,
+    TimeoutError: 23,
 };
 function webApiErrorType(isException) {
     var type = function (name, message) {
         this.name = name;
         this.message = message;
-        this.code = ERROR_CODES[name] || 0;
+        this.code = ERROR_CODES.hasOwnProperty(name) ? ERROR_CODES[name] : 0;
     };
     if (isException) {
         type.prototype = Object.create(Error.prototype);
         type.prototype.constructor = type;
+        for (var constant in ERROR_CONSTANTS) {
+            type[constant] = type.prototype[constant] = ERROR_CONSTANTS[constant];
+        }
     }
     return type;
 }
@@ -87,6 +120,19 @@ function requirePrivilege(privilege, api) {
         throw new WebAPIException("SecurityError", message);
     }
 }
+var SYSTEM_INFO_PROPERTY_IDS = [
+    "BATTERY", "CPU", "STORAGE", "DISPLAY", "DEVICE_ORIENTATION", "BUILD", "LOCALE", "NETWORK",
+    "WIFI_NETWORK", "ETHERNET_NETWORK", "CELLULAR_NETWORK", "NET_PROXY_NETWORK", "SIM", "PERIPHERAL",
+    "MEMORY", "VIDEOSOURCE", "CAMERA_FLASH", "ADS", "SERVICE_COUNTRY", "SOURCE_INFO", "PANEL",
+];
+function requirePropertyId(property) {
+    for (var i = 0; i < SYSTEM_INFO_PROPERTY_IDS.length; i++) {
+        if (SYSTEM_INFO_PROPERTY_IDS[i] === property) {
+            return;
+        }
+    }
+    throw new WebAPIException("TypeMismatchError", "Not a SystemInfoPropertyId: " + property);
+}
 function systemInfoProperty(property) {
     var device = config.profile.device;
     switch (property) {
@@ -96,6 +142,8 @@ function systemInfoProperty(property) {
                 manufacturer: device.manufacturer,
                 buildVersion: device.buildVersion,
             };
+        case "CPU":
+            return { load: device.cpuLoad };
         case "DISPLAY":
             return {
                 resolutionWidth: device.resolutionWidth,
@@ -108,9 +156,39 @@ function systemInfoProperty(property) {
             };
         case "LOCALE":
             return { language: device.language, country: device.country };
+        case "MEMORY":
+            return { status: "NORMAL" };
+        case "NETWORK":
+            return { networkType: device.networkType };
+        case "PANEL":
+            return { panelWidth: device.panelWidth, panelHeight: device.panelHeight };
         default:
             return null;
     }
+}
+function getProperty(property, successCallback, errorCallback, wrap) {
+    requirePropertyId(property);
+    requireFunction(successCallback, "successCallback");
+    var value = systemInfoProperty(property);
+    if (!value) {
+        failLater(errorCallback, "NotSupportedError", "Unsupported system info property: " + property);
+        return;
+    }
+    setTimeout(function () {
+        successCallback(wrap(value));
+    }, 0);
+}
+var nextPropertyListenerId = 1;
+var propertyListeners = {};
+function addPropertyListener(property, successCallback, errorCallback) {
+    requirePropertyId(property);
+    requireFunction(successCallback, "successCallback");
+    if (property === "PANEL" || !systemInfoProperty(property)) {
+        failLater(errorCallback, "NotSupportedError", "Can't watch system info property: " + property);
+    }
+    var id = nextPropertyListenerId++;
+    propertyListeners[id] = true;
+    return id;
 }
 var systeminfo = {
     getCapability: function (key) {
@@ -121,18 +199,27 @@ var systeminfo = {
         return capabilities[key];
     },
     getCount: function (property) {
+        requirePropertyId(property);
         return systemInfoProperty(property) ? 1 : 0;
     },
     getPropertyValue: function (property, successCallback, errorCallback) {
-        requireFunction(successCallback, "successCallback");
-        var value = systemInfoProperty(property);
-        if (!value) {
-            failLater(errorCallback, "NotSupportedError", "Unsupported system info property: " + property);
-            return;
-        }
-        setTimeout(function () {
-            successCallback(value);
-        }, 0);
+        getProperty(property, successCallback, errorCallback, function (value) {
+            return value;
+        });
+    },
+    getPropertyValueArray: function (property, successCallback, errorCallback) {
+        getProperty(property, successCallback, errorCallback, function (value) {
+            return [value];
+        });
+    },
+    addPropertyValueChangeListener: function (property, successCallback, options, errorCallback) {
+        return addPropertyListener(property, successCallback, errorCallback);
+    },
+    addPropertyValueArrayChangeListener: function (property, successCallback, options, errorCallback) {
+        return addPropertyListener(property, successCallback, errorCallback);
+    },
+    removePropertyValueChangeListener: function (listenerId) {
+        delete propertyListeners[listenerId];
     },
     getTotalMemory: function () {
         return config.profile.device.totalMemory;
@@ -141,6 +228,14 @@ var systeminfo = {
         return config.profile.device.availableMemory;
     },
 };
+if (parseFloat(config.profile.version) >= 8) {
+    systeminfo.getDeviceUptime = function () {
+        return Math.floor((new Date().getTime() - config.app.installedAt) / 1000);
+    };
+}
+var APP_INFO_PRIVILEGE = "http://tizen.org/privilege/application.info";
+var CONTEXT_ID = "1";
+var LAUNCHER_APP_ID = "tizen-sim.launcher";
 var currentAppInfo = {
     id: config.app.id,
     name: config.app.name,
@@ -152,20 +247,52 @@ var currentAppInfo = {
     size: 0,
     packageId: config.app.packageId,
 };
+Object.defineProperty(currentAppInfo, "size", {
+    enumerable: true,
+    get: function () {
+        requirePrivilege(APP_INFO_PRIVILEGE, "tizen.application ApplicationInformation.size");
+        return 0;
+    },
+});
+var requestedAppControl = {
+    appControl: {
+        operation: "http://tizen.org/appcontrol/operation/default",
+        uri: null,
+        mime: null,
+        category: null,
+        data: [],
+        launchMode: "SINGLE",
+    },
+    callerAppId: LAUNCHER_APP_ID,
+    replyResult: function () {
+        throw new WebAPIException("NotFoundError", "The caller app does not wait for a reply");
+    },
+    replyFailure: function () {
+        throw new WebAPIException("NotFoundError", "The caller app does not wait for a reply");
+    },
+};
 var currentApplication = {
     appInfo: currentAppInfo,
-    contextId: "1",
+    contextId: CONTEXT_ID,
     exit: function () {
         bridge.notify("application.exit");
     },
-    hide: function () { },
+    hide: function () {
+        bridge.notify("application.hide");
+    },
     getRequestedAppControl: function () {
-        return null;
+        return requestedAppControl;
     },
 };
 var application = {
     getCurrentApplication: function () {
         return currentApplication;
+    },
+    getAppContext: function (contextId) {
+        if (contextId === undefined || contextId === null || String(contextId) === CONTEXT_ID) {
+            return { id: CONTEXT_ID, appId: currentAppInfo.id };
+        }
+        throw new WebAPIException("NotFoundError", "No application context with id " + contextId);
     },
     getAppInfo: function (id) {
         if (id === undefined || id === null || id === currentAppInfo.id) {
@@ -174,7 +301,6 @@ var application = {
         throw new WebAPIException("NotFoundError", "No application with id " + id);
     },
     getAppsInfo: function (successCallback, errorCallback) {
-        requirePrivilege("http://tizen.org/privilege/application.info", "tizen.application.getAppsInfo");
         requireFunction(successCallback, "successCallback");
         setTimeout(function () {
             successCallback([currentAppInfo]);
@@ -215,8 +341,13 @@ function requireRegistrable(name) {
 }
 function warnIfExit(name) {
     if (name === "Exit") {
-        raiseDiagnostic("exit-key-registered", "Registering Exit captures the Back key's long press, which on a TV terminates the App; " +
-            "Samsung's guidelines say: do not register the Return/Exit key long-press.");
+        raiseDiagnostic("exit-key-registered", "Exit is registered, but the App will never receive it: on a TV, pressing Exit (or holding Back) " +
+            "makes the platform terminate the App.");
+    }
+}
+function requireOptionalFunction(value, argument) {
+    if (value !== undefined && value !== null) {
+        requireFunction(value, argument);
     }
 }
 function keyInfo(key) {
@@ -224,6 +355,11 @@ function keyInfo(key) {
 }
 function changeRegistration(api, names, register, successCallback, errorCallback) {
     requirePrivilege(TV_INPUT_PRIVILEGE, api);
+    if (Object.prototype.toString.call(names) !== "[object Array]") {
+        throw new WebAPIException("TypeMismatchError", "keyNames must be an array");
+    }
+    requireOptionalFunction(successCallback, "successCallback");
+    requireOptionalFunction(errorCallback, "errorCallback");
     try {
         for (var i = 0; i < names.length; i++) {
             requireRegistrable(names[i]);
@@ -261,8 +397,11 @@ var tvinputdevice = {
     },
     getKey: function (name) {
         requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.getKey");
+        if (typeof name !== "string" || name === "") {
+            throw new WebAPIException("InvalidValuesError", "Invalid key name: " + name);
+        }
         var key = findRemoteKey(name);
-        return key && !key.mandatory ? keyInfo(key) : null;
+        return key ? keyInfo(key) : null;
     },
     registerKey: function (name) {
         requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.registerKey");
@@ -342,17 +481,29 @@ function onKeyDown(e) {
         onMappedKeyDown(e, mapped);
         return;
     }
+    var key = unregisteredRemoteKey(e);
+    if (!key) {
+        return;
+    }
+    if (!e.repeat) {
+        var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
+        if (config.lenient) {
+            raiseDiagnostic("key-not-registered", reason + "; delivered anyway in Lenient Mode, a TV would drop it");
+        }
+        else {
+            bridge.notify("keys.dropped", { key: key.name, reason: reason });
+        }
+    }
+    if (!config.lenient) {
+        swallow(e);
+    }
+}
+function unregisteredRemoteKey(e) {
     var key = findRemoteKeyByCode(e.keyCode);
-    if (!key || key.mandatory || isKeyRegistered(key.name) || e.repeat || isTextField(e.target)) {
-        return;
+    if (!key || key.mandatory || isKeyRegistered(key.name) || isTextField(e.target)) {
+        return null;
     }
-    var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
-    if (config.lenient) {
-        raiseDiagnostic("key-not-registered", reason + "; delivered anyway in Lenient Mode, a TV would drop it");
-        return;
-    }
-    swallow(e);
-    bridge.notify("keys.dropped", { key: key.name, reason: reason });
+    return key;
 }
 function onKeyUp(e) {
     if (e.isTrusted === false) {
@@ -360,6 +511,9 @@ function onKeyUp(e) {
     }
     var mapped = config.keyMap[String(e.keyCode)];
     if (!mapped) {
+        if (unregisteredRemoteKey(e) && !config.lenient) {
+            swallow(e);
+        }
         return;
     }
     swallow(e);

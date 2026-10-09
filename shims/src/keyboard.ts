@@ -82,17 +82,35 @@ function onKeyDown(e: KeyboardEvent) {
     onMappedKeyDown(e, mapped);
     return;
   }
+  var key = unregisteredRemoteKey(e);
+  if (!key) {
+    return;
+  }
+  // A held key is reported once, not for every auto-repeat.
+  if (!e.repeat) {
+    var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
+    if (config.lenient) {
+      raiseDiagnostic("key-not-registered", reason + "; delivered anyway in Lenient Mode, a TV would drop it");
+    } else {
+      bridge.notify("keys.dropped", { key: key.name, reason: reason });
+    }
+  }
+  if (!config.lenient) {
+    swallow(e);
+  }
+}
+
+/**
+ * The Registrable Key this keyboard event produces, if the App hasn't
+ * registered it. Such a key never reaches the App: no keydown, no auto-repeat,
+ * no keyup (TD guides/text-input/input-device.md).
+ */
+function unregisteredRemoteKey(e: KeyboardEvent): RemoteKeyConfig | null {
   var key = findRemoteKeyByCode(e.keyCode);
-  if (!key || key.mandatory || isKeyRegistered(key.name) || e.repeat || isTextField(e.target)) {
-    return;
+  if (!key || key.mandatory || isKeyRegistered(key.name) || isTextField(e.target)) {
+    return null;
   }
-  var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
-  if (config.lenient) {
-    raiseDiagnostic("key-not-registered", reason + "; delivered anyway in Lenient Mode, a TV would drop it");
-    return;
-  }
-  swallow(e);
-  bridge.notify("keys.dropped", { key: key.name, reason: reason });
+  return key;
 }
 
 function onKeyUp(e: KeyboardEvent) {
@@ -101,6 +119,9 @@ function onKeyUp(e: KeyboardEvent) {
   }
   var mapped = config.keyMap[String(e.keyCode)];
   if (!mapped) {
+    if (unregisteredRemoteKey(e) && !config.lenient) {
+      swallow(e);
+    }
     return;
   }
   swallow(e);

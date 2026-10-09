@@ -31,7 +31,9 @@ What the **platform** does, distilled from the platform docs (see `tizen-docs.md
   - `visibilitychange` also fires when the App exits.
   - (TV: `guides/fundamentals/multitasking.html`; TD: `guides/concepts/web-runtime.md`)
 - **`getCurrentApplication().hide()`** sends the App to the background, with the same events. (`application.html#Application::hide`)
-- **Background support.** `<tizen:setting background-support="enable"/>`, together with a background category, keeps it running in the background; the default is disabled. (TD: `reference/config-xml.md`)
+- **Background support.** `<tizen:setting background-support="enable"/>`, together with a background category, keeps it running in the background; the default is disabled. With `background-support` alone, "a web application process can be suspended in the background", so tizen-sim suspends it. (TD: `reference/config-xml.md`)
+- **`getRequestedAppControl()`** never returns `null`. The docs don't say what a plain launch from Smart Hub reports. The `http://tizen.org/appcontrol/operation/default` operation comes from the native app-control docs (`APP_CONTROL_OPERATION_DEFAULT`), and the `callerAppId` value is **unverified**. (`application.html#Application::getRequestedAppControl`)
+- **`getAppContext(contextId?)`** returns `{id, appId}`; without an id, the calling App's context; an unknown id throws `NotFoundError`. (`application.html#ApplicationManager::getAppContext`)
 - **After exit,** no state is kept. JavaScript stops, and the next launch starts fresh. (TV: terminating-applications)
 
 ## `config.xml`
@@ -68,7 +70,7 @@ Sources: TD `reference/config-xml.md`, TD `guides/development/setting-properties
 Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.md`, TV configuring-tv-applications.
 
 - **Levels:** public, partner, platform.
-  - A public App that declares a partner- or platform-level privilege fails to install.
+  - A public App that declares a partner- or platform-level privilege fails to install. The Web API table lists nine of them: `appmanager.certificate`, `appmanager.kill`, `networkbearerselection`, `systemmanager`, `tee.client` (partner); `bluetoothmanager`, `bookmark.read`, `bookmark.write`, `packagemanager.install` (platform).
   - Calling an API whose privilege isn't declared throws `SecurityError` at runtime.
 - **TV-relevant public privileges:**
   - `tv.inputdevice`, `tv.window`, `tv.display`
@@ -100,7 +102,9 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
 
 Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/system-information.md`.
 
-- **`getPropertyValue` errors.** A string that isn't a `SystemInfoPropertyId` throws `TypeMismatchError` synchronously. A valid but unsupported property goes to the error callback as `NotSupportedError`.
+- **`getPropertyValue` errors.** A string that isn't a `SystemInfoPropertyId` throws `TypeMismatchError` synchronously. A valid but unsupported property goes to the error callback as `NotSupportedError`. `getPropertyValueArray` and `getCount` validate the same way; `getCount` returns 0 for an unsupported property.
+- **Change listeners.** `addPropertyValueChangeListener` returns an id. A listener on a property that never changes (e.g. BUILD) is accepted but never invoked. PANEL can't be watched: the error callback gets `NotSupportedError`. `removePropertyValueChangeListener` throws `InvalidValuesError` for invalid input; whether an unknown id counts is **unverified**, so tizen-sim ignores it.
+- **`getDeviceUptime()`** (since 8.0) returns seconds since boot.
 - **Properties on TV:** BUILD, CPU, DISPLAY, LOCALE, MEMORY, NETWORK, WIFI_NETWORK, ETHERNET_NETWORK, NET_PROXY_NETWORK, PERIPHERAL, STORAGE, VIDEOSOURCE, ADS, SERVICE_COUNTRY, SOURCE_INFO, PANEL.
 - **`LOCALE`:** both `language` and `country` are `LANGUAGE_REGION`, e.g. `en_US`.
 - **`http://tizen.org/feature/platform.version`** has the form `Major.Minor.Patch`, e.g. `9.0.0`.

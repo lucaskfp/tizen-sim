@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://example.com/required-version-too-high" version="1.0.0">
+    <tizen:application id="Fixture008.TooNew" package="Fixture008" required_version="99.0"/>
+    <content src="index.html"/>
+    <name>Required version too high fixture</name>
+    <tizen:profile name="tv"/>
+</widget>

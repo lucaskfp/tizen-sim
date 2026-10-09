@@ -44,14 +44,24 @@ function requireRegistrable(name: string) {
   }
 }
 
-/** Exit is the Back key's long press, which Samsung says Apps must not register. */
+/**
+ * Registering Exit succeeds, but on a TV the platform terminates the App
+ * instead of delivering it (development checklist, common.html CO-US-04).
+ */
 function warnIfExit(name: string) {
   if (name === "Exit") {
     raiseDiagnostic(
       "exit-key-registered",
-      "Registering Exit captures the Back key's long press, which on a TV terminates the App; " +
-        "Samsung's guidelines say: do not register the Return/Exit key long-press.",
+      "Exit is registered, but the App will never receive it: on a TV, pressing Exit (or holding Back) " +
+        "makes the platform terminate the App.",
     );
+  }
+}
+
+/** Throws TypeMismatchError unless `value` is a function, null or undefined. */
+function requireOptionalFunction(value: any, argument: string) {
+  if (value !== undefined && value !== null) {
+    requireFunction(value, argument);
   }
 }
 
@@ -67,6 +77,13 @@ function changeRegistration(
   errorCallback?: (e: WebAPIException) => void,
 ) {
   requirePrivilege(TV_INPUT_PRIVILEGE, api);
+  // Wrong argument types throw synchronously; invalid names go to the error
+  // callback (tvinputdevice.html#TVInputDeviceManager::registerKeyBatch).
+  if (Object.prototype.toString.call(names) !== "[object Array]") {
+    throw new WebAPIException("TypeMismatchError", "keyNames must be an array");
+  }
+  requireOptionalFunction(successCallback, "successCallback");
+  requireOptionalFunction(errorCallback, "errorCallback");
   try {
     for (var i = 0; i < names.length; i++) {
       requireRegistrable(names[i]);
@@ -102,10 +119,16 @@ var tvinputdevice = {
     return supported;
   },
 
+  // InvalidValuesError for an invalid name such as "", null for an unsupported
+  // key (tvinputdevice.html#TVInputDeviceManager::getKey). Mandatory Keys are
+  // returned too: the doc doesn't exclude them. Unverified on a TV.
   getKey: function (name: string) {
     requirePrivilege(TV_INPUT_PRIVILEGE, "tizen.tvinputdevice.getKey");
+    if (typeof name !== "string" || name === "") {
+      throw new WebAPIException("InvalidValuesError", "Invalid key name: " + name);
+    }
     var key = findRemoteKey(name);
-    return key && !key.mandatory ? keyInfo(key) : null;
+    return key ? keyInfo(key) : null;
   },
 
   registerKey: function (name: string) {

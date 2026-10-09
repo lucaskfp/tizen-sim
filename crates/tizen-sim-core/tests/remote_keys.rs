@@ -18,6 +18,18 @@ async fn tap(session: &tizen_sim_core::session::Session, key: PhysicalKey) {
     session.physical_key(key, KeyAction::Up).await.unwrap();
 }
 
+/// Holds a key long enough to auto-repeat twice.
+async fn hold(session: &tizen_sim_core::session::Session, key: PhysicalKey) {
+    for action in [
+        KeyAction::Down,
+        KeyAction::Repeat,
+        KeyAction::Repeat,
+        KeyAction::Up,
+    ] {
+        session.physical_key(key, action).await.unwrap();
+    }
+}
+
 fn dropped(event: &SessionEvent, key: &str) -> bool {
     matches!(event, SessionEvent::RemoteKey { key: k, outcome: KeyOutcome::Dropped { reason } }
         if k == key && reason.contains("not registered"))
@@ -133,31 +145,116 @@ async fn a_long_press_of_back_terminates_the_app() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1300)).await;
-    expect_event(&mut t.events, 10, |e| {
-        matches!(
-            e,
-            SessionEvent::Lifecycle(Lifecycle::Exited {
-                reason: ExitReason::TerminatedByRemote
-            })
-        )
-    })
-    .await;
+    expect_event(&mut t.events, 10, terminated_by_remote).await;
 }
 
+fn terminated_by_remote(event: &SessionEvent) -> bool {
+    matches!(
+        event,
+        SessionEvent::Lifecycle(Lifecycle::Exited {
+            reason: ExitReason::TerminatedByRemote
+        })
+    )
+}
+
+/// The Exit key closes the App and shows the TV channel screen (Samsung's
+/// development checklist, CO-US-04; CO-GE-07: "When the return or exit key is
+/// clicked, the application is terminated"). Registering it changes nothing.
 #[tokio::test]
-async fn registering_the_exit_key_raises_a_diagnostic() {
+async fn the_exit_key_terminates_the_app_even_when_registered() {
     let mut t = start("remote-keys");
     t.session.wait_until_loaded().await.unwrap();
     t.session
         .evaluate("tizen.tvinputdevice.registerKey('Exit'); 0")
         .await
         .unwrap();
-    expect_event(
-        &mut t.events,
-        10,
-        |e| matches!(e, SessionEvent::Diagnostic(d) if d.code == "exit-key-registered"),
-    )
+    t.session.press_key("Exit").await.unwrap();
+    // Reported as dropped: the App never gets it.
+    expect_event(&mut t.events, 10, |e| {
+        matches!(e, SessionEvent::RemoteKey { key, outcome: KeyOutcome::Dropped { .. } } if key == "Exit")
+    })
     .await;
+    expect_event(&mut t.events, 10, terminated_by_remote).await;
+}
+
+#[tokio::test]
+async fn registering_the_exit_key_raises_a_diagnostic_saying_it_never_arrives() {
+    let mut t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    t.session
+        .evaluate("tizen.tvinputdevice.registerKey('Exit'); 0")
+        .await
+        .unwrap();
+    expect_event(&mut t.events, 10, |e| {
+        matches!(e, SessionEvent::Diagnostic(d)
+            if d.code == "exit-key-registered" && d.message.contains("never receive"))
+    })
+    .await;
+    t.session.stop().await;
+}
+
+/// tvinputdevice.html#TVInputDeviceManager::getKey: null only for an
+/// unsupported key, InvalidValuesError for an invalid name such as "".
+#[tokio::test]
+async fn get_key_rejects_invalid_names_and_returns_null_for_unsupported_ones() {
+    let t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    let result = t
+        .session
+        .evaluate(
+            "(function () {                var d = tizen.tvinputdevice, invalid;                try { d.getKey(''); invalid = 'no error'; } catch (e) { invalid = e.name; }                var red = d.getKey('ColorF0Red'), enter = d.getKey('Enter');                return [invalid, d.getKey('NotAKey'), red.name + ':' + red.code,                        enter && enter.name + ':' + enter.code]; })()",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result,
+        json!(["InvalidValuesError", null, "ColorF0Red:403", "Enter:13"])
+    );
+    t.session.stop().await;
+}
+
+/// tvinputdevice.html#TVInputDeviceManager::registerKeyBatch: arguments of the
+/// wrong type throw TypeMismatchError synchronously.
+#[tokio::test]
+async fn batch_methods_reject_arguments_of_the_wrong_type_synchronously() {
+    let t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    let result = t
+        .session
+        .evaluate(
+            "(function () {                function attempt(f) { try { f(); return 'no error'; } catch (e) { return e.name; } }                var d = tizen.tvinputdevice;                return [                  attempt(function () { d.registerKeyBatch('ColorF0Red'); }),                  attempt(function () { d.registerKeyBatch(['ColorF0Red'], 'not a function'); }),                  attempt(function () { d.unregisterKeyBatch(['ColorF0Red'], null, {}); }),                  attempt(function () { d.registerKeyBatch(['ColorF0Red'], null, null); })                ]; })()",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result,
+        json!([
+            "TypeMismatchError",
+            "TypeMismatchError",
+            "TypeMismatchError",
+            "no error"
+        ])
+    );
+    t.session.stop().await;
+}
+
+/// An unregistered key produces neither keydown nor keyup (TD
+/// guides/text-input/input-device.md), auto-repeats included.
+#[tokio::test]
+async fn an_unregistered_key_sends_no_repeat_and_no_keyup() {
+    let t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    hold(&t.session, DIGIT_0).await;
+    t.session
+        .evaluate("tizen.tvinputdevice.registerKey('1'); 0")
+        .await
+        .unwrap();
+    hold(&t.session, PhysicalKey(49)).await;
+    eventually_equals(&t.session, "window.keyUpLog", json!([49])).await;
+    assert_eq!(
+        t.session.evaluate("window.keyLog").await.unwrap(),
+        json!([49, 49, 49])
+    );
     t.session.stop().await;
 }
 
