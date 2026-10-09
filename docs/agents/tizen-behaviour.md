@@ -41,6 +41,7 @@ What the **platform** does, distilled from the platform docs (see `tizen-docs.md
 Sources: TD `reference/config-xml.md`, TD `guides/development/setting-properties.md`, TV `guides/fundamentals/configuring-tv-applications.html`.
 
 - **Root and file.** `config.xml` is required at the package root, with a W3C `<widget>` root.
+- **Packages.** A `.wgt` is a zip archive packaged per the W3C Widget Packaging spec. It may carry W3C widget signatures (`author-signature.xml`, `signature1.xml`). A TV refuses a Package whose signature is invalid. tizen-sim doesn't verify signatures, because signing is out of scope. (TD `guides/concepts/web-runtime.md`, "Web application signature")
 - **`<widget version>`** has the form `[0-255].[0-255].[0-65535]`.
 - **Exactly one `<tizen:application>`,** and all of its attributes are mandatory:
   - `package`: 10 alphanumeric characters.
@@ -87,6 +88,13 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
 - **CSP.** The default is `default-src *; script-src 'self'; style-src 'self'; object-src 'none';`. A CSP in `config.xml` replaces it. If the HTTP response also sends one, the stricter applies. Only the first occurrence of each element counts.
 - **`allow-navigation`** controls link navigation and `window.open` to external URLs.
 - (TD `guides/concepts/web-runtime.md`, `reference/config-xml.md`)
+- **Report-only alone.** The doc counts `-report-only` as a `config.xml` CSP that makes the runtime ignore the default, so an App with only a report-only policy would have nothing enforced. That reading is **unverified**.
+- **`<access>` in WARP mode** follows the W3C Widget Access Request Policy (https://www.w3.org/TR/widgets-access/, linked from web-runtime.md):
+  - `origin` is `*` (all access) or an IRI with only scheme and authority. An element without `origin`, or whose origin has a path, query, fragment, user info or no host, is ignored.
+  - `subdomains` is a boolean that case-sensitively matches `true` or `false` after trimming. It defaults to false, and any other value is false (W3C Widget Packaging, "Boolean attribute").
+  - A URL is granted when scheme, host (case-insensitive) and port (the default for the scheme when absent) match. With `subdomains="true"`, any subdomain of a domain-name host matches too. IP addresses have no subdomains.
+  - The grants are the union of all `<access>` elements.
+  - Which schemes the Tizen runtime supports for `<access>` is **unverified**. tizen-sim accepts http, https, ws and wss.
 - **CORS:** TD `guides/w3c/security/cors.md` describes standard CORS. ADR-0003's premise that packaged Apps skip browser CORS has **no primary source yet**; resolve it before #32.
 
 ## Errors

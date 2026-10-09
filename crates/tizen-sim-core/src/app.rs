@@ -1,11 +1,15 @@
 //! App loading: turns an App Source into an App by reading its `config.xml`.
+//! A Package is unpacked first, then read like a Project Folder.
 //!
 //! What a TV checks when it installs the App is checked here too, so an App
 //! that wouldn't install fails to load (TD reference/config-xml.md,
 //! guides/concepts/web-runtime.md, reference/security-privileges.md).
 
 use crate::profile::VersionProfile;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use url::{Host, Url};
 
 const WIDGET_NS: &str = "http://www.w3.org/ns/widgets";
 const TIZEN_NS: &str = "http://tizen.org/ns/widgets";
@@ -15,6 +19,9 @@ const TIZEN_NS: &str = "http://tizen.org/ns/widgets";
 pub enum AppSource {
     /// A directory containing the App's unpacked files, including `config.xml`.
     ProjectFolder(PathBuf),
+    /// A packaged App: a `.wgt` file, which is a zip archive (W3C Widget
+    /// Packaging, which TD guides/concepts/web-runtime.md follows).
+    Package(PathBuf),
 }
 
 /// A Tizen TV web application, as declared by its `config.xml`.
@@ -29,7 +36,50 @@ pub struct App {
     background_support: bool,
     background_categories: Vec<String>,
     entry_point: String,
+    access_policy: AccessPolicy,
     root: PathBuf,
+    /// Where a Package was unpacked; removed once the last clone is dropped.
+    _unpacked: Option<Arc<tempfile::TempDir>>,
+}
+
+/// The network and navigation rules an App declares in its `config.xml`
+/// (TD guides/concepts/web-runtime.md, "Content security policy").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessPolicy {
+    /// No CSP element: network access is governed by the `<access>`
+    /// elements, per the W3C Widget Access Request Policy (WARP).
+    Warp(Vec<AccessRequest>),
+    /// At least one `tizen:content-security-policy`, `-report-only` or
+    /// `tizen:allow-navigation` element.
+    Csp(CspPolicy),
+}
+
+/// The CSP-mode elements, each its first occurrence ("if more than 1, the
+/// first occurrence is applied", TD reference/config-xml.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CspPolicy {
+    /// `<tizen:content-security-policy>`, trimmed.
+    pub policy: Option<String>,
+    /// `<tizen:content-security-policy-report-only>`, trimmed.
+    pub report_only: Option<String>,
+    /// The domains in `<tizen:allow-navigation>`, e.g. `tizen.org *.tizen.org`.
+    pub allow_navigation: Option<Vec<String>>,
+}
+
+/// One `<access>` element, as the WARP "rule for processing an access
+/// element" adds it to the access-request list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessRequest {
+    /// `origin="*"`: all network access.
+    Any,
+    Origin {
+        scheme: String,
+        /// Lowercase and, for http(s), IDNA-encoded, as the WARP rule requires.
+        host: String,
+        /// The explicit port, or the scheme's default.
+        port: u16,
+        subdomains: bool,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -85,6 +135,18 @@ pub enum AppError {
     RequiresNewerTizen { required: String, profile: String },
     #[error("entry point `{entry_point}` declared in config.xml does not exist in {root}")]
     EntryPointMissing { root: PathBuf, entry_point: String },
+    #[error("could not read the Package {path}: {source}")]
+    PackageUnreadable {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{path} is not a valid Package (a .wgt zip archive): {message}")]
+    PackageCorrupt { path: PathBuf, message: String },
+    #[error("could not unpack the Package {path}: {source}")]
+    UnpackFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Privileges above the public level, which a public App may not declare:
@@ -112,9 +174,18 @@ const RESTRICTED_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 impl App {
+    /// Reads the App from its source. A Package is unpacked into a fresh
+    /// temporary directory, which becomes the App's root and lasts as long
+    /// as the App and its clones.
     pub fn load(source: &AppSource) -> Result<App, AppError> {
         match source {
-            AppSource::ProjectFolder(root) => load_folder(root),
+            AppSource::ProjectFolder(root) => load_folder(root, root),
+            AppSource::Package(wgt) => {
+                let unpacked = unpack(wgt)?;
+                let mut app = load_folder(unpacked.path(), wgt)?;
+                app._unpacked = Some(Arc::new(unpacked));
+                Ok(app)
+            }
         }
     }
 
@@ -173,15 +244,22 @@ impl App {
         &self.entry_point
     }
 
+    /// The App's network and navigation rules.
+    pub fn access_policy(&self) -> &AccessPolicy {
+        &self.access_policy
+    }
+
     /// The directory the App's files are served from.
     pub fn root(&self) -> &Path {
         &self.root
     }
 }
 
-fn load_folder(root: &Path) -> Result<App, AppError> {
-    let path = root.join("config.xml");
-    let text = match std::fs::read_to_string(&path) {
+/// Reads the App in `root`. Errors name files under `shown_as` instead, so
+/// a Package's problems point at the `.wgt`, not where it was unpacked.
+fn load_folder(root: &Path, shown_as: &Path) -> Result<App, AppError> {
+    let path = shown_as.join("config.xml");
+    let text = match std::fs::read_to_string(root.join("config.xml")) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(AppError::ConfigMissing { path });
@@ -312,10 +390,11 @@ fn load_folder(root: &Path) -> Result<App, AppError> {
         .to_string();
     if !root.join(&entry_point).is_file() {
         return Err(AppError::EntryPointMissing {
-            root: root.to_path_buf(),
+            root: shown_as.to_path_buf(),
             entry_point,
         });
     }
+    let access_policy = access_policy(widget);
 
     Ok(App {
         id,
@@ -327,8 +406,189 @@ fn load_folder(root: &Path) -> Result<App, AppError> {
         background_support,
         background_categories,
         entry_point,
+        access_policy,
         root: root.to_path_buf(),
+        _unpacked: None,
     })
+}
+
+/// Unpacks a Package into a new temporary directory.
+fn unpack(wgt: &Path) -> Result<tempfile::TempDir, AppError> {
+    let corrupt = |message: String| AppError::PackageCorrupt {
+        path: wgt.to_path_buf(),
+        message,
+    };
+    let unpack_failed = |source| AppError::UnpackFailed {
+        path: wgt.to_path_buf(),
+        source,
+    };
+    let file = std::fs::File::open(wgt).map_err(|source| AppError::PackageUnreadable {
+        path: wgt.to_path_buf(),
+        source,
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| corrupt(e.to_string()))?;
+    let dir = tempfile::Builder::new()
+        .prefix("tizen-sim-package-")
+        .tempdir()
+        .map_err(unpack_failed)?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| corrupt(e.to_string()))?;
+        let name = entry
+            .name()
+            .map_err(|e| corrupt(e.to_string()))?
+            .to_string();
+        let Some(relative) = entry.enclosed_name() else {
+            return Err(corrupt(format!(
+                "entry `{name}` points outside the Package"
+            )));
+        };
+        if entry.is_symlink() {
+            return Err(corrupt(format!(
+                "entry `{name}` is a symbolic link, which tizen-sim does not unpack"
+            )));
+        }
+        let target = dir.path().join(relative);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&target).map_err(unpack_failed)?;
+            continue;
+        }
+        let mut contents = Vec::new();
+        entry
+            .read_to_end(&mut contents)
+            .map_err(|e| corrupt(format!("entry `{name}`: {e}")))?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(unpack_failed)?;
+        }
+        std::fs::write(&target, contents).map_err(unpack_failed)?;
+    }
+    Ok(dir)
+}
+
+fn access_policy(widget: roxmltree::Node) -> AccessPolicy {
+    let first_text = |name: &str| {
+        widget
+            .children()
+            .find(|n| n.has_tag_name((TIZEN_NS, name)))
+            .map(|n| n.text().unwrap_or_default().trim().to_string())
+    };
+    let policy = first_text("content-security-policy");
+    let report_only = first_text("content-security-policy-report-only");
+    let allow_navigation = first_text("allow-navigation")
+        .map(|domains| domains.split_ascii_whitespace().map(String::from).collect());
+    if policy.is_some() || report_only.is_some() || allow_navigation.is_some() {
+        return AccessPolicy::Csp(CspPolicy {
+            policy,
+            report_only,
+            allow_navigation,
+        });
+    }
+    AccessPolicy::Warp(
+        widget
+            .children()
+            .filter(|n| n.has_tag_name((WIDGET_NS, "access")))
+            .filter_map(AccessRequest::from_element)
+            .collect(),
+    )
+}
+
+impl AccessPolicy {
+    /// In WARP mode, whether the `<access>` elements grant access to `url`;
+    /// `None` in CSP mode, where they aren't used.
+    pub fn warp_grants(&self, url: &str) -> Option<bool> {
+        match self {
+            AccessPolicy::Warp(requests) => Some(requests.iter().any(|r| r.grants(url))),
+            AccessPolicy::Csp(_) => None,
+        }
+    }
+}
+
+impl CspPolicy {
+    /// The policy the runtime enforces when `config.xml` defines none (TD
+    /// guides/concepts/web-runtime.md).
+    pub const DEFAULT: &str =
+        "default-src *; script-src 'self'; style-src 'self'; object-src 'none';";
+
+    /// The enforced policy: the `config.xml` CSP, or else the default. The
+    /// doc counts a report-only policy as a `config.xml` CSP that makes the
+    /// runtime ignore the default, so with only a report-only policy nothing
+    /// is enforced; that reading is unverified on a TV.
+    pub fn enforced(&self) -> Option<&str> {
+        match (&self.policy, &self.report_only) {
+            (Some(policy), _) => Some(policy),
+            (None, Some(_)) => None,
+            (None, None) => Some(Self::DEFAULT),
+        }
+    }
+}
+
+/// Schemes an `<access>` origin may use. WARP leaves the set to the user
+/// agent; which ones the Tizen runtime supports is unverified.
+const ACCESS_SCHEMES: &[&str] = &["http", "https", "ws", "wss"];
+
+impl AccessRequest {
+    /// W3C WARP, "Rule for processing an access element": `None` for an
+    /// element in error, which is ignored.
+    fn from_element(element: roxmltree::Node) -> Option<AccessRequest> {
+        let origin = single_attribute_value(element.attribute("origin")?);
+        if origin == "*" {
+            return Some(AccessRequest::Any);
+        }
+        // Only scheme and authority, with a host and no user info. The url
+        // crate lowercases hosts and IDNA-encodes http(s) ones.
+        let url = Url::parse(&origin).ok()?;
+        let only_scheme_and_authority = url.username().is_empty()
+            && url.password().is_none()
+            && matches!(url.path(), "" | "/")
+            && url.query().is_none()
+            && url.fragment().is_none();
+        if !only_scheme_and_authority || !ACCESS_SCHEMES.contains(&url.scheme()) {
+            return None;
+        }
+        Some(AccessRequest::Origin {
+            scheme: url.scheme().to_string(),
+            host: url.host()?.to_string(),
+            port: url.port_or_known_default()?,
+            // A valid boolean case-sensitively matches `true` or `false`;
+            // anything else is false (W3C Widget Packaging, "Boolean attribute").
+            subdomains: element
+                .attribute("subdomains")
+                .is_some_and(|value| single_attribute_value(value) == "true"),
+        })
+    }
+
+    /// W3C WARP, "Rules for Granting Access to a Network Resource".
+    pub fn grants(&self, url: &str) -> bool {
+        let AccessRequest::Origin {
+            scheme,
+            host,
+            port,
+            subdomains,
+        } = self
+        else {
+            return true;
+        };
+        let Ok(url) = Url::parse(url) else {
+            return false;
+        };
+        let Some(candidate) = url.host() else {
+            return false;
+        };
+        // Subdomains only exist for domain names, not IP addresses.
+        let candidate_name = candidate.to_string();
+        let host_matches = candidate_name == *host
+            || (*subdomains
+                && matches!(candidate, Host::Domain(_))
+                && candidate_name.ends_with(&format!(".{host}")));
+        url.scheme() == scheme && host_matches && url.port_or_known_default() == Some(*port)
+    }
+}
+
+/// W3C Widget Packaging, "Rule for Getting a Single Attribute Value": runs
+/// of space characters collapse into one, and the ends are trimmed.
+fn single_attribute_value(value: &str) -> String {
+    value.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn is_alphanumeric(text: &str) -> bool {

@@ -26,7 +26,7 @@ enum Command {
 
 #[derive(Args)]
 struct RunArgs {
-    /// A Project Folder containing config.xml.
+    /// A Project Folder containing config.xml, or a Package (.wgt file).
     app: PathBuf,
     /// Version Profile to use (defaults to the latest).
     #[arg(long)]
@@ -58,13 +58,25 @@ impl RunArgs {
                 .with_context(|| format!("--map-key {mapping}"))?;
         }
         Ok(SessionConfig {
-            source: AppSource::ProjectFolder(self.app),
+            source: app_source(self.app),
             profile: self.profile,
             headless: self.headless,
             lenient: self.lenient,
             key_map,
             home: Home::from_env(),
         })
+    }
+}
+
+/// A `.wgt` file is a Package; anything else is taken for a Project Folder.
+fn app_source(path: PathBuf) -> AppSource {
+    let is_package = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("wgt"));
+    if is_package {
+        AppSource::Package(path)
+    } else {
+        AppSource::ProjectFolder(path)
     }
 }
 
@@ -101,7 +113,7 @@ async fn run(config: SessionConfig) -> Result<()> {
                         HotReload::FilesChanged { paths } => println!("[changed] {}", paths.join(", ")),
                         HotReload::StylesSwapped => println!("Stylesheets swapped in place."),
                         HotReload::Reloaded => println!("App reloaded."),
-                        HotReload::Restarted { app_id } => println!("config.xml changed: restarted {app_id}."),
+                        HotReload::Restarted { app_id } => println!("Re-read the App and restarted {app_id}."),
                         HotReload::Failed { error } => println!("[hot reload failed] {error}"),
                     },
                     SessionEvent::Lifecycle(lifecycle) => match lifecycle {

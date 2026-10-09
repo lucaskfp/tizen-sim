@@ -51,19 +51,21 @@ pub enum SessionEvent {
     HotReload(HotReload),
 }
 
-/// The Session following edits to its Project Folder.
+/// The Session following edits to its Project Folder or Package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotReload {
     /// Files changed together; paths relative to the Project Folder,
-    /// `/`-separated. One of the other events follows.
+    /// `/`-separated, or the Package's file name. One of the other events
+    /// follows.
     FilesChanged { paths: Vec<String> },
     /// Only stylesheets changed, and they were swapped in place: the page
     /// keeps its state.
     StylesSwapped,
     /// The App was reloaded to pick up the changes.
     Reloaded,
-    /// `config.xml` changed, so the App was re-read (privileges, Access
-    /// Policy, entry point) and started afresh.
+    /// `config.xml` or the Package changed, so the App was re-read (a
+    /// Package unpacked again) and started afresh with its new privileges,
+    /// Access Policy and entry point.
     Restarted { app_id: String },
     /// The changes couldn't be applied; the App keeps running as it was.
     Failed { error: String },
@@ -293,9 +295,11 @@ struct Running {
     app_exit: mpsc::UnboundedReceiver<ExitReason>,
     /// Fires each time the page finishes loading.
     page_loads: mpsc::UnboundedReceiver<()>,
-    /// The id of the running App, which a restart may not change.
-    app_id: String,
-    /// Changes to the Project Folder; `None` if it can't be watched.
+    /// The running App, whose id a restart may not change. It owns an
+    /// unpacked Package's files, so they last until it is replaced.
+    app: App,
+    /// Changes to the Project Folder or Package; `None` if it can't be
+    /// watched.
     watcher: Option<FolderWatcher>,
 }
 
@@ -473,7 +477,7 @@ impl Inner {
         }
     }
 
-    /// Applies a batch of Project Folder changes to the running App.
+    /// Applies a batch of Project Folder or Package changes to the running App.
     async fn hot_reload(&self, config: &SessionConfig, running: &mut Running, batch: Batch) {
         self.publish_hot_reload(HotReload::FilesChanged {
             paths: batch.paths.clone(),
@@ -483,7 +487,12 @@ impl Inner {
         if let Err(error) = self.resume().await {
             tracing::warn!(%error, "could not bring the App back before a hot reload");
         }
-        let result = match batch.action() {
+        // A new Package may hold any change, config.xml included.
+        let action = match config.source {
+            AppSource::ProjectFolder(_) => batch.action(),
+            AppSource::Package(_) => Action::Restart,
+        };
+        let result = match action {
             Action::SwapStyles => self.swap_styles(running).await,
             Action::Reload => self.reload(running).await,
             Action::Restart => self.restart(config, running).await,
@@ -517,11 +526,11 @@ impl Inner {
         Ok(())
     }
 
-    /// Re-reads `config.xml` and starts the App afresh in the same Engine.
-    /// This approximates reinstalling and relaunching the App, keeping its
-    /// Engine data; it is a simulator shortcut, not documented TV behaviour.
-    /// The dev server keeps serving the same Project Folder; only the Session
-    /// data the Shims see changes.
+    /// Re-reads the App (unpacking a Package again) and starts it afresh in
+    /// the same Engine. This approximates reinstalling and relaunching the
+    /// App, keeping its Engine data; it is a simulator shortcut, not
+    /// documented TV behaviour. If the new App can't be loaded, the old one
+    /// keeps running from its files.
     async fn restart(&self, config: &SessionConfig, running: &mut Running) -> Result<(), String> {
         let loaded = self.loaded.get().ok_or("the App is not loaded yet")?;
         let app = App::load(&config.source).map_err(|e| e.to_string())?;
@@ -529,13 +538,14 @@ impl Inner {
             .map_err(|e| e.to_string())?;
         // The Engine's data belongs to the App id, so another App would
         // inherit this one's storage.
-        if app.id() != running.app_id {
+        if app.id() != running.app.id() {
             return Err(format!(
                 "the application id changed from {} to {}; restart the Session to run the new App",
-                running.app_id,
+                running.app.id(),
                 app.id()
             ));
         }
+        running.server.set_root(app.root());
         running.server.set_shim_data(shim::session_data(
             &app,
             loaded.profile,
@@ -546,9 +556,11 @@ impl Inner {
             .runs_in_background
             .store(app.runs_in_background(), Ordering::SeqCst);
         let url = running.server.url(app.entry_point());
+        // Replacing the App removes the previous Package's unpacked files.
+        running.app = app;
         load_page(running, "Page.navigate", json!({ "url": url })).await?;
         self.publish_hot_reload(HotReload::Restarted {
-            app_id: app.id().to_string(),
+            app_id: running.app.id().to_string(),
         });
         Ok(())
     }
@@ -642,21 +654,23 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     // Watch before the first load, so no edit made once the App is up is missed.
     let watcher = match &config.source {
-        AppSource::ProjectFolder(root) => FolderWatcher::start(root)
-            .inspect_err(|error| {
-                tracing::warn!(%error, "could not watch the Project Folder; hot reload is off");
-            })
-            .ok(),
-    };
+        AppSource::ProjectFolder(root) => FolderWatcher::start(root),
+        AppSource::Package(wgt) => FolderWatcher::start_file(wgt),
+    }
+    .inspect_err(
+        |error| tracing::warn!(%error, "could not watch the App Source; hot reload is off"),
+    )
+    .ok();
 
     let url = server.url(app.entry_point());
+    let runs_in_background = app.runs_in_background();
     let mut running = Running {
         engine,
         server,
         cdp: cdp.clone(),
         app_exit,
         page_loads,
-        app_id: app.id().to_string(),
+        app,
         watcher,
     };
     load_page(&mut running, "Page.navigate", json!({ "url": url }))
@@ -667,7 +681,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         cdp,
         profile,
         lenient: config.lenient,
-        runs_in_background: AtomicBool::new(app.runs_in_background()),
+        runs_in_background: AtomicBool::new(runs_in_background),
         hidden: AtomicBool::new(false),
     });
     inner
