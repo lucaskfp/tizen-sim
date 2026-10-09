@@ -305,6 +305,9 @@ async fn the_keyboard_mapping_is_configurable() {
         .await
         .unwrap();
     tap(&t.session, F5).await;
+    // A mapped keyboard key travels through the Bridge, so a key pressed
+    // through the Session right after it could overtake it.
+    eventually_equals(&t.session, "window.keyLog", json!([10252])).await;
     t.session.press_key("ColorF3Blue").await.unwrap();
     eventually_equals(&t.session, "window.keyLog", json!([10252, 406])).await;
     t.session.stop().await;
