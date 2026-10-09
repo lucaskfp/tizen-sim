@@ -276,10 +276,15 @@ var tvinputdevice = {
 };
 config.keys = { isRegistered: isKeyRegistered };
 var LONG_PRESS_MS = 1000;
-var backHold = {
+var LONG_PRESS = {
+    Back: "Exit",
+    MediaRewind: "MediaTrackPrevious",
+    MediaFastForward: "MediaTrackNext",
+};
+var held = {
     keyCode: -1,
     timer: 0,
-    sentExit: false,
+    sentLongPress: false,
 };
 function pressRemoteKey(name) {
     bridge.notify("keys.press", { key: name });
@@ -288,6 +293,31 @@ function swallow(e) {
     e.preventDefault();
     e.stopImmediatePropagation();
 }
+function isTextField(target) {
+    var element = target;
+    if (!element || !element.tagName) {
+        return false;
+    }
+    var tag = element.tagName.toLowerCase();
+    return tag === "input" || tag === "textarea" || element.isContentEditable;
+}
+function onMappedKeyDown(e, mapped) {
+    var longPress = LONG_PRESS[mapped];
+    if (!longPress) {
+        if (!e.repeat) {
+            pressRemoteKey(mapped);
+        }
+        return;
+    }
+    if (held.keyCode === -1) {
+        held.keyCode = e.keyCode;
+        held.sentLongPress = false;
+        held.timer = window.setTimeout(function () {
+            held.sentLongPress = true;
+            pressRemoteKey(longPress);
+        }, LONG_PRESS_MS);
+    }
+}
 function onKeyDown(e) {
     if (e.isTrusted === false) {
         return;
@@ -295,23 +325,11 @@ function onKeyDown(e) {
     var mapped = config.keyMap[String(e.keyCode)];
     if (mapped) {
         swallow(e);
-        if (mapped === "Back") {
-            if (backHold.keyCode === -1) {
-                backHold.keyCode = e.keyCode;
-                backHold.sentExit = false;
-                backHold.timer = window.setTimeout(function () {
-                    backHold.sentExit = true;
-                    pressRemoteKey("Exit");
-                }, LONG_PRESS_MS);
-            }
-        }
-        else if (!e.repeat) {
-            pressRemoteKey(mapped);
-        }
+        onMappedKeyDown(e, mapped);
         return;
     }
     var key = findRemoteKeyByCode(e.keyCode);
-    if (!key || key.mandatory || isKeyRegistered(key.name) || e.repeat) {
+    if (!key || key.mandatory || isKeyRegistered(key.name) || e.repeat || isTextField(e.target)) {
         return;
     }
     var reason = key.name + " is not registered (call tizen.tvinputdevice.registerKey)";
@@ -326,16 +344,17 @@ function onKeyUp(e) {
     if (e.isTrusted === false) {
         return;
     }
-    if (!config.keyMap[String(e.keyCode)]) {
+    var mapped = config.keyMap[String(e.keyCode)];
+    if (!mapped) {
         return;
     }
     swallow(e);
-    if (e.keyCode === backHold.keyCode) {
-        window.clearTimeout(backHold.timer);
-        if (!backHold.sentExit) {
-            pressRemoteKey("Back");
+    if (e.keyCode === held.keyCode) {
+        window.clearTimeout(held.timer);
+        if (!held.sentLongPress) {
+            pressRemoteKey(mapped);
         }
-        backHold.keyCode = -1;
+        held.keyCode = -1;
     }
 }
 window.addEventListener("keydown", onKeyDown, true);

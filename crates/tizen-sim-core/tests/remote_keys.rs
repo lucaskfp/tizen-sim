@@ -217,3 +217,85 @@ async fn lenient_mode_reports_unregistered_physical_keys_too() {
     .await;
     t.session.stop().await;
 }
+
+#[tokio::test]
+async fn long_presses_of_rewind_and_fast_forward_skip_tracks() {
+    let t = start_with("remote-keys", |c| {
+        c.key_map
+            .insert(PhysicalKey::parse("F6").unwrap(), "MediaRewind")
+            .unwrap();
+        c.key_map
+            .insert(PhysicalKey::parse("F7").unwrap(), "MediaFastForward")
+            .unwrap();
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    t.session
+        .evaluate(
+            "tizen.tvinputdevice.registerKeyBatch(['MediaRewind', 'MediaTrackPrevious', \
+               'MediaFastForward', 'MediaTrackNext']); 0",
+        )
+        .await
+        .unwrap();
+    let (f6, f7) = (PhysicalKey(117), PhysicalKey(118));
+    tap(&t.session, f6).await;
+    for key in [f6, f7] {
+        t.session.physical_key(key, KeyAction::Down).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        t.session.physical_key(key, KeyAction::Up).await.unwrap();
+    }
+    eventually_equals(&t.session, "window.keyLog", json!([412, 10232, 10233])).await;
+    t.session.stop().await;
+}
+
+#[tokio::test]
+async fn the_full_documented_key_set_is_supported() {
+    let t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    let keys = t
+        .session
+        .evaluate(
+            "tizen.tvinputdevice.getSupportedKeys().map(function (k) { return k.name + ':' + k.code; })",
+        )
+        .await
+        .unwrap();
+    let keys: Vec<String> = serde_json::from_value(keys).unwrap();
+    for expected in [
+        "Minus:189",
+        "ChannelList:10073",
+        "PreviousChannel:10190",
+        "Menu:18",
+        "Tools:10135",
+        "Info:457",
+        "Source:10072",
+        "Caption:10221",
+        "E-Manual:10146",
+        "3D:10199",
+        "Extra:10253",
+        "PictureSize:10140",
+        "Soccer:10228",
+        "Teletext:10200",
+        "MTS:10195",
+        "Search:10225",
+        "Guide:458",
+    ] {
+        assert!(keys.contains(&expected.to_string()), "{expected} missing");
+    }
+    t.session.stop().await;
+}
+
+#[tokio::test]
+async fn typing_in_a_text_field_is_not_mistaken_for_remote_keys() {
+    let t = start("remote-keys");
+    t.session.wait_until_loaded().await.unwrap();
+    t.session
+        .evaluate(
+            "var input = document.createElement('input'); document.body.appendChild(input); \
+             input.focus(); 0",
+        )
+        .await
+        .unwrap();
+    // Minus (189) is a Registrable Key, but here it's just a hyphen being typed.
+    tap(&t.session, PhysicalKey(189)).await;
+    eventually_equals(&t.session, "window.keyLog", json!([189])).await;
+    t.session.stop().await;
+}

@@ -165,3 +165,72 @@ dom_key = "8"
 name = "9"
 code = 57
 dom_key = "9"
+
+[[key]]
+name = "Minus"
+code = 189
+
+[[key]]
+name = "ChannelList"
+code = 10073
+
+[[key]]
+name = "PreviousChannel"
+code = 10190
+
+[[key]]
+name = "Menu"
+code = 18
+
+[[key]]
+name = "Tools"
+code = 10135
+
+[[key]]
+name = "Info"
+code = 457
+
+[[key]]
+name = "Source"
+code = 10072
+
+[[key]]
+name = "Caption"
+code = 10221
+
+[[key]]
+name = "E-Manual"
+code = 10146
+
+[[key]]
+name = "3D"
+code = 10199
+
+[[key]]
+name = "Extra"
+code = 10253
+
+[[key]]
+name = "PictureSize"
+code = 10140
+
+[[key]]
+name = "Soccer"
+code = 10228
+
+[[key]]
+name = "Teletext"
+code = 10200
+
+[[key]]
+name = "MTS"
+code = 10195
+
+[[key]]
+name = "Search"
+code = 10225
+
+[[key]]
+name = "Guide"
+code = 458
+
