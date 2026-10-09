@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://example.com/tizen-apis" version="1.2.3">
+    <tizen:application id="Fixture004.TizenApis" package="Fixture004" required_version="2.3"/>
+    <content src="index.html"/>
+    <name>Tizen APIs fixture</name>
+    <tizen:profile name="tv"/>
+</widget>

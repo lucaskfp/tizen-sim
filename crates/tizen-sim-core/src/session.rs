@@ -6,12 +6,13 @@
 
 use crate::app::{App, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
-use crate::dev_server::DevServer;
+use crate::dev_server::{BridgeMessage, DevServer, ShimSetup};
 use crate::engine::{
     self, DownloadProgress, EngineSpec, EngineStore, LaunchOptions, RunningEngine,
 };
 use crate::home::Home;
 use crate::profile::VersionProfile;
+use crate::shim;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -25,6 +26,9 @@ pub struct SessionConfig {
     pub profile: Option<String>,
     /// Run the Engine without a window (CI, automated tests).
     pub headless: bool,
+    /// Lenient Mode: allow calls a TV would refuse (undeclared privileges),
+    /// still raising a Diagnostic for each.
+    pub lenient: bool,
     pub home: Home,
 }
 
@@ -33,6 +37,15 @@ pub enum SessionEvent {
     Lifecycle(Lifecycle),
     Console(ConsoleMessage),
     EngineDownload(DownloadProgress),
+    Diagnostic(Diagnostic),
+}
+
+/// Something the App did that would behave differently or fail on a real TV.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    /// Stable identifier, e.g. `privilege-not-declared`.
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +77,8 @@ pub enum ExitReason {
     EngineClosed,
     /// Startup failed; a `Failed` event with the reason came just before.
     FailedToStart,
+    /// The App ended itself (`tizen.application.getCurrentApplication().exit()`).
+    AppExited,
 }
 
 /// A message the App wrote to its console.
@@ -165,6 +180,8 @@ struct Running {
     engine: RunningEngine,
     server: DevServer,
     cdp: Arc<Cdp>,
+    /// Fires when the App asks to exit.
+    app_exit: mpsc::UnboundedReceiver<()>,
 }
 
 async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiver<()>) {
@@ -200,6 +217,10 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
             close_engine(&mut running).await;
             ExitReason::Stopped
         }
+        Some(()) = running.app_exit.recv() => {
+            close_engine(&mut running).await;
+            ExitReason::AppExited
+        }
         _ = running.engine.child.wait() => ExitReason::EngineClosed,
     };
     stop_server(running.server).await;
@@ -234,7 +255,14 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         .await
         .map_err(|e| e.to_string())?;
 
-    let server = DevServer::start(app.root())
+    let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
+    let (app_exit_tx, app_exit) = mpsc::unbounded_channel();
+    tokio::spawn(handle_bridge(bridge_rx, inner.clone(), app_exit_tx));
+    let shims = ShimSetup {
+        data: shim::session_data(&app, profile, config.lenient),
+        token: bridge_token()?,
+    };
+    let server = DevServer::start(app.root(), shims, bridge_tx)
         .await
         .map_err(|e| format!("could not start the dev server: {e}"))?;
     let user_data_dir = config
@@ -290,7 +318,40 @@ async fn startup(config: SessionConfig, inner: &Arc<Inner>) -> Result<Running, S
         engine,
         server,
         cdp,
+        app_exit,
     })
+}
+
+/// Acts on what the Shims send over the Bridge.
+async fn handle_bridge(
+    mut messages: mpsc::UnboundedReceiver<BridgeMessage>,
+    inner: Arc<Inner>,
+    app_exit: mpsc::UnboundedSender<()>,
+) {
+    while let Some(message) = messages.recv().await {
+        match message.method.as_str() {
+            "diagnostic" => {
+                let text = |key: &str| message.params[key].as_str().unwrap_or_default().to_string();
+                let diagnostic = Diagnostic {
+                    code: text("code"),
+                    message: text("message"),
+                };
+                tracing::warn!(code = %diagnostic.code, "{}", diagnostic.message);
+                inner.log.publish(SessionEvent::Diagnostic(diagnostic));
+            }
+            "application.exit" => {
+                let _ = app_exit.send(());
+            }
+            other => tracing::debug!(method = other, "unknown Bridge message"),
+        }
+    }
+}
+
+/// A fresh secret for the Bridge, so other local processes can't impersonate the page.
+fn bridge_token() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate a Bridge token: {e}"))?;
+    Ok(hex::encode(bytes))
 }
 
 async fn forward_events(

@@ -8,6 +8,12 @@ use std::sync::OnceLock;
 pub struct VersionProfile {
     pub version: String,
     pub milestone: u32,
+    /// Answers for `tizen.systeminfo.getCapability`.
+    #[serde(default)]
+    pub(crate) capabilities: toml::Table,
+    /// Values the system info Shims report (model, display, locale, ...).
+    #[serde(default)]
+    pub(crate) device: toml::Table,
 }
 
 #[derive(Debug, thiserror::Error)]

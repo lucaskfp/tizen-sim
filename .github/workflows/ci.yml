@@ -45,3 +45,22 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo test --workspace
+
+  shims:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shims
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: shims/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # The core embeds the committed bundle, so it must match the sources.
+      - name: Committed bundle is up to date
+        run: git diff --exit-code -- dist/
+      - run: npm run check-es5

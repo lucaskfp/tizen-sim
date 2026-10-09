@@ -8,3 +8,4 @@ pub mod engine;
 pub mod home;
 pub mod profile;
 pub mod session;
+mod shim;

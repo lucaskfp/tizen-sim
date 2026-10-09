@@ -7,3 +7,5 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `malformed-config`: `config.xml` that isn't well-formed XML.
 - `no-application`: valid XML without the `tizen:application` element.
 - `missing-entry-point`: `<content src>` names a file that doesn't exist.
+- `tizen-apis`: an App that declares no privileges, for the Tizen API Shims. Its first script records whether `tizen` already existed.
+- `tizen-apis-privileged`: the same App, declaring `http://tizen.org/privilege/application.info`.

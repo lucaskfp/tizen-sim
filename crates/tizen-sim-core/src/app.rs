@@ -16,6 +16,10 @@ pub enum AppSource {
 #[derive(Debug, Clone)]
 pub struct App {
     id: String,
+    package: String,
+    name: String,
+    version: String,
+    privileges: Vec<String>,
     required_version: Option<String>,
     entry_point: String,
     root: PathBuf,
@@ -64,6 +68,26 @@ impl App {
     /// The application id from `<tizen:application id>`.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The package id from `<tizen:application package>`.
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// The App's display name from `<name>`, falling back to its id.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The App's version from `<widget version>`.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// The privileges declared with `<tizen:privilege name>`.
+    pub fn privileges(&self) -> &[String] {
+        &self.privileges
     }
 
     /// The minimum Tizen version the App declares support for.
@@ -122,6 +146,24 @@ fn load_folder(root: &Path) -> Result<App, AppError> {
         })?
         .to_string();
     let required_version = application.attribute("required_version").map(String::from);
+    let package = application
+        .attribute("package")
+        .unwrap_or_default()
+        .to_string();
+    let name = widget
+        .children()
+        .find(|n| n.has_tag_name((WIDGET_NS, "name")))
+        .and_then(|n| n.text())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| id.clone());
+    let version = widget.attribute("version").unwrap_or_default().to_string();
+    let privileges = widget
+        .children()
+        .filter(|n| n.has_tag_name((TIZEN_NS, "privilege")))
+        .filter_map(|n| n.attribute("name"))
+        .map(String::from)
+        .collect();
 
     // Per the W3C widget spec, without <content> the start file is index.html.
     let entry_point = widget
@@ -139,6 +181,10 @@ fn load_folder(root: &Path) -> Result<App, AppError> {
 
     Ok(App {
         id,
+        package,
+        name,
+        version,
+        privileges,
         required_version,
         entry_point,
         root: root.to_path_buf(),
