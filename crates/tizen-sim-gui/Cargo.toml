@@ -6,4 +6,34 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "tizen_sim_gui"
+
+[[bin]]
+name = "tizen-sim-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+tauri = { version = "2.12.3", features = [] }
+tauri-plugin-dialog = "2.8.2"
+thiserror = "2.0.21"
+tizen-sim-core = { version = "0.1.0", path = "../tizen-sim-core" }
+tokio = { version = "1.53.2", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+
+[dev-dependencies]
+serde_json = "1.0.151"
+tauri = { version = "2.12.3", features = ["test"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["full"] }
+
+[features]
+# `tauri build` turns this on to serve the built frontend instead of the
+# Vite dev server.
+custom-protocol = ["tauri/custom-protocol"]

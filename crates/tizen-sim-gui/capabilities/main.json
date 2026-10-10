@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "IPC for the GUI's own webview only. Engines are separate processes and get no IPC (#36).",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "allow-open-app",
+    "allow-switch-profile",
+    "allow-press-key",
+    "allow-reload",
+    "allow-screenshot",
+    "allow-profiles"
+  ]
+}

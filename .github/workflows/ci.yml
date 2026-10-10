@@ -22,6 +22,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The GUI's Tauri webview (WebKitGTK) and its build dependencies.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -36,6 +39,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The GUI's Tauri webview (WebKitGTK) and its build dependencies.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       # Engines are large; download them once per Engine Manifest change.
       - uses: actions/cache@v4
         with:
@@ -64,3 +70,21 @@ jobs:
       - name: Committed bundle is up to date
         run: git diff --exit-code -- dist/
       - run: npm run check-es5
+
+  # The GUI frontend: typecheck, production build and smoke tests against a
+  # stand-in Tauri backend. The Rust side's tests run in `test`.
+  gui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/tizen-sim-gui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/tizen-sim-gui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test

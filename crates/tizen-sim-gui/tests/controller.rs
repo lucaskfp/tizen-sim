@@ -1,0 +1,228 @@
+//! The GUI's Session control, driven as its commands drive it, against real
+//! headless Sessions on fixture Apps.
+
+use std::path::PathBuf;
+use std::time::Duration;
+use tizen_sim_core::app::AppSource;
+use tizen_sim_core::home::Home;
+use tizen_sim_core::session::{ConsoleMessage, ExitReason, KeyOutcome, Lifecycle, SessionEvent};
+use tizen_sim_gui::controller::{Controller, ControllerError, ControllerOptions, GuiEvent};
+use tokio::sync::mpsc;
+
+fn fixture(name: &str) -> AppSource {
+    AppSource::ProjectFolder(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/apps")
+            .join(name),
+    )
+}
+
+/// A Controller whose events land in `events`. Engines come from the shared
+/// per-user cache; per-App state lives in `state`.
+struct TestGui {
+    controller: Controller,
+    events: mpsc::UnboundedReceiver<GuiEvent>,
+    _state: tempfile::TempDir,
+}
+
+fn gui() -> TestGui {
+    let state = tempfile::tempdir().unwrap();
+    let (tx, events) = mpsc::unbounded_channel();
+    let controller = Controller::new(
+        ControllerOptions {
+            home: Home::from_env().with_state_dir(state.path().to_path_buf()),
+            headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
+            engine_path: None,
+        },
+        move |event| {
+            let _ = tx.send(event);
+        },
+    );
+    TestGui {
+        controller,
+        events,
+        _state: state,
+    }
+}
+
+/// First launch may include an Engine download, so it gets a generous budget.
+const STARTUP_SECS: u64 = 600;
+
+impl TestGui {
+    /// Waits for the first event matching `pred`, failing after `secs`.
+    async fn expect(&mut self, secs: u64, pred: impl Fn(&GuiEvent) -> bool) -> GuiEvent {
+        let wait = async {
+            while let Some(event) = self.events.recv().await {
+                if pred(&event) {
+                    return event;
+                }
+            }
+            panic!("the event stream ended before the expected event");
+        };
+        tokio::time::timeout(Duration::from_secs(secs), wait)
+            .await
+            .expect("timed out waiting for the expected GUI event")
+    }
+
+    /// Waits until Session `session` has loaded its App.
+    async fn expect_loaded(&mut self, session: u64) {
+        self.expect(STARTUP_SECS, |e| {
+            matches!(e, GuiEvent::Session { session: s, event: SessionEvent::Lifecycle(Lifecycle::AppLoaded { .. }) } if *s == session)
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn opening_a_project_folder_starts_a_session_and_streams_its_console() {
+    let mut gui = gui();
+
+    gui.controller.open(fixture("hello"), None).await;
+
+    let started = gui
+        .expect(5, |e| matches!(e, GuiEvent::SessionStarted { .. }))
+        .await;
+    let GuiEvent::SessionStarted { session, .. } = started else {
+        unreachable!()
+    };
+    gui.expect(STARTUP_SECS, |e| {
+        matches!(e, GuiEvent::Session {
+            session: s,
+            event: SessionEvent::Console(ConsoleMessage { text, .. }),
+        } if *s == session && text == "hello from fixture")
+    })
+    .await;
+    gui.controller.stop().await;
+}
+
+#[tokio::test]
+async fn the_remote_delivers_keys_and_dropped_keys_show_in_the_stream() {
+    let mut gui = gui();
+    gui.controller.open(fixture("remote-keys"), None).await;
+    gui.expect_loaded(1).await;
+
+    let enter = gui.controller.press_key("Enter").await.unwrap();
+    let red = gui.controller.press_key("ColorF0Red").await.unwrap();
+
+    assert_eq!(enter, KeyOutcome::Delivered);
+    assert!(matches!(red, KeyOutcome::Dropped { .. }), "{red:?}");
+    let dropped = gui
+        .expect(5, |e| {
+            matches!(
+                e,
+                GuiEvent::Session {
+                    event: SessionEvent::RemoteKey {
+                        outcome: KeyOutcome::Dropped { .. },
+                        ..
+                    },
+                    ..
+                }
+            )
+        })
+        .await;
+    let GuiEvent::Session {
+        event: SessionEvent::RemoteKey { key, .. },
+        ..
+    } = dropped
+    else {
+        unreachable!()
+    };
+    assert_eq!(key, "ColorF0Red");
+    gui.controller.stop().await;
+}
+
+#[tokio::test]
+async fn acting_without_a_session_is_an_error() {
+    let gui = gui();
+
+    let error = gui.controller.press_key("Enter").await.unwrap_err();
+
+    assert!(matches!(error, ControllerError::NoSession), "{error}");
+}
+
+#[tokio::test]
+async fn switching_version_profile_restarts_the_session_on_that_profile() {
+    let mut gui = gui();
+    gui.controller.open(fixture("hello"), None).await;
+    gui.expect_loaded(1).await;
+
+    gui.controller.switch_profile("10.0").await.unwrap();
+
+    gui.expect(30, |e| {
+        matches!(
+            e,
+            GuiEvent::Session {
+                session: 1,
+                event: SessionEvent::Lifecycle(Lifecycle::Exited {
+                    reason: ExitReason::Stopped
+                })
+            }
+        )
+    })
+    .await;
+    let started = gui
+        .expect(5, |e| matches!(e, GuiEvent::SessionStarted { .. }))
+        .await;
+    assert!(
+        matches!(&started, GuiEvent::SessionStarted { session: 2, source } if source.ends_with("hello")),
+        "{started:?}"
+    );
+    gui.expect(STARTUP_SECS, |e| {
+        matches!(e, GuiEvent::Session { session: 2, event: SessionEvent::Lifecycle(Lifecycle::Starting { profile, .. }) } if profile == "10.0")
+    })
+    .await;
+    gui.expect_loaded(2).await;
+    gui.controller.stop().await;
+}
+
+#[tokio::test]
+async fn switching_to_an_unknown_version_profile_reports_why_the_session_failed() {
+    let mut gui = gui();
+    gui.controller.open(fixture("hello"), None).await;
+    gui.expect_loaded(1).await;
+
+    gui.controller.switch_profile("2.4").await.unwrap();
+
+    let failed = gui
+        .expect(30, |e| {
+            matches!(
+                e,
+                GuiEvent::Session {
+                    session: 2,
+                    event: SessionEvent::Lifecycle(Lifecycle::Failed { .. })
+                }
+            )
+        })
+        .await;
+    let GuiEvent::Session {
+        event: SessionEvent::Lifecycle(Lifecycle::Failed { error }),
+        ..
+    } = failed
+    else {
+        unreachable!()
+    };
+    assert!(error.contains("2.4") && error.contains("10.0"), "{error}");
+}
+
+#[tokio::test]
+async fn reload_and_screenshot_act_on_the_current_session() {
+    let mut gui = gui();
+    gui.controller.open(fixture("hello"), None).await;
+    gui.expect_loaded(1).await;
+
+    gui.controller.reload().await.unwrap();
+    let png = gui.controller.screenshot().await.unwrap();
+
+    gui.expect(5, |e| {
+        matches!(
+            e,
+            GuiEvent::Session {
+                session: 1,
+                event: SessionEvent::Lifecycle(Lifecycle::Reloaded)
+            }
+        )
+    })
+    .await;
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "not a PNG");
+    gui.controller.stop().await;
+}

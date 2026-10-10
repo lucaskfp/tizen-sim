@@ -1,0 +1,233 @@
+// What the GUI shows, folded from the Session events the Rust side emits.
+// The types mirror the core's serde output (externally tagged enums).
+
+export type GuiEvent =
+  | { SessionStarted: { session: number; source: string } }
+  | { Session: { session: number; event: SessionEvent } };
+
+export type SessionEvent =
+  | { Lifecycle: Lifecycle }
+  | { Console: { level: string; text: string } }
+  | { EngineDownload: { received: number; total: number | null } }
+  | { Diagnostic: Diagnostic }
+  | { RemoteKey: { key: string; outcome: KeyOutcome } }
+  | { HotReload: HotReload }
+  | { Network: NetworkRequest };
+
+export type Lifecycle =
+  | { Starting: { app_id: string; profile: string } }
+  | { EngineReady: { engine_version: string; debugger_url: string; devtools_url: string } }
+  | { AppLoaded: { url: string } }
+  | "Reloaded"
+  | "Hidden"
+  | "Shown"
+  | { Failed: { error: string } }
+  | { Exited: { reason: ExitReason } };
+
+export type ExitReason =
+  | "Stopped"
+  | "EngineClosed"
+  | "FailedToStart"
+  | "AppExited"
+  | "TerminatedByRemote";
+
+export type KeyOutcome = "Delivered" | { Dropped: { reason: string } };
+
+export type HotReload =
+  | { FilesChanged: { paths: string[] } }
+  | "StylesSwapped"
+  | "Reloaded"
+  | { Restarted: { app_id: string } }
+  | { Failed: { error: string } };
+
+export type Diagnostic = { code: string; message: string };
+
+export type NetworkRequest = {
+  method: string;
+  url: string;
+  status: number | null;
+  duration: { secs: number; nanos: number };
+  verdict: "Allowed" | { Blocked: { missing_access: string } };
+};
+
+export type LogLevel = "debug" | "info" | "warning" | "error";
+
+export type LogLine = {
+  id: number;
+  /** Where the line comes from: the App's console, a Remote Key, or the simulator. */
+  source: "console" | "key" | "session";
+  level: LogLevel;
+  text: string;
+};
+
+export type Status =
+  | { kind: "idle" }
+  | { kind: "starting"; download?: { received: number; total: number | null } }
+  | { kind: "running" }
+  | { kind: "hidden" }
+  | { kind: "failed"; error: string }
+  | { kind: "exited"; reason: ExitReason };
+
+export type SessionView = {
+  /** The Session shown; events of other Sessions are ignored. */
+  session: number | null;
+  source: string | null;
+  appId: string | null;
+  profile: string | null;
+  status: Status;
+  log: LogLine[];
+  network: (NetworkRequest & { id: number })[];
+  diagnostics: (Diagnostic & { id: number })[];
+  nextId: number;
+};
+
+export const initialView: SessionView = {
+  session: null,
+  source: null,
+  appId: null,
+  profile: null,
+  status: { kind: "idle" },
+  log: [],
+  network: [],
+  diagnostics: [],
+  nextId: 0,
+};
+
+/** Lines kept in the log; the oldest go first. */
+const LOG_LIMIT = 5000;
+
+export function reduce(view: SessionView, event: GuiEvent): SessionView {
+  if ("SessionStarted" in event) {
+    const { session, source } = event.SessionStarted;
+    // A new Session starts with fresh panels; the log keeps going, so a
+    // profile switch can be compared with what came before.
+    return withLog(
+      {
+        ...initialView,
+        session,
+        source,
+        // The same App restarting, e.g. on another profile, shows its last
+        // profile until the new Session says which it runs on.
+        profile: source === view.source ? view.profile : null,
+        status: { kind: "starting" },
+        log: view.log,
+        nextId: view.nextId,
+      },
+      "session",
+      "info",
+      `Opening ${source}`,
+    );
+  }
+  const { session, event: inner } = event.Session;
+  if (session !== view.session) return view;
+
+  if ("Console" in inner) {
+    return withLog(view, "console", consoleLevel(inner.Console.level), inner.Console.text);
+  }
+  if ("EngineDownload" in inner) {
+    return { ...view, status: { kind: "starting", download: inner.EngineDownload } };
+  }
+  if ("Diagnostic" in inner) {
+    const { code, message } = inner.Diagnostic;
+    const next = withLog(view, "session", "warning", `[${code}] ${message}`);
+    return {
+      ...next,
+      diagnostics: [...next.diagnostics, { code, message, id: next.nextId }],
+      nextId: next.nextId + 1,
+    };
+  }
+  if ("RemoteKey" in inner) {
+    const { key, outcome } = inner.RemoteKey;
+    return outcome === "Delivered"
+      ? withLog(view, "key", "debug", `${key} delivered`)
+      : withLog(view, "key", "warning", `${key} dropped: ${outcome.Dropped.reason}`);
+  }
+  if ("HotReload" in inner) {
+    return withLog(view, "session", ...hotReloadLine(inner.HotReload));
+  }
+  if ("Network" in inner) {
+    return {
+      ...view,
+      network: [...view.network, { ...inner.Network, id: view.nextId }],
+      nextId: view.nextId + 1,
+    };
+  }
+  return lifecycle(view, inner.Lifecycle);
+}
+
+function lifecycle(view: SessionView, event: Lifecycle): SessionView {
+  if (event === "Reloaded") return withLog(view, "session", "info", "App reloaded.");
+  if (event === "Hidden") {
+    return withLog({ ...view, status: { kind: "hidden" } }, "session", "info", "The App is hidden (in the background).");
+  }
+  if (event === "Shown") {
+    return withLog({ ...view, status: { kind: "running" } }, "session", "info", "The App is back in the foreground.");
+  }
+  if ("Starting" in event) {
+    const { app_id, profile } = event.Starting;
+    return withLog({ ...view, appId: app_id, profile }, "session", "info", `Starting ${app_id} on Tizen ${profile}`);
+  }
+  if ("EngineReady" in event) {
+    return withLog(
+      { ...view, status: { kind: "starting" } },
+      "session",
+      "info",
+      `Engine ready: ${event.EngineReady.engine_version}`,
+    );
+  }
+  if ("AppLoaded" in event) {
+    return withLog({ ...view, status: { kind: "running" } }, "session", "info", `App loaded: ${event.AppLoaded.url}`);
+  }
+  if ("Failed" in event) {
+    const { error } = event.Failed;
+    return withLog({ ...view, status: { kind: "failed", error } }, "session", "error", error);
+  }
+  const { reason } = event.Exited;
+  // A failed start already said why.
+  const status: Status = view.status.kind === "failed" ? view.status : { kind: "exited", reason };
+  return reason === "FailedToStart"
+    ? { ...view, status }
+    : withLog({ ...view, status }, "session", "info", exitText[reason]);
+}
+
+const exitText: Record<ExitReason, string> = {
+  Stopped: "Stopped.",
+  EngineClosed: "The Engine window was closed.",
+  FailedToStart: "The Session failed to start.",
+  AppExited: "The App exited.",
+  TerminatedByRemote: "Exit was pressed or Back held: the App was terminated, as on a TV.",
+};
+
+function hotReloadLine(event: HotReload): [LogLevel, string] {
+  if (event === "StylesSwapped") return ["info", "Stylesheets swapped in place."];
+  if (event === "Reloaded") return ["info", "App reloaded."];
+  if ("FilesChanged" in event) return ["info", `Changed: ${event.FilesChanged.paths.join(", ")}`];
+  if ("Restarted" in event) return ["info", `config.xml changed: restarted ${event.Restarted.app_id}.`];
+  return ["error", `Hot reload failed: ${event.Failed.error}`];
+}
+
+/** The console method (`log`, `warn`, ...) or the Engine's own level. */
+function consoleLevel(level: string): LogLevel {
+  switch (level) {
+    case "error":
+    case "assert":
+      return "error";
+    case "warning":
+    case "warn":
+      return "warning";
+    case "debug":
+    case "verbose":
+      return "debug";
+    default:
+      return "info";
+  }
+}
+
+function withLog(view: SessionView, source: LogLine["source"], level: LogLevel, text: string): SessionView {
+  const log = [...view.log, { id: view.nextId, source, level, text }];
+  return {
+    ...view,
+    log: log.length > LOG_LIMIT ? log.slice(log.length - LOG_LIMIT) : log,
+    nextId: view.nextId + 1,
+  };
+}
