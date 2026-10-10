@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::engine::DownloadProgress;
 use tizen_sim_core::home::Home;
+use tizen_sim_core::network::{NetworkRequest, Verdict};
 use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
 use tizen_sim_core::session::{
     ExitReason, HotReload, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
@@ -139,6 +140,7 @@ async fn run(config: SessionConfig) -> Result<()> {
                         println!("[key dropped] {key}: {reason}");
                     }
                     SessionEvent::RemoteKey { .. } => {}
+                    SessionEvent::Network(request) => print_network(&request),
                     SessionEvent::HotReload(hot_reload) => match hot_reload {
                         HotReload::FilesChanged { paths } => println!("[changed] {}", paths.join(", ")),
                         HotReload::StylesSwapped => println!("Stylesheets swapped in place."),
@@ -177,6 +179,22 @@ async fn run(config: SessionConfig) -> Result<()> {
                 session.stop().await;
             }
         }
+    }
+}
+
+fn print_network(request: &NetworkRequest) {
+    let NetworkRequest {
+        method,
+        url,
+        status,
+        duration,
+        verdict,
+    } = request;
+    let ms = duration.as_millis();
+    match (verdict, status) {
+        (Verdict::Blocked { .. }, _) => println!("[network blocked] {method} {url}"),
+        (Verdict::Allowed, Some(status)) => println!("[network] {method} {url} {status} {ms}ms"),
+        (Verdict::Allowed, None) => println!("[network] {method} {url} {ms}ms"),
     }
 }
 

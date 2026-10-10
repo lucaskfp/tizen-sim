@@ -95,7 +95,9 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
   - A URL is granted when scheme, host (case-insensitive) and port (the default for the scheme when absent) match. With `subdomains="true"`, any subdomain of a domain-name host matches too. IP addresses have no subdomains.
   - The grants are the union of all `<access>` elements.
   - Which schemes the Tizen runtime supports for `<access>` is **unverified**. tizen-sim accepts http, https, ws and wss.
-- **CORS:** TD `guides/w3c/security/cors.md` describes standard CORS. ADR-0003's premise that packaged Apps skip browser CORS has **no primary source yet**; resolve it before #32.
+- **HTTPS and WebSockets** reach tizen-sim's proxy as CONNECT tunnels, which show only host and port. So a tunnel opens when any of `https`, `wss` or `ws` is granted for them, which is looser than WARP's per-scheme match. That is a simulator approximation, not TV behaviour.
+- **Denied requests.** WARP says only that the user agent "rejects" a request it doesn't grant, and that the default policy denies network access "whether this access is requested through APIs (e.g. XMLHttpRequest) or through markup (e.g. iframe, script, img)". tizen-sim fails a denied request as a network error; what a TV reports is **unverified**.
+- **CORS:** TD `guides/w3c/security/cors.md` describes standard CORS. ADR-0003's premise that packaged Apps skip browser CORS has **no primary source yet**, and the reproduction on a TV is pending (see the ADR). tizen-sim follows the ADR meanwhile.
 
 ## Errors
 

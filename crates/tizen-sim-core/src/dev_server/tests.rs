@@ -64,6 +64,7 @@ async fn start_proxy(
         data: json!({}),
         token: "token".into(),
         profile: profile(milestone),
+        access_policy: crate::app::AccessPolicy::Warp(vec![]),
     };
     let server = DevServer::start(&AppFiles::Bundler(bundler.clone()), setup, bridge)
         .await

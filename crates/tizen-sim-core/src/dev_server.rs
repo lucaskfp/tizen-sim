@@ -3,7 +3,8 @@
 //! HTML document to load the Shim bootstrap first (ADR-0002), and hosts the
 //! Bridge WebSocket.
 
-use crate::app::AppFiles;
+use crate::app::{AccessPolicy, AppFiles};
+use crate::csp::{self, PageCsp, ShimSources};
 use crate::es_modules::{ES_MODULES_MILESTONE, needs_es_modules};
 use crate::profile::VersionProfile;
 use crate::proxy;
@@ -39,6 +40,8 @@ pub struct ServerSetup {
     pub token: String,
     /// The Session's Version Profile, whose Engine the documents must suit.
     pub profile: &'static VersionProfile,
+    /// The App's Access Policy, whose CSP the documents get in CSP mode.
+    pub access_policy: AccessPolicy,
 }
 
 pub struct DevServer {
@@ -56,6 +59,9 @@ struct ServerState {
     bridge_url: String,
     /// Replaced when the Session restarts with a re-read `config.xml`.
     bootstrap: RwLock<String>,
+    /// The headers every document gets in CSP mode; replaced with the
+    /// bootstrap.
+    csp: RwLock<Option<PageCsp>>,
     token: String,
     /// Carries the page's messages, and the dev server's own Diagnostics.
     bridge: mpsc::UnboundedSender<BridgeMessage>,
@@ -78,6 +84,7 @@ impl DevServer {
             files: RwLock::new(files.clone()),
             origin: format!("http://{addr}"),
             bootstrap: RwLock::new(shim::bootstrap_script(setup.data, &bridge_url)),
+            csp: RwLock::new(page_csp(&setup.access_policy, addr)),
             bridge_url,
             token: setup.token,
             bridge,
@@ -115,6 +122,15 @@ impl DevServer {
     pub fn set_shim_data(&self, data: Value) {
         *self.state.bootstrap.write().unwrap() =
             shim::bootstrap_script(data, &self.state.bridge_url);
+    }
+
+    /// Gives documents loaded from now on `policy`'s CSP.
+    pub fn set_access_policy(&self, policy: &AccessPolicy) {
+        *self.state.csp.write().unwrap() = page_csp(policy, self.addr);
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
     }
 
     /// Serves the App's files from `files` from now on.
@@ -157,10 +173,17 @@ async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> R
     match files {
         AppFiles::Folder(root) => serve_app_file(&state, &root, request).await,
         AppFiles::Bundler(bundler) => {
-            proxy::forward(&state.http, &bundler, &state.origin, request, |html| {
-                rewrite_document(&state, html)
-            })
-            .await
+            let mut rewritten = false;
+            let mut response =
+                proxy::forward(&state.http, &bundler, &state.origin, request, |html| {
+                    rewritten = true;
+                    rewrite_document(&state, html)
+                })
+                .await;
+            if rewritten {
+                add_csp(&state, response.headers_mut());
+            }
+            response
         }
     }
 }
@@ -170,7 +193,7 @@ async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> R
         && let Ok(html) = tokio::fs::read(&file).await
     {
         // No charset: the document's own <meta charset> decides, as on a TV.
-        return (
+        let mut response = (
             [
                 (header::CONTENT_TYPE, "text/html"),
                 (header::CACHE_CONTROL, "no-store"),
@@ -178,6 +201,8 @@ async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> R
             rewrite_document(state, &html),
         )
             .into_response();
+        add_csp(state, response.headers_mut());
+        return response;
     }
     match ServeDir::new(root).oneshot(request).await {
         // Revalidate every time, so a hot reload never runs a stale file.
@@ -189,6 +214,33 @@ async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> R
             response.into_response()
         }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// The CSP headers for a server at `addr`, letting its Shims through.
+fn page_csp(policy: &AccessPolicy, addr: SocketAddr) -> Option<PageCsp> {
+    csp::page_csp(
+        policy,
+        &ShimSources {
+            script: &format!("http://{addr}{BOOTSTRAP_PATH}"),
+            bridge: &format!("ws://{addr}{BRIDGE_PATH}"),
+        },
+    )
+}
+
+/// Adds the App's CSP to a document's headers. A policy the bundler sent
+/// stays too, so the stricter of both applies, as on a TV.
+fn add_csp(state: &ServerState, headers: &mut header::HeaderMap) {
+    let Some(csp) = state.csp.read().unwrap().clone() else {
+        return;
+    };
+    for (name, policy) in [
+        (header::CONTENT_SECURITY_POLICY, csp.enforced),
+        (header::CONTENT_SECURITY_POLICY_REPORT_ONLY, csp.report_only),
+    ] {
+        if let Some(value) = policy.and_then(|p| header::HeaderValue::from_str(&p).ok()) {
+            headers.append(name, value);
+        }
     }
 }
 

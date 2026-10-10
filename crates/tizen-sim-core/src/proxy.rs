@@ -23,7 +23,7 @@ const HOP_BY_HOP: &[header::HeaderName] = &[
 ];
 
 /// The largest request body forwarded; dev requests are far smaller.
-const MAX_REQUEST_BODY: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_REQUEST_BODY: usize = 256 * 1024 * 1024;
 /// The largest response head read while opening a WebSocket tunnel.
 const MAX_UPGRADE_HEAD: usize = 64 * 1024;
 
@@ -128,7 +128,7 @@ fn is_html(headers: &HeaderMap) -> bool {
         })
 }
 
-fn strip_hop_by_hop(headers: &mut HeaderMap) {
+pub(crate) fn strip_hop_by_hop(headers: &mut HeaderMap) {
     // Headers named by Connection are hop-by-hop too.
     let named: Vec<String> = connection_tokens(headers).collect();
     for name in named {

@@ -3,10 +3,12 @@
 
 pub mod app;
 mod cdp;
+mod csp;
 mod dev_server;
 pub mod engine;
 mod es_modules;
 pub mod home;
+pub mod network;
 pub mod profile;
 mod proxy;
 pub mod remote_keys;

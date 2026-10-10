@@ -78,6 +78,10 @@ _Avoid_: VK_ key, key code, TV key
 The layer behind the web page where AVPlay video appears. Any opaque page content above it hides the video.
 _Avoid_: video layer, video overlay, player
 
+**Network Log**:
+The Session's record of every request the App makes over the network: method, URL, status, timing and the Access Policy's verdict (allowed or blocked). The App's own files aren't in it, since on a TV they aren't fetched over the network.
+_Avoid_: request log, HAR, traffic
+
 **Diagnostic**:
 A warning raised when an App does something that would behave differently or fail on a real TV.
 _Avoid_: lint, error, hint

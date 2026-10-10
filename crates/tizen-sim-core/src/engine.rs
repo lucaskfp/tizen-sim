@@ -298,6 +298,12 @@ async fn grant_sandbox_access(_dir: &Path) -> Result<(), EngineError> {
 pub struct LaunchOptions {
     pub user_data_dir: PathBuf,
     pub headless: bool,
+    /// The Session's network proxy, which all of the Engine's traffic goes
+    /// through, loopback included (ADR-0003).
+    pub network_proxy: Option<std::net::SocketAddr>,
+    /// Turns off the same-origin policy, so CORS doesn't block requests
+    /// (ADR-0003).
+    pub disable_web_security: bool,
 }
 
 /// A started Engine with its debugging endpoint.
@@ -330,6 +336,27 @@ pub async fn launch(
         ))
         .arg(format!("--remote-debugging-port={debug_port}"))
         .args(["--no-first-run", "--no-default-browser-check"]);
+    if let Some(proxy) = options.network_proxy {
+        command
+            .arg(format!("--proxy-server=http://{proxy}"))
+            // Loopback skips proxies unless told otherwise (Chromium M72+).
+            .arg("--proxy-bypass-list=<-loopback>")
+            // The Engine's own requests would show up in the network log as
+            // the App's: background updates, the Web Store extension, the
+            // search engine preconnect...
+            .args([
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-extensions",
+                "--disable-features=PreconnectToSearch",
+            ])
+            // ...and Google account checks, which go to the proxy itself,
+            // where they are dropped.
+            .arg(format!("--gaia-url=http://{proxy}/"));
+    }
+    if options.disable_web_security {
+        command.arg("--disable-web-security");
+    }
     if options.headless {
         command.args(["--headless=new", "about:blank"]);
     } else {

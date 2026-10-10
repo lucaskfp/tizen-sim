@@ -11,13 +11,14 @@ use crate::engine::{
     self, DownloadProgress, EngineSpec, EngineStore, LaunchOptions, RunningEngine,
 };
 use crate::home::Home;
+use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::session_dir::SessionDir;
 use crate::shim;
 use crate::watcher::{Action, Batch, SourceWatcher};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -53,6 +54,9 @@ pub enum SessionEvent {
         outcome: KeyOutcome,
     },
     HotReload(HotReload),
+    /// A request the App made over the network, with the Access Policy's
+    /// verdict on it.
+    Network(NetworkRequest),
 }
 
 /// The Session following edits to its Project Folder or Package, or to the
@@ -141,11 +145,13 @@ pub enum ExitReason {
     TerminatedByRemote,
 }
 
-/// A message the App wrote to its console.
+/// A message in the App's console: written by the App, or by the Engine
+/// about the App (a CSP violation, a failed resource).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsoleMessage {
-    /// The console method's level as the Engine reports it: `log`, `info`,
-    /// `warning`, `error`, `debug`, ...
+    /// The level as the Engine reports it: the console method (`log`,
+    /// `info`, `warning`, `error`, `debug`, ...) or, for the Engine's own
+    /// messages, `verbose`, `info`, `warning` or `error`.
     pub level: String,
     pub text: String,
 }
@@ -295,6 +301,7 @@ impl Session {
 struct Running {
     engine: RunningEngine,
     server: DevServer,
+    network: NetworkProxy,
     cdp: Arc<Cdp>,
     /// Fires when the App asks to exit.
     app_exit: mpsc::UnboundedReceiver<ExitReason>,
@@ -357,6 +364,7 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
         }
     };
     stop_server(running.server).await;
+    running.network.stop().await;
     inner.finish(reason);
 }
 
@@ -557,6 +565,8 @@ impl Inner {
             ));
         }
         running.server.set_files(app.files());
+        running.server.set_access_policy(app.access_policy());
+        running.network.set_policy(app.access_policy().clone());
         let device = loaded
             .profile
             .device_values(&config.device)
@@ -640,10 +650,16 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         data: shim::session_data(&app, profile, &device, config.lenient, &config.key_map),
         token: bridge_token()?,
         profile,
+        access_policy: app.access_policy().clone(),
     };
     let server = DevServer::start(app.files(), setup, bridge_tx)
         .await
         .map_err(|e| format!("could not start the dev server: {e}"))?;
+    let (network_tx, network_rx) = mpsc::unbounded_channel();
+    tokio::spawn(handle_network(network_rx, inner.clone()));
+    let network = NetworkProxy::start(app.access_policy().clone(), server.addr(), network_tx)
+        .await
+        .map_err(|e| format!("could not start the network proxy: {e}"))?;
     let user_data_dir = config
         .home
         .state_dir()
@@ -655,6 +671,10 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         &LaunchOptions {
             user_data_dir,
             headless: config.headless,
+            network_proxy: Some(network.addr()),
+            // Packaged Apps aren't held to browser CORS on a TV: ADR-0003's
+            // premise, still unverified.
+            disable_web_security: true,
         },
     )
     .await
@@ -671,6 +691,10 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .await
         .map_err(|e| e.to_string())?;
     cdp.call("Page.enable", json!({}))
+        .await
+        .map_err(|e| e.to_string())?;
+    // The Engine's own console messages, such as CSP violations.
+    cdp.call("Log.enable", json!({}))
         .await
         .map_err(|e| e.to_string())?;
     inner
@@ -696,6 +720,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let mut running = Running {
         engine,
         server,
+        network,
         cdp: cdp.clone(),
         app_exit,
         page_loads,
@@ -703,6 +728,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         watcher,
         session_dir,
     };
+    running.network.set_logging(true);
     load_page(&mut running, "Page.navigate", json!({ "url": url }))
         .await
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
@@ -863,6 +889,33 @@ async fn handle_bridge(mut messages: mpsc::UnboundedReceiver<BridgeMessage>, inn
     }
 }
 
+/// Publishes the Network Log, raising a Diagnostic the first time each
+/// missing `<access>` element blocks a request.
+async fn handle_network(mut requests: mpsc::UnboundedReceiver<NetworkRequest>, inner: Arc<Inner>) {
+    let mut diagnosed = HashSet::new();
+    while let Some(request) = requests.recv().await {
+        let blocked = match &request.verdict {
+            Verdict::Blocked { missing_access } if diagnosed.insert(missing_access.clone()) => {
+                Some(Diagnostic {
+                    code: "access-not-declared".into(),
+                    message: format!(
+                        "{} {} was blocked: in WARP mode a TV only lets an App reach what the \
+                         <access> elements in its config.xml grant. Add {missing_access}, \
+                         with subdomains=\"true\" to cover its subdomains too.",
+                        request.method, request.url
+                    ),
+                })
+            }
+            _ => None,
+        };
+        inner.log.publish(SessionEvent::Network(request));
+        if let Some(diagnostic) = blocked {
+            tracing::warn!(code = %diagnostic.code, "{}", diagnostic.message);
+            inner.log.publish(SessionEvent::Diagnostic(diagnostic));
+        }
+    }
+}
+
 /// A fresh secret for the Bridge, so other local processes can't impersonate the page.
 fn bridge_token() -> Result<String, String> {
     let mut bytes = [0u8; 16];
@@ -881,6 +934,13 @@ async fn forward_events(
                 inner.log.publish(SessionEvent::Console(ConsoleMessage {
                     level: params["type"].as_str().unwrap_or("log").to_string(),
                     text: console_text(&params["args"]),
+                }));
+            }
+            "Log.entryAdded" => {
+                let entry = &params["entry"];
+                inner.log.publish(SessionEvent::Console(ConsoleMessage {
+                    level: entry["level"].as_str().unwrap_or("info").to_string(),
+                    text: entry["text"].as_str().unwrap_or_default().to_string(),
                 }));
             }
             "Page.loadEventFired" => {
@@ -946,6 +1006,7 @@ async fn set_window_state(cdp: &Cdp, state: &str) {
 }
 
 async fn close_engine(running: &mut Running) {
+    running.network.set_logging(false);
     // Ask politely so the Engine flushes its profile, then make sure.
     let _ = tokio::time::timeout(
         Duration::from_secs(3),

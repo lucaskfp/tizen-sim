@@ -14,6 +14,10 @@ The first sentence above has **no primary source**. Re-checked for #44:
 
 Until a primary source or a reproduction settles it, treat the premise as **unverified**. #32, which implements this ADR, must start by settling it. If CORS does apply on a TV, web security stays on and the proxy only adds the Access Policy on top.
 
+Tried for #32 on a 2019 TV (UN50RU7100, Tizen 5.0) in Developer Mode, reached with `sdb`: the probe App (`<access>` to a server on the developer's machine that sends no CORS headers) couldn't be installed, because a retail TV only installs a Package signed with a Samsung distributor certificate for its DUID (`install failed[118, -12], reason: Check certificate error`). Creating that certificate needs the developer's Samsung account, so the reproduction is still pending.
+
+#32 therefore ships with web security off, as this ADR decides, behind a single launch option (`LaunchOptions::disable_web_security`, set in `session.rs`). If a reproduction shows CORS applies, that line flips and the proxy keeps enforcing the Access Policy on top.
+
 ## Considered Options
 
 - **Leave browser CORS on.** Blocks requests that work on a TV, if the premise holds.
