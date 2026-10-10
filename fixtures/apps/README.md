@@ -13,3 +13,5 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `background-support`: enables `background-support` with a `media` background category, so it keeps running while hidden.
 - `required-version-too-high`: declares `required_version="99.0"`, newer than any Version Profile.
 - `hot-reload`: loads `style.css` and `app.js`, which sets `window.scriptVersion`. Tests copy it to a temporary folder and edit the copy.
+
+The Package (`.wgt`) tests build their archives from these folders at test time, so no binary Packages are checked in.

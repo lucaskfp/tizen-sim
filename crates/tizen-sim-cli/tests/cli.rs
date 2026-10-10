@@ -15,8 +15,12 @@ fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn spawn_run(app: &str) -> Child {
+    spawn_run_path(&fixture(app))
+}
+
+fn spawn_run_path(app: &str) -> Child {
     Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
-        .args(["run", &fixture(app), "--headless"])
+        .args(["run", app, "--headless"])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap()
@@ -90,6 +94,61 @@ fn invalid_app_fails_with_the_problem_named() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("config.xml") && stderr.contains("line"),
+        "{stderr}"
+    );
+}
+
+/// Packs a fixture App as `app.wgt` in a throwaway directory.
+fn package_fixture(name: &str) -> (tempfile::TempDir, String) {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let wgt = dir.path().join("app.wgt");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&wgt).unwrap());
+    for entry in std::fs::read_dir(fixture(name)).unwrap() {
+        let entry = entry.unwrap();
+        zip.start_file(
+            entry.file_name().to_str().unwrap(),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(&std::fs::read(entry.path()).unwrap())
+            .unwrap();
+    }
+    zip.finish().unwrap();
+    let path = wgt.to_str().unwrap().to_string();
+    (dir, path)
+}
+
+#[test]
+fn run_opens_a_package() {
+    let _turn = one_at_a_time();
+    let (_dir, wgt) = package_fixture("hello");
+    let mut child = spawn_run_path(&wgt);
+    let (lines, _) = read_until_loaded(&mut child);
+    child.kill().unwrap();
+    let _ = child.wait();
+
+    let all = lines.join("\n");
+    assert!(
+        all.contains("Starting Fixture001.Hello on Tizen 10.0"),
+        "{all}"
+    );
+    assert!(all.contains("[console.log] hello from fixture"), "{all}");
+}
+
+#[test]
+fn a_corrupt_package_fails_with_the_problem_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let wgt = dir.path().join("broken.wgt");
+    std::fs::write(&wgt, b"not a zip archive").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
+        .args(["run", wgt.to_str().unwrap(), "--headless"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("broken.wgt") && stderr.contains("not a valid Package"),
         "{stderr}"
     );
 }

@@ -41,7 +41,8 @@ pub struct DevServer {
 }
 
 struct ServerState {
-    root: PathBuf,
+    /// Replaced when a changed Package is unpacked again.
+    root: RwLock<PathBuf>,
     bridge_url: String,
     /// Replaced when the Session restarts with a re-read `config.xml`.
     bootstrap: RwLock<String>,
@@ -59,7 +60,7 @@ impl DevServer {
         let addr = listener.local_addr()?;
         let bridge_url = format!("ws://{addr}{BRIDGE_PATH}?token={}", shims.token);
         let state = Arc::new(ServerState {
-            root: root.to_path_buf(),
+            root: RwLock::new(root.to_path_buf()),
             bootstrap: RwLock::new(shim::bootstrap_script(shims.data, &bridge_url)),
             bridge_url,
             token: shims.token,
@@ -97,6 +98,11 @@ impl DevServer {
             shim::bootstrap_script(data, &self.state.bridge_url);
     }
 
+    /// Serves the App's files from `root` from now on.
+    pub fn set_root(&self, root: &Path) {
+        *self.state.root.write().unwrap() = root.to_path_buf();
+    }
+
     pub async fn stop(self) {
         let _ = self.shutdown.send(());
         let _ = self.task.await;
@@ -116,7 +122,8 @@ async fn serve_bootstrap(State(state): State<Arc<ServerState>>) -> Response {
 
 /// HTML documents get the bootstrap injected; everything else is served as-is.
 async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request) -> Response {
-    if let Some(file) = html_document(&state.root, request.uri().path())
+    let root = state.root.read().unwrap().clone();
+    if let Some(file) = html_document(&root, request.uri().path())
         && let Ok(html) = tokio::fs::read(&file).await
     {
         // No charset: the document's own <meta charset> decides, as on a TV.
@@ -129,7 +136,7 @@ async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request)
         )
             .into_response();
     }
-    match ServeDir::new(&state.root).oneshot(request).await {
+    match ServeDir::new(&root).oneshot(request).await {
         // Revalidate every time, so a hot reload never runs a stale file.
         Ok(mut response) => {
             response.headers_mut().insert(

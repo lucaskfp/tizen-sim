@@ -19,7 +19,8 @@ pub fn fixture(name: &str) -> PathBuf {
 pub struct TestSession {
     pub session: Session,
     pub events: Events,
-    _state: tempfile::TempDir,
+    /// The per-App state directory, removed when the test ends.
+    pub state: tempfile::TempDir,
 }
 
 pub fn start(fixture_name: &str) -> TestSession {
@@ -36,21 +37,67 @@ pub fn start_folder(
     folder: &std::path::Path,
     adjust: impl FnOnce(&mut SessionConfig),
 ) -> TestSession {
+    start_source(AppSource::ProjectFolder(folder.to_path_buf()), adjust)
+}
+
+/// A Session on any App Source.
+pub fn start_source(source: AppSource, adjust: impl FnOnce(&mut SessionConfig)) -> TestSession {
     let state = tempfile::tempdir().unwrap();
-    let mut config = config(folder, state.path());
+    let mut config = config(source, state.path());
     adjust(&mut config);
     let session = Session::start(config);
     let events = session.events();
     TestSession {
         session,
         events,
-        _state: state,
+        state,
     }
 }
 
 /// A Session whose per-App state lives in `state`, so tests can share it.
 pub fn start_session(fixture_name: &str, state: &std::path::Path) -> Session {
-    Session::start(config(&fixture(fixture_name), state))
+    Session::start(config(
+        AppSource::ProjectFolder(fixture(fixture_name)),
+        state,
+    ))
+}
+
+/// The files of a fixture App, as `(path, contents)` Package entries.
+pub fn fixture_entries(fixture_name: &str) -> Vec<(String, Vec<u8>)> {
+    let mut entries: Vec<(String, Vec<u8>)> = std::fs::read_dir(fixture(fixture_name))
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (
+                entry.file_name().into_string().unwrap(),
+                std::fs::read(entry.path()).unwrap(),
+            )
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// Writes a Package (a zip archive) with the given entries to `path`.
+pub fn write_package(path: &std::path::Path, entries: &[(String, Vec<u8>)]) {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, contents) in entries {
+        zip.start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(contents).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    // Written in one go, as a build tool replacing the Package would.
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// A fixture App packed as `app.wgt` in a throwaway directory.
+pub fn package_fixture(fixture_name: &str) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let wgt = dir.path().join("app.wgt");
+    write_package(&wgt, &fixture_entries(fixture_name));
+    (dir, wgt)
 }
 
 /// A copy of a fixture App in a throwaway directory, for tests that edit it.
@@ -63,9 +110,9 @@ pub fn copy_fixture(fixture_name: &str) -> tempfile::TempDir {
     copy
 }
 
-fn config(folder: &std::path::Path, state: &std::path::Path) -> SessionConfig {
+fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
     SessionConfig {
-        source: AppSource::ProjectFolder(folder.to_path_buf()),
+        source,
         profile: None,
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,

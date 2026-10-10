@@ -1,5 +1,5 @@
-//! Watches a Project Folder for hot reload and groups bursts of changes (an
-//! editor's save-all, an atomic save's temporary file) into single batches.
+//! Watches a Project Folder or a Package for hot reload and groups bursts of
+//! changes (an editor's save-all, an atomic save's temporary file) into batches.
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
 use std::collections::BTreeSet;
@@ -13,7 +13,7 @@ const QUIET: Duration = Duration::from_millis(150);
 /// ...or this long after its first change, whichever comes first.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
-/// The App files that changed together, relative to the Project Folder and
+/// The App files that changed together, relative to the watched folder and
 /// `/`-separated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Batch {
@@ -44,13 +44,34 @@ impl Batch {
 }
 
 /// A running watch; dropping it stops watching.
-pub struct FolderWatcher {
+pub struct SourceWatcher {
     _watcher: notify::RecommendedWatcher,
     batches: mpsc::UnboundedReceiver<Batch>,
 }
 
-impl FolderWatcher {
-    pub fn start(root: &Path) -> notify::Result<FolderWatcher> {
+impl SourceWatcher {
+    pub fn start(root: &Path) -> notify::Result<SourceWatcher> {
+        Self::watch(root, RecursiveMode::Recursive, None)
+    }
+
+    /// Watches a single file, such as a Package; batches name just that file.
+    /// Its folder is watched rather than the file itself, so a build that
+    /// deletes the file and writes a new one is still followed.
+    pub fn start_file(file: &Path) -> notify::Result<SourceWatcher> {
+        // Absolute first: a bare `app.wgt` has no parent folder to watch.
+        let file = canonical_without_verbatim_prefix(&std::path::absolute(file)?);
+        let (Some(folder), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str()))
+        else {
+            return Err(notify::Error::path_not_found().add_path(file));
+        };
+        Self::watch(folder, RecursiveMode::NonRecursive, Some(name.to_string()))
+    }
+
+    fn watch(
+        root: &Path,
+        mode: RecursiveMode,
+        only_file_name: Option<String>,
+    ) -> notify::Result<SourceWatcher> {
         // Events carry absolute paths, which on Windows may be in a different
         // form than `root`; canonical forms on both sides make them comparable.
         let root = canonical_without_verbatim_prefix(root);
@@ -65,10 +86,10 @@ impl FolderWatcher {
                     let _ = changes_tx.send(path);
                 }
             })?;
-        watcher.watch(&root, RecursiveMode::Recursive)?;
+        watcher.watch(&root, mode)?;
         let (batches_tx, batches) = mpsc::unbounded_channel();
-        tokio::spawn(debounce(root, changes, batches_tx));
-        Ok(FolderWatcher {
+        tokio::spawn(debounce(root, only_file_name, changes, batches_tx));
+        Ok(SourceWatcher {
             _watcher: watcher,
             batches,
         })
@@ -80,19 +101,25 @@ impl FolderWatcher {
     }
 }
 
+/// Groups changes into batches. With `only_file_name`, changes to anything but
+/// that file in `root` are ignored.
 async fn debounce(
     root: PathBuf,
+    only_file_name: Option<String>,
     mut changes: mpsc::UnboundedReceiver<PathBuf>,
     batches: mpsc::UnboundedSender<Batch>,
 ) {
+    let relevant = |path: &Path| {
+        app_path(&root, path).filter(|p| only_file_name.as_ref().is_none_or(|name| p == name))
+    };
     while let Some(first) = changes.recv().await {
         let deadline = Instant::now() + MAX_WAIT;
         let mut paths = BTreeSet::new();
-        paths.extend(app_path(&root, &first));
+        paths.extend(relevant(&first));
         loop {
             let wait = QUIET.min(deadline.saturating_duration_since(Instant::now()));
             match tokio::time::timeout(wait, changes.recv()).await {
-                Ok(Some(path)) => paths.extend(app_path(&root, &path)),
+                Ok(Some(path)) => paths.extend(relevant(&path)),
                 Ok(None) | Err(_) => break,
             }
         }
