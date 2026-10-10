@@ -2,7 +2,9 @@
 // declare throws SecurityError on a TV. Lenient Mode allows the call, but the
 // Diagnostic is raised either way.
 
-function requirePrivilege(privilege: string, api: string) {
+// `exceptionType` is what the API throws: tizen's WebAPIException by default,
+// webapis' for the Samsung Product API.
+function requirePrivilege(privilege: string, api: string, exceptionType?: WebAPIErrorType) {
   var declared = config.app.privileges;
   for (var i = 0; i < declared.length; i++) {
     if (declared[i] === privilege) {
@@ -14,6 +16,6 @@ function requirePrivilege(privilege: string, api: string) {
     ", which config.xml does not declare. On a TV this call throws SecurityError.";
   raiseDiagnostic("privilege-not-declared", message);
   if (!config.lenient) {
-    throw new WebAPIException("SecurityError", message);
+    throw new (exceptionType || WebAPIException)("SecurityError", message);
   }
 }

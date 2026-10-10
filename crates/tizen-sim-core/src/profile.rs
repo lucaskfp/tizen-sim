@@ -25,6 +25,35 @@ impl VersionProfile {
     pub(crate) fn supports_key(&self, key: &crate::remote_keys::RemoteKey) -> bool {
         key.mandatory || self.registrable_keys.contains(&key.name)
     }
+
+    /// The device values the Shims report, with a Session's `overrides`
+    /// replacing the profile's values of the same name.
+    pub fn device_values(
+        &self,
+        overrides: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, UnknownDeviceValue> {
+        let mut values = serde_json::to_value(&self.device).expect("TOML converts to JSON");
+        let table = values.as_object_mut().expect("device is a table");
+        for (name, value) in overrides {
+            let slot = table.get_mut(name).ok_or_else(|| {
+                let mut known: Vec<&str> = self.device.keys().map(String::as_str).collect();
+                known.sort_unstable();
+                UnknownDeviceValue {
+                    name: name.clone(),
+                    known: known.join(", "),
+                }
+            })?;
+            *slot = value.clone();
+        }
+        Ok(values)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown device value `{name}` (known: {known})")]
+pub struct UnknownDeviceValue {
+    name: String,
+    known: String,
 }
 
 #[derive(Debug, thiserror::Error)]

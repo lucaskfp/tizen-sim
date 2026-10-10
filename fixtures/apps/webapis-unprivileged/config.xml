@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://example.com/webapis-unprivileged" version="1.0.0">
+    <tizen:application id="Fixture012.Unprivileged" package="Fixture012" required_version="3.0"/>
+    <content src="index.html"/>
+    <name>Webapis fixture without privileges</name>
+    <tizen:profile name="tv"/>
+</widget>

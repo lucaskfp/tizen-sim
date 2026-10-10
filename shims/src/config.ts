@@ -35,6 +35,8 @@ interface SimConfig {
   keyMap: { [keyCode: string]: string };
   // Hooks the Host calls through CDP; installed by the Shims.
   keys?: { isRegistered: (name: string) => boolean };
+  // Installs `webapis`; called by the virtual $WEBAPIS/webapis/webapis.js.
+  installWebapis?: () => void;
 }
 
 var config: SimConfig = (window as any).__TIZEN_SIM__;

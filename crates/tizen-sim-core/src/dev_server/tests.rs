@@ -112,6 +112,19 @@ async fn html_gets_the_bootstrap_and_other_files_pass_through() {
     server.stop().await;
 }
 
+/// The bundler never sees `$WEBAPIS`: the dev server answers it at any depth.
+#[tokio::test]
+async fn the_webapis_script_is_ours_at_any_depth() {
+    let (server, _) = start_proxy(&start_bundler().await, 130).await;
+    for path in [
+        "/$WEBAPIS/webapis/webapis.js",
+        "/a/b/$WEBAPIS/webapis/webapis.js",
+    ] {
+        assert_eq!(get_text(&server, path).await, shim::WEBAPIS_SCRIPT_BODY);
+    }
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn redirects_stay_behind_the_proxy() {
     let (server, _) = start_proxy(&start_bundler().await, 130).await;

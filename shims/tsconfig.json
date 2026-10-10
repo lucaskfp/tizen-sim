@@ -21,6 +21,7 @@
     "src/application.ts",
     "src/tvinputdevice.ts",
     "src/keyboard.ts",
+    "src/webapis.ts",
     "src/install.ts"
   ]
 }

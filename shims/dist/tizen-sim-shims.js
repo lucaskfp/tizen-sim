@@ -77,27 +77,27 @@ var ERROR_CODES = {
     QuotaExceededError: 22,
     TimeoutError: 23,
 };
-function webApiErrorType(isException) {
+function webApiErrorType(isException, constants, codes) {
     var type = function (name, message) {
         this.name = name;
         this.message = message;
-        this.code = ERROR_CODES.hasOwnProperty(name) ? ERROR_CODES[name] : 0;
+        this.code = codes.hasOwnProperty(name) ? codes[name] : 0;
     };
     if (isException) {
         type.prototype = Object.create(Error.prototype);
         type.prototype.constructor = type;
-        for (var constant in ERROR_CONSTANTS) {
-            type[constant] = type.prototype[constant] = ERROR_CONSTANTS[constant];
+        for (var constant in constants) {
+            type[constant] = type.prototype[constant] = constants[constant];
         }
     }
     return type;
 }
-var WebAPIException = webApiErrorType(true);
-var WebAPIError = webApiErrorType(false);
-function failLater(errorCallback, name, message) {
+var WebAPIException = webApiErrorType(true, ERROR_CONSTANTS, ERROR_CODES);
+var WebAPIError = webApiErrorType(false, ERROR_CONSTANTS, ERROR_CODES);
+function failLater(errorCallback, name, message, errorType) {
     if (typeof errorCallback === "function") {
         setTimeout(function () {
-            errorCallback(new WebAPIError(name, message));
+            errorCallback(new (errorType || WebAPIError)(name, message));
         }, 0);
     }
 }
@@ -106,7 +106,7 @@ function requireFunction(value, argument) {
         throw new WebAPIException("TypeMismatchError", argument + " must be a function");
     }
 }
-function requirePrivilege(privilege, api) {
+function requirePrivilege(privilege, api, exceptionType) {
     var declared = config.app.privileges;
     for (var i = 0; i < declared.length; i++) {
         if (declared[i] === privilege) {
@@ -117,7 +117,7 @@ function requirePrivilege(privilege, api) {
         ", which config.xml does not declare. On a TV this call throws SecurityError.";
     raiseDiagnostic("privilege-not-declared", message);
     if (!config.lenient) {
-        throw new WebAPIException("SecurityError", message);
+        throw new (exceptionType || WebAPIException)("SecurityError", message);
     }
 }
 var SYSTEM_INFO_PROPERTY_IDS = [
@@ -527,6 +527,387 @@ function onKeyUp(e) {
 }
 window.addEventListener("keydown", onKeyDown, true);
 window.addEventListener("keyup", onKeyUp, true);
+var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
+    INVALID_VALUES_ERR: 26,
+    IO_ERR: 27,
+    SERVICE_NOT_AVAILABLE_ERR: 28,
+    UNKNOWN_ERR: 9999,
+});
+var WEBAPIS_ERROR_CODES = extend(ERROR_CODES, {
+    InvalidValuesError: 26,
+    IOError: 27,
+    ServiceNotAvailableError: 28,
+    UnknownError: 9999,
+});
+var WebapisException = webApiErrorType(true, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ERROR_CODES);
+var WebapisError = webApiErrorType(false, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ERROR_CODES);
+var PRODUCTINFO_PRIVILEGE = "http://developer.samsung.com/privilege/productinfo";
+var NETWORK_PRIVILEGE = "http://developer.samsung.com/privilege/network.public";
+function extend(base, extra) {
+    var out = {};
+    for (var key in base) {
+        out[key] = base[key];
+    }
+    for (key in extra) {
+        out[key] = extra[key];
+    }
+    return out;
+}
+function since(version) {
+    return parseFloat(config.profile.version) >= version;
+}
+function webapisFail(name, message) {
+    throw new WebapisException(name, message);
+}
+function requireWebapisPrivilege(privilege, api) {
+    requirePrivilege(privilege, api + "()", WebapisException);
+}
+function callListener(listener, value) {
+    if (typeof listener === "function") {
+        listener(value);
+    }
+    else {
+        listener.onchange(value);
+    }
+}
+function requireListener(listener) {
+    if (typeof listener !== "function" && !(listener && typeof listener.onchange === "function")) {
+        webapisFail("TypeMismatchError", "listener must be a function or have an onchange method");
+    }
+}
+function requireType(value, type, argument) {
+    if (typeof value !== type) {
+        webapisFail("TypeMismatchError", argument + " must be a " + type);
+    }
+}
+var nextWebapisListenerId = 1;
+function addListener(listeners, entry) {
+    var id = nextWebapisListenerId++;
+    listeners[id] = entry;
+    return id;
+}
+function removeListener(listeners, listenerId) {
+    requireType(listenerId, "number", "listenerId");
+    if (!listeners.hasOwnProperty(listenerId)) {
+        webapisFail("InvalidValuesError", "No listener with id " + listenerId);
+    }
+    delete listeners[listenerId];
+}
+function pluginVersion() {
+    return config.profile.version;
+}
+function createProductInfo(device) {
+    var CONFIG_KEYS = { CONFIG_KEY_DATA_SERVICE: 0, CONFIG_KEY_SERVICE_COUNTRY: 1 };
+    var systemConfig = {};
+    systemConfig[CONFIG_KEYS.CONFIG_KEY_DATA_SERVICE] = device.dataService;
+    systemConfig[CONFIG_KEYS.CONFIG_KEY_SERVICE_COUNTRY] = device.serviceCountry;
+    var configListeners = {};
+    function requireConfigKey(key) {
+        requireType(key, "number", "key");
+        if (!systemConfig.hasOwnProperty(key)) {
+            webapisFail("InvalidValuesError", "Not a ProductInfoConfigKey: " + key);
+        }
+    }
+    function value(method, name, privileged) {
+        return function () {
+            if (privileged !== false) {
+                requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo." + method);
+            }
+            return device[name];
+        };
+    }
+    var productinfo = {
+        ProductInfoConfigKey: CONFIG_KEYS,
+        ProductInfoNoGlass3dSupport: { NO_GLASS_3D_NOT_SUPPORTED: 0, NO_GLASS_3D_SUPPORTED: 1 },
+        ProductInfoSiServerType: {
+            SI_TYPE_OPERATIING_SERVER: 0,
+            SI_TYPE_DEVELOPMENT_SERVER: 1,
+            SI_TYPE_DEVELOPING_SERVER: 2,
+        },
+        getVersion: function () {
+            requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.getVersion");
+            return pluginVersion();
+        },
+        getFirmware: value("getFirmware", "firmware"),
+        getDuid: value("getDuid", "duid"),
+        getModelCode: value("getModelCode", "modelCode"),
+        getModel: value("getModel", "productModel"),
+        getRealModel: value("getRealModel", "realModel"),
+        getLocalSet: value("getLocalSet", "localSet"),
+        getSmartTVServerType: value("getSmartTVServerType", "smartTVServerType"),
+        getSmartTVServerVersion: value("getSmartTVServerVersion", "smartTVServerVersion"),
+        isUdPanelSupported: value("isUdPanelSupported", "udPanel"),
+        getSystemConfig: function (key) {
+            requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.getSystemConfig");
+            requireConfigKey(key);
+            return systemConfig[key];
+        },
+        setSystemConfig: function (key, newValue, onsuccess, onerror) {
+            requireConfigKey(key);
+            requireType(newValue, "string", "value");
+            if (key === CONFIG_KEYS.CONFIG_KEY_SERVICE_COUNTRY) {
+                webapisFail("NotSupportedError", "CONFIG_KEY_SERVICE_COUNTRY is read-only");
+            }
+            try {
+                requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.setSystemConfig");
+            }
+            catch (e) {
+                failLater(onerror, e.name, e.message, WebapisError);
+                return;
+            }
+            systemConfig[key] = newValue;
+            setTimeout(function () {
+                if (typeof onsuccess === "function") {
+                    onsuccess();
+                }
+                for (var id in configListeners) {
+                    if (configListeners[id].key === key) {
+                        callListener(configListeners[id].listener, key);
+                    }
+                }
+            }, 0);
+        },
+        addSystemConfigChangeListener: function (key, listener) {
+            requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.addSystemConfigChangeListener");
+            requireConfigKey(key);
+            requireListener(listener);
+            return addListener(configListeners, { key: key, listener: listener });
+        },
+        removeSystemConfigChangeListener: function (listenerId) {
+            requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.removeSystemConfigChangeListener");
+            removeListener(configListeners, listenerId);
+        },
+        isUHDAModel: value("isUHDAModel", "uhdaModel"),
+    };
+    if (since(4.0)) {
+        productinfo.is8KPanelSupported = value("is8KPanelSupported", "panel8K");
+    }
+    if (since(5.0)) {
+        productinfo.isWallModel = value("isWallModel", "wallModel");
+    }
+    if (since(5.5)) {
+        productinfo.isDisplayRotatorSupported = value("isDisplayRotatorSupported", "displayRotator", false);
+    }
+    if (since(6.0)) {
+        productinfo.getLicensedVendor = value("getLicensedVendor", "licensedVendor");
+    }
+    if (since(7.0)) {
+        productinfo.getLicensedBrand = function () {
+            requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.getLicensedBrand");
+            if (!device.licensedBrand) {
+                webapisFail("NotSupportedError", "Not a licensed product");
+            }
+            return device.licensedBrand;
+        };
+    }
+    if (since(8.0)) {
+        productinfo.isOledPanelSupported = value("isOledPanelSupported", "oledPanel");
+    }
+    return productinfo;
+}
+function createTvInfo(device) {
+    var MENU_KEYS = {
+        CAPTION_ONOFF_KEY: 0,
+        CAPTION_MODE_KEY: 1,
+        CAPTION_FONT_SIZE_KEY: 2,
+        CAPTION_FONT_STYLE_KEY: 3,
+        CAPTION_FG_COLOR_KEY: 4,
+        CAPTION_FG_OPACITY_KEY: 5,
+        CAPTION_BG_COLOR_KEY: 6,
+        CAPTION_BG_OPACITY_KEY: 7,
+        CAPTION_EDGE_TYPE_KEY: 8,
+        CAPTION_EDGE_COLOR_KEY: 9,
+        CAPTION_WINDOW_COLOR_KEY: 10,
+        CAPTION_WINDOW_OPACITY_KEY: 11,
+        ACCESSIBILITY_FOCUS_ZOOM: 12,
+        ACCESSIBILITY_HIGH_CONTRAST: 13,
+        SMARTHUB_CHANNEL_BOUND_APPS_TICKER: 14,
+        VOICE_GUIDE_KEY: 15,
+        SUBTITLE_ONOFF_KEY: 16,
+        SUBTITLE_MODE_KEY: 17,
+        PRIMARY_AUDIO_LANGUAGE_KEY: 18,
+        SECONDARY_AUDIO_LANGUAGE_KEY: 19,
+        ACCESSIBILITY_VOICE_GUIDE_SPEED: 20,
+        CAPTION_STYLE_KEY: 21,
+        UI_SIZE: "UI_SIZE",
+        UI_TRANSPARENCY: "UI_TRANSPARENCY",
+        UI_TIMEOUT: "UI_TIMEOUT",
+        MOVING_TEXT_AND_IMAGE: "MOVING_TEXT_AND_IMAGE",
+    };
+    if (since(10.0)) {
+        MENU_KEYS.CAPTION_LANGUAGE_INDEX_KEY = 22;
+        MENU_KEYS.CAPTION_LANGUAGE_KEY = "CAPTION_LANGUAGE_KEY";
+    }
+    var INFO_KEYS = {};
+    if (since(6.5)) {
+        INFO_KEYS.SMART_RC_BATTERY = "SMART_RC_BATTERY";
+        INFO_KEYS.BOARD_TEMPERATURE = "BOARD_TEMPERATURE";
+    }
+    var INFO_VALUES = {
+        SMART_RC_BATTERY: "smartRcBattery",
+        BOARD_TEMPERATURE: "boardTemperature",
+    };
+    var captionListeners = {};
+    function menuKeyName(key) {
+        for (var name in MENU_KEYS) {
+            if (MENU_KEYS[name] === key) {
+                return name;
+            }
+        }
+        return webapisFail("TypeMismatchError", "Not a TvInfoMenuKey: " + key);
+    }
+    return {
+        TvInfoMenuKey: MENU_KEYS,
+        TvInfoKey: INFO_KEYS,
+        TvInfoValue: { TV_VIEWER_BG_NOT_EXECUTABLE: 0, TV_VIEWER_BG_EXECUTABLE: 1 },
+        getVersion: pluginVersion,
+        getMenuValue: function (key) {
+            var name = menuKeyName(key);
+            var menu = device.tvMenu || {};
+            return menu.hasOwnProperty(name) ? menu[name] : 0;
+        },
+        addCaptionChangeListener: function (key, listener) {
+            menuKeyName(key);
+            requireListener(listener);
+            return addListener(captionListeners, listener);
+        },
+        removeCaptionChangeListener: function (listenerId) {
+            removeListener(captionListeners, listenerId);
+        },
+        isTvsPicSizeResized: function () {
+            return device.tvsPicSizeResized;
+        },
+        getTvInfoValue: function (key) {
+            requireType(key, "string", "key");
+            if (!INFO_KEYS.hasOwnProperty(key)) {
+                webapisFail("InvalidValuesError", "Not a TvInfoKey: " + key);
+            }
+            return device[INFO_VALUES[key]];
+        },
+        showCaption: function (show) {
+            requireType(show, "boolean", "show");
+        },
+        registerInAppCaptionControl: function (status) {
+            requireType(status, "boolean", "status");
+        },
+    };
+}
+function createNetwork(device) {
+    var CONNECTION_TYPES = { DISCONNECTED: 0, WIFI: 1, CELLULAR: 2, ETHERNET: 3 };
+    var IP_MODES = { NONE: 0, STATIC: 1, DYNAMIC: 2, AUTO: 3, FIXED: 4, UNKNOWN: 5 };
+    var SECURITY_MODES = { WEP: 1, WPA_PSK: 2, WPA2_PSK: 3, EAP: 4, NONE: 5, UNKNOWN: 6 };
+    var ENCRYPTION_TYPES = { WEP: 1, TKIP: 2, AES: 3, TKIP_AES_MIXED: 4, NONE: 5, UNKNOWN: 6 };
+    var stateListeners = {};
+    function connectionType() {
+        switch (device.networkType) {
+            case "WIFI":
+                return CONNECTION_TYPES.WIFI;
+            case "ETHERNET":
+                return CONNECTION_TYPES.ETHERNET;
+            case "2G":
+            case "2.5G":
+            case "3G":
+            case "4G":
+                return CONNECTION_TYPES.CELLULAR;
+            default:
+                return CONNECTION_TYPES.DISCONNECTED;
+        }
+    }
+    function enumValue(values, name) {
+        return values.hasOwnProperty(name) ? values[name] : values.UNKNOWN;
+    }
+    function access(method, needs) {
+        requireWebapisPrivilege(NETWORK_PRIVILEGE, "webapis.network." + method);
+        requireConnection(needs);
+    }
+    function requireConnection(needs) {
+        var type = connectionType();
+        if (needs === "connection" && type === CONNECTION_TYPES.DISCONNECTED) {
+            webapisFail("InvalidStateError", "The TV has no network connection");
+        }
+        if (needs === "wifi" && type !== CONNECTION_TYPES.WIFI) {
+            webapisFail("InvalidStateError", "The TV is not connected over Wi-Fi");
+        }
+    }
+    function getter(method, needs, read) {
+        return function () {
+            access(method, needs);
+            return read();
+        };
+    }
+    function setting(name) {
+        return function () {
+            return device[name];
+        };
+    }
+    var network = {
+        NetworkActiveConnectionType: CONNECTION_TYPES,
+        NetworkIpMode: IP_MODES,
+        NetworkState: {
+            INTERNET_CONNECTED: 0,
+            LAN_CABLE_ATTACHED: 1,
+            LAN_CABLE_DETACHED: 2,
+            LAN_CABLE_STATE_UNKNOWN: 3,
+            GATEWAY_CONNECTED: 4,
+            GATEWAY_DISCONNECTED: 5,
+            WIFI_MODULE_STATE_ATTACHED: 6,
+            WIFI_MODULE_STATE_DETACHED: 7,
+            WIFI_MODULE_STATE_UNKNOWN: 8,
+            INTERNET_DISCONNECTED: 9,
+        },
+        NetworkWiFiSecurityMode: SECURITY_MODES,
+        NetworkWiFiEncryptionType: ENCRYPTION_TYPES,
+        getVersion: getter("getVersion", undefined, pluginVersion),
+        isConnectedToGateway: getter("isConnectedToGateway", undefined, function () {
+            return connectionType() !== CONNECTION_TYPES.DISCONNECTED;
+        }),
+        getActiveConnectionType: getter("getActiveConnectionType", undefined, connectionType),
+        getIpMode: getter("getIpMode", undefined, function () {
+            return enumValue(IP_MODES, device.ipMode);
+        }),
+        getIp: getter("getIp", "connection", setting("ip")),
+        getSubnetMask: getter("getSubnetMask", "connection", setting("subnetMask")),
+        getGateway: getter("getGateway", "connection", setting("gateway")),
+        getDns: getter("getDns", "connection", setting("dns")),
+        getSecondaryDns: getter("getSecondaryDns", "connection", setting("secondaryDns")),
+        getMac: getter("getMac", "connection", setting("mac")),
+        getWiFiSsid: getter("getWiFiSsid", "wifi", setting("wifiSsid")),
+        getWiFiSignalStrengthLevel: getter("getWiFiSignalStrengthLevel", "wifi", setting("wifiSignalStrength")),
+        getWiFiSecurityMode: getter("getWiFiSecurityMode", "wifi", function () {
+            return enumValue(SECURITY_MODES, device.wifiSecurityMode);
+        }),
+        getWiFiEncryptionType: getter("getWiFiEncryptionType", "wifi", function () {
+            return enumValue(ENCRYPTION_TYPES, device.wifiEncryptionType);
+        }),
+        addNetworkStateChangeListener: function (listener) {
+            access("addNetworkStateChangeListener");
+            requireListener(listener);
+            return addListener(stateListeners, listener);
+        },
+        removeNetworkStateChangeListener: function (listenerId) {
+            access("removeNetworkStateChangeListener");
+            removeListener(stateListeners, listenerId);
+        },
+    };
+    if (since(4.0)) {
+        network.getTVName = getter("getTVName", "connection", setting("tvName"));
+    }
+    if (since(6.0)) {
+        network.getWiFiFrequency = getter("getWiFiFrequency", "wifi", setting("wifiFrequency"));
+    }
+    return network;
+}
+function installWebapis() {
+    if (window.webapis) {
+        return;
+    }
+    var device = config.profile.device;
+    window.webapis = {
+        productinfo: createProductInfo(device),
+        tvinfo: createTvInfo(device),
+        network: createNetwork(device),
+    };
+}
 window.tizen = {
     WebAPIException: WebAPIException,
     WebAPIError: WebAPIError,
@@ -534,4 +915,5 @@ window.tizen = {
     systeminfo: systeminfo,
     tvinputdevice: tvinputdevice,
 };
+config.installWebapis = installWebapis;
 })();

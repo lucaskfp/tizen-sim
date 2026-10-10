@@ -13,10 +13,34 @@ const SHIM_BUNDLE: &str = include_str!("../../../shims/dist/tizen-sim-shims.js")
 pub const BOOTSTRAP_PATH: &str = "/__tizen-sim/bootstrap.js";
 /// Where the dev server accepts the Bridge WebSocket.
 pub const BRIDGE_PATH: &str = "/__tizen-sim/bridge";
+/// The script that gives a page the Samsung Product API, as Apps reference it
+/// (samsung-product-api-references.html). Relative references resolve below
+/// any directory, so the dev server answers it at every path depth.
+pub const WEBAPIS_SCRIPT: &str = "$WEBAPIS/webapis/webapis.js";
+
+/// What the virtual `$WEBAPIS/webapis/webapis.js` serves: the bootstrap
+/// already holds the Shims, so it only installs `webapis`.
+pub const WEBAPIS_SCRIPT_BODY: &str = "window.__TIZEN_SIM__.installWebapis();\n";
+
+/// Whether a request path names the virtual `$WEBAPIS` script, whatever
+/// directory the page referring to it is in.
+pub fn is_webapis_script(uri_path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(uri_path).decode_utf8_lossy();
+    decoded
+        .strip_suffix(WEBAPIS_SCRIPT)
+        .is_some_and(|dir| dir.ends_with('/'))
+}
 
 /// The Session data the Shims need, minus the Bridge address, which only the
-/// dev server knows.
-pub fn session_data(app: &App, profile: &VersionProfile, lenient: bool, key_map: &KeyMap) -> Value {
+/// dev server knows. `device` is the profile's device values with the
+/// Session's overrides applied (`VersionProfile::device_values`).
+pub fn session_data(
+    app: &App,
+    profile: &VersionProfile,
+    device: &Value,
+    lenient: bool,
+    key_map: &KeyMap,
+) -> Value {
     let remote_keys: Vec<Value> = RemoteKey::all()
         .iter()
         .filter(|key| profile.supports_key(key))
@@ -37,7 +61,7 @@ pub fn session_data(app: &App, profile: &VersionProfile, lenient: bool, key_map:
             "version": profile.version,
             "milestone": profile.milestone,
             "capabilities": profile.capabilities,
-            "device": profile.device,
+            "device": device,
             "remoteKeys": remote_keys,
         },
     })
@@ -194,6 +218,17 @@ mod tests {
         let out = inject_bootstrap(latin1);
         assert!(out.ends_with(b"<title>Caf\xe9</title>"));
         assert!(out.windows(TAG.len()).any(|w| w == TAG.as_bytes()));
+    }
+
+    #[test]
+    fn recognises_the_webapis_script_at_any_depth() {
+        assert!(is_webapis_script("/$WEBAPIS/webapis/webapis.js"));
+        assert!(is_webapis_script(
+            "/pages/nested/$WEBAPIS/webapis/webapis.js"
+        ));
+        assert!(is_webapis_script("/%24WEBAPIS/webapis/webapis.js"));
+        assert!(!is_webapis_script("/webapis/webapis.js"));
+        assert!(!is_webapis_script("/x$WEBAPIS/webapis/webapis.js"));
     }
 
     #[test]

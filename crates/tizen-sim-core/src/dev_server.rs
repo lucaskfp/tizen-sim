@@ -139,9 +139,20 @@ async fn serve_bootstrap(State(state): State<Arc<ServerState>>) -> Response {
         .into_response()
 }
 
-/// HTML documents get the bootstrap injected; everything else is served or
-/// passed through as-is.
+/// HTML documents get the bootstrap injected and the virtual `$WEBAPIS`
+/// script is answered here; everything else is served or passed through
+/// as-is.
 async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> Response {
+    if shim::is_webapis_script(request.uri().path()) {
+        return (
+            [
+                (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            shim::WEBAPIS_SCRIPT_BODY,
+        )
+            .into_response();
+    }
     let files = state.files.read().unwrap().clone();
     match files {
         AppFiles::Folder(root) => serve_app_file(&state, &root, request).await,

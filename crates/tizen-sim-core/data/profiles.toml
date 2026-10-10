@@ -2,8 +2,10 @@
 # Engine milestones: https://developer.samsung.com/smarttv/develop/specifications/web-engine-specifications.html
 #
 # `capabilities` answers tizen.systeminfo.getCapability; `device` holds the
-# values the system info Shims report. Values are plausible defaults for a TV
-# of that generation, not measurements of a specific model.
+# values the system info and Samsung Product API Shims report, which a Session
+# can override by name. Values are plausible defaults for a TV of that
+# generation, in the formats the API references show, not measurements of a
+# specific model.
 
 [[profile]]
 version = "10.0"
@@ -46,3 +48,60 @@ panelWidth = 3840
 panelHeight = 2160
 totalMemory = 3221225472
 availableMemory = 1610612736
+# webapis.productinfo (productinfo-api.html); examples there: model code
+# "15_HAWKP", model "UJS9500", real model "UN65JS9500", server version
+# "T-INFOLINK2014-1002". The firmware, DUID and LocalSet formats are unverified.
+firmware = "T-SIMAKUC-1000.0"
+duid = "TIZENSIMDUID00001"
+modelCode = "24_TIZENSIM_UHD"
+productModel = "TS10UHD"
+realModel = "TS65TS10UHD"
+localSet = "US_ATSC"
+# ProductInfoSiServerType: 0 operating, 1 development, 2 developing.
+smartTVServerType = 0
+smartTVServerVersion = "T-INFOLINK2024-1000"
+# getLicensedBrand throws NotSupportedError on Samsung products; empty means
+# this is one.
+licensedBrand = ""
+licensedVendor = "tizen-sim"
+udPanel = true
+panel8K = false
+wallModel = false
+uhdaModel = true
+displayRotator = false
+oledPanel = false
+# ProductInfoConfigKey values; CONFIG_KEY_SERVICE_COUNTRY is read-only.
+dataService = "0"
+serviceCountry = "USA"
+# webapis.tvinfo (tvinfo-api.html).
+smartRcBattery = 80
+boardTemperature = 40
+tvsPicSizeResized = false
+# webapis.network (network-api.html), on the connection `networkType` names.
+# Addresses use the reference's examples; the MAC is from the documentation
+# range (RFC 7042).
+ip = "192.168.0.11"
+subnetMask = "255.255.255.0"
+gateway = "192.168.0.1"
+dns = "192.168.0.1"
+secondaryDns = "192.168.0.100"
+mac = "00:00:5E:00:53:01"
+# A NetworkIpMode name: NONE, STATIC, DYNAMIC, AUTO, FIXED or UNKNOWN.
+ipMode = "DYNAMIC"
+tvName = "[TV] tizen-sim"
+# Reported only when networkType is WIFI.
+wifiSsid = "tizen-sim"
+wifiSignalStrength = 5
+wifiFrequency = 5180
+# NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
+wifiSecurityMode = "WPA2_PSK"
+wifiEncryptionType = "AES"
+
+# TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
+# (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
+# DEFAULT or OFF.
+[profile.device.tvMenu]
+PRIMARY_AUDIO_LANGUAGE_KEY = "ENG"
+SECONDARY_AUDIO_LANGUAGE_KEY = "ENG"
+ACCESSIBILITY_VOICE_GUIDE_SPEED = "NORMAL"
+SMARTHUB_CHANNEL_BOUND_APPS_TICKER = "OFF"

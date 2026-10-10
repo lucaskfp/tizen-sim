@@ -46,6 +46,11 @@ struct RunArgs {
     /// F1-F4=colour keys, PageUp/PageDown=ChannelUp/ChannelDown.
     #[arg(long = "map-key", value_name = "KEY=REMOTE_KEY")]
     map_keys: Vec<String>,
+    /// Override a device value the platform APIs report, e.g.
+    /// `--device duid=ABC123` or `--device networkType=WIFI`. JSON values
+    /// (numbers, booleans) are taken as such; anything else is a string.
+    #[arg(long = "device", value_name = "NAME=VALUE")]
+    device: Vec<String>,
 }
 
 impl RunArgs {
@@ -60,6 +65,15 @@ impl RunArgs {
             key_map
                 .insert(physical, remote.trim())
                 .with_context(|| format!("--map-key {mapping}"))?;
+        }
+        let mut device = serde_json::Map::new();
+        for setting in &self.device {
+            let (name, value) = setting
+                .split_once('=')
+                .with_context(|| format!("--device {setting}: expected NAME=VALUE"))?;
+            let value = serde_json::from_str(value.trim())
+                .unwrap_or_else(|_| serde_json::Value::String(value.trim().to_string()));
+            device.insert(name.trim().to_string(), value);
         }
         let is_url = self.app.starts_with("http://") || self.app.starts_with("https://");
         let source = match (is_url, self.config) {
@@ -86,6 +100,7 @@ impl RunArgs {
             headless: self.headless,
             lenient: self.lenient,
             key_map,
+            device,
             home: Home::from_env(),
         })
     }

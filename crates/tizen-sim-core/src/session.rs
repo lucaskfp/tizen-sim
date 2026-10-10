@@ -35,6 +35,9 @@ pub struct SessionConfig {
     pub lenient: bool,
     /// Which keyboard keys act as which Remote Keys in the Engine window.
     pub key_map: KeyMap,
+    /// Per-Session overrides of the Version Profile's device values (model,
+    /// DUID, network settings, ...), by name. Unknown names fail the start.
+    pub device: serde_json::Map<String, Value>,
     pub home: Home,
 }
 
@@ -554,9 +557,14 @@ impl Inner {
             ));
         }
         running.server.set_files(app.files());
+        let device = loaded
+            .profile
+            .device_values(&config.device)
+            .map_err(|e| e.to_string())?;
         running.server.set_shim_data(shim::session_data(
             &app,
             loaded.profile,
+            &device,
             loaded.lenient,
             &config.key_map,
         ));
@@ -604,6 +612,9 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     };
     app.check_installable_on(profile)
         .map_err(|e| e.to_string())?;
+    let device = profile
+        .device_values(&config.device)
+        .map_err(|e| e.to_string())?;
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::Starting {
@@ -626,7 +637,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let _ = inner.app_exit.set(app_exit_tx);
     tokio::spawn(handle_bridge(bridge_rx, inner.clone()));
     let setup = ServerSetup {
-        data: shim::session_data(&app, profile, config.lenient, &config.key_map),
+        data: shim::session_data(&app, profile, &device, config.lenient, &config.key_map),
         token: bridge_token()?,
         profile,
     };

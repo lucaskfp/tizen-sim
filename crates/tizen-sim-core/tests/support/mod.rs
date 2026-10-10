@@ -117,6 +117,7 @@ fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,
         key_map: tizen_sim_core::remote_keys::KeyMap::default(),
+        device: serde_json::Map::new(),
         home: Home::from_env().with_state_dir(state.to_path_buf()),
     }
 }

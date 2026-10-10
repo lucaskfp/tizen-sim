@@ -118,6 +118,31 @@ Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/
 - **`http://tizen.org/feature/platform.version`** has the form `Major.Minor.Patch`, e.g. `9.0.0`.
 - **`getCapability` with an unknown key:** the doc lists only `UnknownError`. **Unverified** on hardware.
 
+## Samsung Product API
+
+Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo` and `network` module pages.
+
+- **Loading.** An App gets `webapis` by loading `<script src="$WEBAPIS/webapis/webapis.js">`. The page names no other way, so a page without it has no `webapis`. That `$WEBAPIS` resolves at any path depth comes from the product spec (#23).
+- **Errors.** `webapis`' `WebAPIException` has tizen's constants plus `INVALID_VALUES_ERR` 26, `IO_ERR` 27, `SERVICE_NOT_AVAILABLE_ERR` 28 and `UNKNOWN_ERR` 9999. That the matching error names carry those codes is **unverified**.
+- **"Since" versions** are Tizen versions; members newer than the Version Profile are absent.
+- **Privileges:**
+  - `productinfo`: every method needs `productinfo`, except `isDisplayRotatorSupported` (since 5.5). `setSystemConfig` lists no `SecurityError` among its exceptions but describes one for `onerror`, so tizen-sim reports it there.
+  - `tvinfo`: only `setMenuValue` (since 3.0, B2B products only) needs `tvinfo`. Which exception an unknown menu key raises is **unverified**.
+  - `network`: every method needs `network.public` (TV `guides/fundamentals/checking-network-status.html` too), except `setIpMode` (`b2bcontrol`), the DHCP option 60 methods (partner `network.dhcpoption60`) and the SoftAP methods (`network.softAP`).
+- **`productinfo`:**
+  - `ProductInfoConfigKey`: `CONFIG_KEY_DATA_SERVICE` 0, `CONFIG_KEY_SERVICE_COUNTRY` 1 (read-only). The `NotSupportedError` `setSystemConfig` throws for it is marked deprecated since 3.0 with no replacement named; tizen-sim still throws it (**unverified**).
+  - `getLicensedBrand` (since 7.0) throws `NotSupportedError` on Samsung products.
+  - Example values: model code `15_HAWKP`, model `UJS9500`, real model `UN65JS9500`, server version `T-INFOLINK2014-1002`.
+- **`tvinfo`:**
+  - `removeCaptionChangeListener` throws `InvalidValuesError` for an unknown id.
+  - `getTvInfoValue` keys `SMART_RC_BATTERY` (0–100) and `BOARD_TEMPERATURE` exist since 6.5.
+  - `CAPTION_LANGUAGE_INDEX_KEY` and `CAPTION_LANGUAGE_KEY` exist since 10.0. The values of the menu keys listed without numbers (`UI_SIZE`, ...) are **unverified**.
+- **`network`:**
+  - `NetworkActiveConnectionType`: DISCONNECTED 0, WIFI 1, CELLULAR 2, ETHERNET 3.
+  - Address getters throw `InvalidStateError` without a connection; Wi-Fi getters throw it without Wi-Fi.
+  - `getTVName` exists since 4.0 and `getWiFiFrequency` since 6.0. The setters (`setIp`, `setSubnetMask`, `setGateway`, `setDns`, `setIpMode`) and the proxy methods are for B2B products only, so a TV has none of them.
+  - `NetworkIpMode`'s descriptions conflict (DYNAMIC is described as IPv6, AUTO as IPv4 DHCP): **docs conflict**.
+
 ## Screen and media
 
 - **Resolution.** The App is 1920×1080 CSS px on all models, or 1280×720 on FHD TVs per the resolution guide. Larger content is scaled down. A custom width comes from the viewport meta. (TV: `guides/fundamentals/managing-screen-resolution.html`, `specifications/general-specifications.html`)

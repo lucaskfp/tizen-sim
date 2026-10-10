@@ -52,30 +52,39 @@ interface WebAPIException extends Error {
 type WebAPIErrorType = { new (name: string, message: string): WebAPIException };
 
 // Both types carry the same fields; only the thrown one is an Error.
-function webApiErrorType(isException: boolean): WebAPIErrorType {
+function webApiErrorType(
+  isException: boolean,
+  constants: { [constant: string]: number },
+  codes: { [name: string]: number },
+): WebAPIErrorType {
   var type = function (this: WebAPIException, name: string, message: string) {
     this.name = name;
     this.message = message;
-    this.code = ERROR_CODES.hasOwnProperty(name) ? ERROR_CODES[name] : 0;
+    this.code = codes.hasOwnProperty(name) ? codes[name] : 0;
   } as any as WebAPIErrorType;
   if (isException) {
     type.prototype = Object.create(Error.prototype);
     type.prototype.constructor = type;
-    for (var constant in ERROR_CONSTANTS) {
-      (type as any)[constant] = type.prototype[constant] = ERROR_CONSTANTS[constant];
+    for (var constant in constants) {
+      (type as any)[constant] = type.prototype[constant] = constants[constant];
     }
   }
   return type;
 }
 
-var WebAPIException = webApiErrorType(true);
-var WebAPIError = webApiErrorType(false);
+var WebAPIException = webApiErrorType(true, ERROR_CONSTANTS, ERROR_CODES);
+var WebAPIError = webApiErrorType(false, ERROR_CONSTANTS, ERROR_CODES);
 
 /** Calls an optional error callback asynchronously, as Tizen APIs do. */
-function failLater(errorCallback: ((e: WebAPIException) => void) | undefined, name: string, message: string) {
+function failLater(
+  errorCallback: ((e: WebAPIException) => void) | undefined,
+  name: string,
+  message: string,
+  errorType?: WebAPIErrorType,
+) {
   if (typeof errorCallback === "function") {
     setTimeout(function () {
-      errorCallback(new WebAPIError(name, message));
+      errorCallback(new (errorType || WebAPIError)(name, message));
     }, 0);
   }
 }
