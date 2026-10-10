@@ -97,7 +97,8 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
   - Which schemes the Tizen runtime supports for `<access>` is **unverified**. tizen-sim accepts http, https, ws and wss.
 - **HTTPS and WebSockets** reach tizen-sim's proxy as CONNECT tunnels, which show only host and port. So a tunnel opens when any of `https`, `wss` or `ws` is granted for them, which is looser than WARP's per-scheme match. That is a simulator approximation, not TV behaviour.
 - **Denied requests.** WARP says only that the user agent "rejects" a request it doesn't grant, and that the default policy denies network access "whether this access is requested through APIs (e.g. XMLHttpRequest) or through markup (e.g. iframe, script, img)". tizen-sim fails a denied request as a network error; what a TV reports is **unverified**.
-- **CORS:** TD `guides/w3c/security/cors.md` describes standard CORS. ADR-0003's premise that packaged Apps skip browser CORS has **no primary source yet**, and the reproduction on a TV is pending (see the ADR). tizen-sim follows the ADR meanwhile.
+- **CORS:** TD `guides/w3c/security/cors.md` describes standard CORS. A packaged App on a TV is exempt: measured on a Tizen 5.0 TV in Developer Mode (see ADR-0003). There the page's origin is `file://`, no `Origin` header is sent, and neither CORS headers nor preflights are needed.
+- **Observed, not documented:** the same TV enforced neither `<access>` nor the `internet` privilege for XHR, `fetch`, `<script>`, `<img>` or WebSockets. tizen-sim follows the docs here and keeps enforcing WARP (ADR-0003).
 
 ## Errors
 
