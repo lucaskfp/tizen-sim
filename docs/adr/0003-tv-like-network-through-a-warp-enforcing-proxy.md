@@ -20,6 +20,13 @@ For #32 it was reproduced on a 2019 TV (UN50RU7100, Tizen 5.0) in Developer Mode
 
 The same TV did **not** enforce the Access Policy either. With origins missing from `<access>`, with no `<access>` element at all, and even without the `internet` privilege, XHR, `fetch`, `<script>`, `<img>` and `wss://` WebSockets all succeeded. Whether that is down to Developer Mode, the Tizen version or the firmware is unknown. tizen-sim still enforces WARP as documented, by the project owner's decision: an App that relies on undeclared access is wrong by the platform docs, even if one TV lets it through.
 
+CSP mode, measured on the same TV, does behave as documented, and as the dev server emulates it:
+
+- **A `config.xml` policy** (`default-src 'self'; connect-src https://example.com`) is enforced in full. It blocks the inline script, `eval`, the external script, the image and XHR to other hosts, and lets XHR to `example.com` through.
+- **With only `tizen:allow-navigation`,** the default policy applies. It blocks inline scripts, `eval` and external scripts, and leaves images and XHR open.
+- **With only a report-only policy,** nothing is enforced, and the violations are reported.
+- **A Package with Samsung's `tizen:allow-origin`** installs. Its effect couldn't be observed, since this TV enforces no `<access>`.
+
 ## Considered Options
 
 - **Leave browser CORS on.** Blocks requests that work on a TV, if the premise holds.

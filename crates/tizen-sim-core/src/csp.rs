@@ -32,7 +32,8 @@ pub struct ShimSources<'a> {
 ///
 /// A `config.xml` policy replaces the default one. The doc counts a
 /// report-only policy as one, so an App with only a report-only policy has
-/// nothing enforced; that reading is unverified.
+/// nothing enforced. Both the default and that reading were measured on a
+/// Tizen 5.0 TV (ADR-0003).
 pub fn page_csp(policy: &AccessPolicy, shims: &ShimSources) -> Option<PageCsp> {
     let AccessPolicy::Csp(csp) = policy else {
         return None;

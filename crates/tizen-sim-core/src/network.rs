@@ -3,8 +3,10 @@
 //! request for the Network Log.
 //!
 //! - **WARP mode:** only what an `<access>` element grants goes through
-//!   (TD guides/concepts/web-runtime.md; W3C WARP, "Rules for Granting Access
-//!   to a Network Resource"). HTTPS and WebSockets reach the proxy as CONNECT
+//!   (TV guides/fundamentals/configuring-tv-applications.html, "Network
+//!   access policy": "you cannot access network resources by default"; TD
+//!   guides/concepts/web-runtime.md; W3C WARP, "Rules for Granting Access to
+//!   a Network Resource"). HTTPS and WebSockets reach the proxy as CONNECT
 //!   tunnels, so they are judged by host and port alone and never decrypted.
 //!   That makes one tunnel rule for all three schemes (see `tunnel_verdict`),
 //!   looser than WARP's per-scheme match: a simulator approximation.

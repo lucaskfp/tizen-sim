@@ -84,11 +84,14 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
 
 ## Network and Access Policy
 
-- **Mode.** Any `tizen:content-security-policy`, `-report-only` or `tizen:allow-navigation` element puts the App in **CSP mode**. Otherwise it is in **WARP mode**: no external network access unless `<access origin subdomains>` allows it.
+- **Mode.** Any `tizen:content-security-policy`, `-report-only` or `tizen:allow-navigation` element puts the App in **CSP mode**. Otherwise it is in **WARP mode**: no external network access unless `<access origin subdomains>` allows it. Samsung's TV guide says the same: under WARP "you cannot access network resources by default" (TV: `guides/fundamentals/configuring-tv-applications.html`, "Network access policy").
 - **CSP.** The default is `default-src *; script-src 'self'; style-src 'self'; object-src 'none';`. A CSP in `config.xml` replaces it. If the HTTP response also sends one, the stricter applies. Only the first occurrence of each element counts.
 - **`allow-navigation`** controls link navigation and `window.open` to external URLs.
-- (TD `guides/concepts/web-runtime.md`, `reference/config-xml.md`)
-- **Report-only alone.** The doc counts `-report-only` as a `config.xml` CSP that makes the runtime ignore the default, so an App with only a report-only policy would have nothing enforced. That reading is **unverified**.
+- (TD `guides/concepts/web-runtime.md`, `reference/config-xml.md`.) Measured on a Tizen 5.0 TV (ADR-0003):
+  - A `config.xml` CSP is enforced in full, `connect-src` included.
+  - With only `tizen:allow-navigation`, the default CSP applies: inline scripts, `eval` and external scripts are blocked; images and XHR are open.
+- **Report-only alone.** The doc counts `-report-only` as a `config.xml` CSP that makes the runtime ignore the default, so an App with only a report-only policy has nothing enforced. Measured on a Tizen 5.0 TV: nothing is enforced, and the violations are only reported.
+- **`tizen:allow-origin`.** Samsung's Hosted Applications FAQ (Q4) says an App that downloads content "from multiple domains" should define them in `tizen:allow-origin`. It gives no syntax, and TD `reference/config-xml.md` has no such element. A Tizen 5.0 TV installs a Package with it, but since that TV enforces no `<access>` at all, its effect couldn't be observed. tizen-sim ignores it: **unverified**.
 - **`<access>` in WARP mode** follows the W3C Widget Access Request Policy (https://www.w3.org/TR/widgets-access/, linked from web-runtime.md):
   - `origin` is `*` (all access) or an IRI with only scheme and authority. An element without `origin`, or whose origin has a path, query, fragment, user info or no host, is ignored.
   - `subdomains` is a boolean that case-sensitively matches `true` or `false` after trimming. It defaults to false, and any other value is false (W3C Widget Packaging, "Boolean attribute").
