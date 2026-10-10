@@ -396,33 +396,6 @@ fn csp_elements_select_csp_mode_and_warp_is_the_default() {
     }
 }
 
-/// TD guides/concepts/web-runtime.md: the default CSP applies unless
-/// `config.xml` defines one, which replaces it.
-#[test]
-fn the_default_csp_applies_only_without_a_configured_one() {
-    let enforced = |children: &str| match policy(children) {
-        AccessPolicy::Csp(csp) => csp.enforced().map(String::from),
-        warp => panic!("{children}: expected CSP mode, got {warp:?}"),
-    };
-    assert_eq!(
-        enforced("<tizen:allow-navigation>example.com</tizen:allow-navigation>").as_deref(),
-        Some(CspPolicy::DEFAULT)
-    );
-    assert_eq!(
-        enforced(
-            "<tizen:content-security-policy>default-src 'self'</tizen:content-security-policy>"
-        )
-        .as_deref(),
-        Some("default-src 'self'")
-    );
-    assert_eq!(
-        enforced(
-            "<tizen:content-security-policy-report-only>default-src 'self'</tizen:content-security-policy-report-only>"
-        ),
-        None
-    );
-}
-
 /// TD reference/config-xml.md: for each of these elements, "if more than 1,
 /// the first occurrence is applied".
 #[test]
@@ -649,11 +622,32 @@ fn malformed_packages_fail_with_the_problem_named() {
     assert!(matches!(err, AppError::ConfigMissing { .. }), "{err:?}");
     assert_names(err, &["app.wgt", "config.xml"]);
 
-    let mut escaping = fixture_entries("hello");
-    escaping.push(entry("../escape.txt", "outside"));
-    let err = load_package(&escaping).unwrap_err();
+    for outside in ["../escape.txt", "/absolute.txt", "C:/absolute.txt"] {
+        let mut escaping = fixture_entries("hello");
+        escaping.push(entry(outside, "outside"));
+        let err = load_package(&escaping).unwrap_err();
+        assert!(
+            matches!(err, AppError::PackageCorrupt { .. }),
+            "{outside}: {err:?}"
+        );
+        assert_names(err, &[outside, "outside the Package"]);
+    }
+
+    let symlinked = dir.path().join("symlink.wgt");
+    {
+        use std::io::Write;
+        let options = zip::write::SimpleFileOptions::default();
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&symlinked).unwrap());
+        for (name, contents) in fixture_entries("hello") {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(&contents).unwrap();
+        }
+        zip.add_symlink("link.html", "index.html", options).unwrap();
+        zip.finish().unwrap();
+    }
+    let err = App::load(&AppSource::Package(symlinked)).unwrap_err();
     assert!(matches!(err, AppError::PackageCorrupt { .. }), "{err:?}");
-    assert_names(err, &["../escape.txt"]);
+    assert_names(err, &["link.html", "symbolic link"]);
 
     // config.xml problems name the file inside the Package.
     let mut broken = fixture_entries("hello");

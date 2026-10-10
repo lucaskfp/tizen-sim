@@ -58,25 +58,13 @@ impl RunArgs {
                 .with_context(|| format!("--map-key {mapping}"))?;
         }
         Ok(SessionConfig {
-            source: app_source(self.app),
+            source: AppSource::from_path(self.app),
             profile: self.profile,
             headless: self.headless,
             lenient: self.lenient,
             key_map,
             home: Home::from_env(),
         })
-    }
-}
-
-/// A `.wgt` file is a Package; anything else is taken for a Project Folder.
-fn app_source(path: PathBuf) -> AppSource {
-    let is_package = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("wgt"));
-    if is_package {
-        AppSource::Package(path)
-    } else {
-        AppSource::ProjectFolder(path)
     }
 }
 
@@ -93,6 +81,10 @@ async fn main() -> Result<()> {
 }
 
 async fn run(config: SessionConfig) -> Result<()> {
+    let changed = match config.source {
+        AppSource::ProjectFolder(_) => "config.xml changed",
+        AppSource::Package(_) => "The Package changed and was unpacked again",
+    };
     let session = Session::start(config);
     let mut events = session.events();
     let mut stopping = false;
@@ -113,7 +105,7 @@ async fn run(config: SessionConfig) -> Result<()> {
                         HotReload::FilesChanged { paths } => println!("[changed] {}", paths.join(", ")),
                         HotReload::StylesSwapped => println!("Stylesheets swapped in place."),
                         HotReload::Reloaded => println!("App reloaded."),
-                        HotReload::Restarted { app_id } => println!("Re-read the App and restarted {app_id}."),
+                        HotReload::Restarted { app_id } => println!("{changed}: restarted {app_id}."),
                         HotReload::Failed { error } => println!("[hot reload failed] {error}"),
                     },
                     SessionEvent::Lifecycle(lifecycle) => match lifecycle {

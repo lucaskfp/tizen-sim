@@ -4,7 +4,7 @@
 //! download, dev server, Engine launch) runs in the background and reports
 //! through the Session's event stream.
 
-use crate::app::{App, AppSource};
+use crate::app::{App, AppError, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
 use crate::dev_server::{BridgeMessage, DevServer, ShimSetup};
 use crate::engine::{
@@ -13,8 +13,9 @@ use crate::engine::{
 use crate::home::Home;
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
+use crate::session_dir::SessionDir;
 use crate::shim;
-use crate::watcher::{Action, Batch, FolderWatcher};
+use crate::watcher::{Action, Batch, SourceWatcher};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -300,7 +301,10 @@ struct Running {
     app: App,
     /// Changes to the Project Folder or Package; `None` if it can't be
     /// watched.
-    watcher: Option<FolderWatcher>,
+    watcher: Option<SourceWatcher>,
+    /// Where the Package is unpacked. Declared last, so it is removed after
+    /// everything using its files.
+    session_dir: SessionDir,
 }
 
 async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiver<()>) {
@@ -533,7 +537,9 @@ impl Inner {
     /// keeps running from its files.
     async fn restart(&self, config: &SessionConfig, running: &mut Running) -> Result<(), String> {
         let loaded = self.loaded.get().ok_or("the App is not loaded yet")?;
-        let app = App::load(&config.source).map_err(|e| e.to_string())?;
+        let app = load_settled(&config.source, running.session_dir.path())
+            .await
+            .map_err(|e| e.to_string())?;
         app.check_installable_on(loaded.profile)
             .map_err(|e| e.to_string())?;
         // The Engine's data belongs to the App id, so another App would
@@ -556,9 +562,11 @@ impl Inner {
             .runs_in_background
             .store(app.runs_in_background(), Ordering::SeqCst);
         let url = running.server.url(app.entry_point());
-        // Replacing the App removes the previous Package's unpacked files.
-        running.app = app;
-        load_page(running, "Page.navigate", json!({ "url": url })).await?;
+        // The previous Package's files go once the new App has loaded.
+        let previous = std::mem::replace(&mut running.app, app);
+        let navigated = load_page(running, "Page.navigate", json!({ "url": url })).await;
+        drop(previous);
+        navigated?;
         self.publish_hot_reload(HotReload::Restarted {
             app_id: running.app.id().to_string(),
         });
@@ -584,7 +592,10 @@ impl Inner {
 }
 
 async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
-    let app = App::load(&config.source).map_err(|e| e.to_string())?;
+    let session_dir = SessionDir::create(&config.home.state_dir().join("sessions"))
+        .map_err(|e| format!("could not create the Session directory: {e}"))?;
+    let app =
+        App::load_unpacking_in(&config.source, session_dir.path()).map_err(|e| e.to_string())?;
     let profile = match &config.profile {
         Some(version) => VersionProfile::find(version).map_err(|e| e.to_string())?,
         None => VersionProfile::latest(),
@@ -654,8 +665,8 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     // Watch before the first load, so no edit made once the App is up is missed.
     let watcher = match &config.source {
-        AppSource::ProjectFolder(root) => FolderWatcher::start(root),
-        AppSource::Package(wgt) => FolderWatcher::start_file(wgt),
+        AppSource::ProjectFolder(root) => SourceWatcher::start(root),
+        AppSource::Package(wgt) => SourceWatcher::start_file(wgt),
     }
     .inspect_err(
         |error| tracing::warn!(%error, "could not watch the App Source; hot reload is off"),
@@ -672,6 +683,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         page_loads,
         app,
         watcher,
+        session_dir,
     };
     load_page(&mut running, "Page.navigate", json!({ "url": url }))
         .await
@@ -712,7 +724,28 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     Ok(())
 }
 
-async fn next_batch(watcher: &mut Option<FolderWatcher>) -> Option<Batch> {
+/// How often, and how far apart, a Package that can't be read or unpacked
+/// is tried again: a build may still be writing it when its change is seen.
+const PACKAGE_RETRIES: u32 = 4;
+const PACKAGE_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Loads the App, retrying a Package that isn't fully written yet.
+async fn load_settled(source: &AppSource, unpack_in: &std::path::Path) -> Result<App, AppError> {
+    let mut retries = 0;
+    loop {
+        match App::load_unpacking_in(source, unpack_in) {
+            Err(AppError::PackageCorrupt { .. } | AppError::PackageUnreadable { .. })
+                if retries < PACKAGE_RETRIES =>
+            {
+                retries += 1;
+                tokio::time::sleep(PACKAGE_RETRY_DELAY).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+async fn next_batch(watcher: &mut Option<SourceWatcher>) -> Option<Batch> {
     match watcher {
         Some(watcher) => watcher.next().await,
         None => std::future::pending().await,

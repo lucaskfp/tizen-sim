@@ -79,6 +79,77 @@ async fn replacing_the_package_unpacks_it_again_and_restarts_the_app() {
     t.session.stop().await;
 }
 
+/// The Session directories under the test's state directory.
+fn session_dirs(t: &support::TestSession) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(t.state.path().join("sessions"))
+        .map(|entries| entries.map(|e| e.unwrap().path()).collect())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_package_is_unpacked_in_the_session_directory_and_removed_on_stop() {
+    let (_dir, wgt) = package_fixture("hello");
+    let mut t = start_source(AppSource::Package(wgt), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+    let dirs = session_dirs(&t);
+    assert_eq!(dirs.len(), 1, "{dirs:?}");
+    let unpacked: Vec<_> = std::fs::read_dir(&dirs[0])
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.join("index.html").is_file())
+        .collect();
+    assert_eq!(
+        unpacked.len(),
+        1,
+        "no unpacked Package in {}",
+        dirs[0].display()
+    );
+
+    t.session.stop().await;
+    expect_event(&mut t.events, 30, |e| {
+        matches!(e, SessionEvent::Lifecycle(Lifecycle::Exited { .. }))
+    })
+    .await;
+    // The Session task tears down just after publishing Exited.
+    for _ in 0..100 {
+        if session_dirs(&t).is_empty() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("left behind: {:?}", session_dirs(&t));
+}
+
+#[tokio::test]
+async fn a_package_seen_mid_write_is_retried_rather_than_failing() {
+    let dir = tempfile::tempdir().unwrap();
+    let wgt = dir.path().join("app.wgt");
+    write_package(&wgt, &hot_reload_entries(1));
+    let mut t = start_source(AppSource::Package(wgt.clone()), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+
+    // A build writes the first half, pauses past the change debounce, then
+    // finishes within the retry window.
+    let staging = dir.path().join("staging.wgt");
+    write_package(&staging, &hot_reload_entries(2));
+    let complete = std::fs::read(&staging).unwrap();
+    std::fs::write(&wgt, &complete[..complete.len() / 2]).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    std::fs::write(&wgt, &complete).unwrap();
+
+    let outcome = expect_event(&mut t.events, 30, |e| {
+        is_hot_reload(e, |h| {
+            matches!(h, HotReload::Restarted { .. } | HotReload::Failed { .. })
+        })
+    })
+    .await;
+    if let SessionEvent::HotReload(HotReload::Failed { error }) = outcome {
+        panic!("a half-written Package raised a failure: {error}");
+    }
+    eventually_equals(&t.session, "window.scriptVersion", json!(2)).await;
+    t.session.stop().await;
+}
+
 #[tokio::test]
 async fn a_corrupt_replacement_keeps_the_running_app() {
     let dir = tempfile::tempdir().unwrap();

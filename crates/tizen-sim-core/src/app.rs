@@ -24,6 +24,20 @@ pub enum AppSource {
     Package(PathBuf),
 }
 
+impl AppSource {
+    /// A `.wgt` file is a Package; any other path is taken for a Project Folder.
+    pub fn from_path(path: PathBuf) -> AppSource {
+        let is_package = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("wgt"));
+        if is_package {
+            AppSource::Package(path)
+        } else {
+            AppSource::ProjectFolder(path)
+        }
+    }
+}
+
 /// A Tizen TV web application, as declared by its `config.xml`.
 #[derive(Debug, Clone)]
 pub struct App {
@@ -174,15 +188,21 @@ const RESTRICTED_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 impl App {
-    /// Reads the App from its source. A Package is unpacked into a fresh
-    /// temporary directory, which becomes the App's root and lasts as long
-    /// as the App and its clones.
+    /// Reads the App from its source, unpacking a Package in the system's
+    /// temporary directory (see `load_unpacking_in`).
     pub fn load(source: &AppSource) -> Result<App, AppError> {
+        Self::load_unpacking_in(source, &std::env::temp_dir())
+    }
+
+    /// Reads the App from its source. A Package is unpacked into a fresh
+    /// directory inside `parent`, which becomes the App's root and lasts as
+    /// long as the App and its clones.
+    pub fn load_unpacking_in(source: &AppSource, parent: &Path) -> Result<App, AppError> {
         match source {
             AppSource::ProjectFolder(root) => load_folder(root, root),
-            AppSource::Package(wgt) => {
-                let unpacked = unpack(wgt)?;
-                let mut app = load_folder(unpacked.path(), wgt)?;
+            AppSource::Package(package) => {
+                let unpacked = unpack(package, parent)?;
+                let mut app = load_folder(unpacked.path(), package)?;
                 app._unpacked = Some(Arc::new(unpacked));
                 Ok(app)
             }
@@ -412,34 +432,34 @@ fn load_folder(root: &Path, shown_as: &Path) -> Result<App, AppError> {
     })
 }
 
-/// Unpacks a Package into a new temporary directory.
-fn unpack(wgt: &Path) -> Result<tempfile::TempDir, AppError> {
+/// Unpacks a Package into a new directory inside `parent`.
+fn unpack(package: &Path, parent: &Path) -> Result<tempfile::TempDir, AppError> {
     let corrupt = |message: String| AppError::PackageCorrupt {
-        path: wgt.to_path_buf(),
+        path: package.to_path_buf(),
         message,
     };
+    let zip_error = |e: zip::result::ZipError| corrupt(e.to_string());
     let unpack_failed = |source| AppError::UnpackFailed {
-        path: wgt.to_path_buf(),
+        path: package.to_path_buf(),
         source,
     };
-    let file = std::fs::File::open(wgt).map_err(|source| AppError::PackageUnreadable {
-        path: wgt.to_path_buf(),
+    let file = std::fs::File::open(package).map_err(|source| AppError::PackageUnreadable {
+        path: package.to_path_buf(),
         source,
     })?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| corrupt(e.to_string()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(zip_error)?;
+    std::fs::create_dir_all(parent).map_err(unpack_failed)?;
     let dir = tempfile::Builder::new()
         .prefix("tizen-sim-package-")
-        .tempdir()
+        .tempdir_in(parent)
         .map_err(unpack_failed)?;
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|e| corrupt(e.to_string()))?;
-        let name = entry
-            .name()
-            .map_err(|e| corrupt(e.to_string()))?
-            .to_string();
-        let Some(relative) = entry.enclosed_name() else {
+        let mut entry = archive.by_index(index).map_err(zip_error)?;
+        let name = entry.name().map_err(zip_error)?.to_string();
+        // Simulator guards that keep a Package's files inside its directory.
+        // How a TV treats such entries is unverified.
+        let absolute = name.starts_with(['/', '\\']) || name.get(1..2) == Some(":");
+        let Some(relative) = entry.enclosed_name().filter(|_| !absolute) else {
             return Err(corrupt(format!(
                 "entry `{name}` points outside the Package"
             )));
@@ -449,19 +469,19 @@ fn unpack(wgt: &Path) -> Result<tempfile::TempDir, AppError> {
                 "entry `{name}` is a symbolic link, which tizen-sim does not unpack"
             )));
         }
-        let target = dir.path().join(relative);
+        let dest = dir.path().join(relative);
         if entry.is_dir() {
-            std::fs::create_dir_all(&target).map_err(unpack_failed)?;
+            std::fs::create_dir_all(&dest).map_err(unpack_failed)?;
             continue;
         }
         let mut contents = Vec::new();
         entry
             .read_to_end(&mut contents)
             .map_err(|e| corrupt(format!("entry `{name}`: {e}")))?;
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(unpack_failed)?;
+        if let Some(folder) = dest.parent() {
+            std::fs::create_dir_all(folder).map_err(unpack_failed)?;
         }
-        std::fs::write(&target, contents).map_err(unpack_failed)?;
+        std::fs::write(&dest, contents).map_err(unpack_failed)?;
     }
     Ok(dir)
 }
@@ -504,25 +524,6 @@ impl AccessPolicy {
     }
 }
 
-impl CspPolicy {
-    /// The policy the runtime enforces when `config.xml` defines none (TD
-    /// guides/concepts/web-runtime.md).
-    pub const DEFAULT: &str =
-        "default-src *; script-src 'self'; style-src 'self'; object-src 'none';";
-
-    /// The enforced policy: the `config.xml` CSP, or else the default. The
-    /// doc counts a report-only policy as a `config.xml` CSP that makes the
-    /// runtime ignore the default, so with only a report-only policy nothing
-    /// is enforced; that reading is unverified on a TV.
-    pub fn enforced(&self) -> Option<&str> {
-        match (&self.policy, &self.report_only) {
-            (Some(policy), _) => Some(policy),
-            (None, Some(_)) => None,
-            (None, None) => Some(Self::DEFAULT),
-        }
-    }
-}
-
 /// Schemes an `<access>` origin may use. WARP leaves the set to the user
 /// agent; which ones the Tizen runtime supports is unverified.
 const ACCESS_SCHEMES: &[&str] = &["http", "https", "ws", "wss"];
@@ -536,7 +537,10 @@ impl AccessRequest {
             return Some(AccessRequest::Any);
         }
         // Only scheme and authority, with a host and no user info. The url
-        // crate lowercases hosts and IDNA-encodes http(s) ones.
+        // crate lowercases hosts and IDNA-encodes http(s) ones. It also
+        // can't tell `https://a.com` from `https://a.com/`, so a lone
+        // trailing `/` is accepted; whether WARP counts it as a path is
+        // unverified.
         let url = Url::parse(&origin).ok()?;
         let only_scheme_and_authority = url.username().is_empty()
             && url.password().is_none()

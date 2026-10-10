@@ -19,7 +19,8 @@ pub fn fixture(name: &str) -> PathBuf {
 pub struct TestSession {
     pub session: Session,
     pub events: Events,
-    _state: tempfile::TempDir,
+    /// The per-App state directory, removed when the test ends.
+    pub state: tempfile::TempDir,
 }
 
 pub fn start(fixture_name: &str) -> TestSession {
@@ -49,7 +50,7 @@ pub fn start_source(source: AppSource, adjust: impl FnOnce(&mut SessionConfig)) 
     TestSession {
         session,
         events,
-        _state: state,
+        state,
     }
 }
 
