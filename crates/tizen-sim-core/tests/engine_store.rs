@@ -123,3 +123,44 @@ async fn an_interrupted_download_leaves_nothing_behind() {
         .collect();
     assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
 }
+
+#[tokio::test]
+async fn lists_cached_engines_and_removing_one_frees_its_cache() {
+    let zip = stand_in_engine_zip();
+    let sha = hex::encode(Sha256::digest(&zip));
+    let url = serve(zip).await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = EngineStore::new(dir.path().to_path_buf());
+    assert!(store.list().unwrap().is_empty());
+
+    let installed = store.ensure(&spec(url, sha), |_| {}).await.unwrap();
+    let cached = store.list().unwrap();
+    assert_eq!(cached.len(), 1, "{cached:?}");
+    assert_eq!(cached[0].profile, "99.0");
+    assert_eq!(cached[0].platform, "test");
+    assert!(cached[0].size >= b"not really chrome".len() as u64);
+    assert!(installed.executable.starts_with(&cached[0].dir));
+
+    // Another profile's Engine is left alone.
+    assert!(store.remove("98.0").unwrap().is_empty());
+    assert!(installed.executable.is_file());
+
+    let removed = store.remove("99.0").unwrap();
+    assert_eq!(removed.len(), 1);
+    assert!(!removed[0].dir.exists());
+    assert!(store.list().unwrap().is_empty());
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+}
+
+#[test]
+fn listing_an_engine_cache_that_does_not_exist_yet_is_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = EngineStore::new(dir.path().join("engines"));
+    assert!(store.list().unwrap().is_empty());
+    assert!(store.remove("10.0").unwrap().is_empty());
+}

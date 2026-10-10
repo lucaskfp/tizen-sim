@@ -179,3 +179,45 @@ async fn an_app_requiring_a_newer_tizen_fails_to_start() {
         assert!(msg.contains(word), "`{word}` missing from: {msg}");
     }
 }
+
+#[tokio::test]
+async fn an_engine_path_is_launched_instead_of_a_cached_engine() {
+    // The pinned Engine's binary, used as if it were the developer's own.
+    let home = tizen_sim_core::home::Home::from_env();
+    let platform = tizen_sim_core::engine::current_platform().unwrap();
+    let spec = tizen_sim_core::engine::EngineSpec::for_profile("10.0", platform).unwrap();
+    let own = home.engine_store().ensure(spec, |_| {}).await.unwrap();
+    let empty_home = tempfile::tempdir().unwrap();
+
+    let mut t = support::start_with("hello", |config| {
+        config.home = tizen_sim_core::home::Home::at(empty_home.path());
+        config.engine_path = Some(own.executable.clone());
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    t.session.stop().await;
+
+    let mut downloads = 0;
+    while let Ok(Some(event)) =
+        tokio::time::timeout(std::time::Duration::from_millis(200), t.events.next()).await
+    {
+        if matches!(event, SessionEvent::EngineDownload(_)) {
+            downloads += 1;
+        }
+    }
+    assert_eq!(downloads, 0, "an Engine was downloaded");
+    assert!(
+        !empty_home.path().join("engines").exists(),
+        "the Engine cache was used"
+    );
+}
+
+#[tokio::test]
+async fn a_session_remembers_its_profile_for_the_app() {
+    let t = start("hello");
+    t.session.wait_until_loaded().await.unwrap();
+    t.session.stop().await;
+
+    let remembered = tizen_sim_core::profile::RememberedProfiles::new(t.state.path());
+    let latest = &tizen_sim_core::profile::VersionProfile::latest().version;
+    assert_eq!(remembered.get("Fixture001.Hello").as_ref(), Some(latest));
+}

@@ -3,9 +3,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::Write;
 use std::path::PathBuf;
 use tizen_sim_core::app::AppSource;
-use tizen_sim_core::engine::DownloadProgress;
+use tizen_sim_core::engine::{self, DownloadProgress, EngineSpec};
 use tizen_sim_core::home::Home;
 use tizen_sim_core::network::{NetworkRequest, Verdict};
+use tizen_sim_core::profile::VersionProfile;
 use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
 use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{
@@ -24,6 +25,31 @@ struct Cli {
 enum Command {
     /// Run an App and stream its console until Ctrl+C.
     Run(RunArgs),
+    /// List, fetch and remove cached Engines.
+    #[command(subcommand)]
+    Engines(EnginesCommand),
+    /// List the Version Profiles.
+    Profiles,
+}
+
+#[derive(Subcommand)]
+enum EnginesCommand {
+    /// List the cached Engines and the disk space they use.
+    List,
+    /// Download the Engine for a Version Profile ahead of time.
+    Fetch {
+        /// The Version Profile (defaults to the latest).
+        profile: Option<String>,
+    },
+    /// Remove a Version Profile's cached Engine to free its disk space.
+    Remove {
+        /// The Version Profile whose Engine to remove.
+        #[arg(required_unless_present = "all")]
+        profile: Option<String>,
+        /// Remove every cached Engine.
+        #[arg(long, conflicts_with = "profile")]
+        all: bool,
+    },
 }
 
 #[derive(Args)]
@@ -34,9 +60,14 @@ struct RunArgs {
     /// The App's config.xml, for a dev server URL. Changing it restarts the App.
     #[arg(long, value_name = "CONFIG_XML")]
     config: Option<PathBuf>,
-    /// Version Profile to use (defaults to the latest).
+    /// Version Profile to use (defaults to the last one used for this App,
+    /// or the latest for an App never run before).
     #[arg(long)]
     profile: Option<String>,
+    /// Run this Chromium executable instead of downloading the Version
+    /// Profile's Engine, e.g. to work offline or try a custom build.
+    #[arg(long, value_name = "CHROMIUM")]
+    engine_path: Option<PathBuf>,
     /// Run the Engine without a window.
     #[arg(long)]
     headless: bool,
@@ -118,6 +149,7 @@ impl RunArgs {
         Ok(SessionConfig {
             source,
             profile: self.profile,
+            engine_path: self.engine_path,
             headless: self.headless,
             lenient: self.lenient,
             key_map,
@@ -144,7 +176,110 @@ async fn main() -> Result<()> {
             let devtools = args.devtools;
             run(args.into_config()?, devtools).await
         }
+        Command::Engines(command) => engines(command, &Home::from_env()).await,
+        Command::Profiles => {
+            profiles(&Home::from_env());
+            Ok(())
+        }
     }
+}
+
+fn profiles(home: &Home) {
+    let cached = home.engine_store().list().unwrap_or_default();
+    let latest = &VersionProfile::latest().version;
+    for profile in VersionProfile::all() {
+        let mut notes = vec![];
+        if &profile.version == latest {
+            notes.push("latest");
+        }
+        if cached
+            .iter()
+            .any(|engine| engine.profile == profile.version)
+        {
+            notes.push("Engine cached");
+        }
+        println!(
+            "{:<6} Chromium M{:<4} {}",
+            profile.version,
+            profile.milestone,
+            notes.join(", ")
+        );
+    }
+}
+
+async fn engines(command: EnginesCommand, home: &Home) -> Result<()> {
+    let store = home.engine_store();
+    match command {
+        EnginesCommand::List => {
+            let cached = store.list()?;
+            if cached.is_empty() {
+                println!("No Engines cached in {}", home.engines_dir().display());
+            }
+            for engine in cached {
+                println!(
+                    "{:<6} {:<12} {:>5} MB  {}",
+                    engine.profile,
+                    engine.platform,
+                    megabytes(engine.size),
+                    engine.dir.display()
+                );
+            }
+        }
+        EnginesCommand::Fetch { profile } => {
+            let profile = match profile {
+                Some(version) => VersionProfile::find(&version)?,
+                None => VersionProfile::latest(),
+            };
+            let spec = EngineSpec::for_profile(&profile.version, engine::current_platform()?)?;
+            let installed = store.ensure(spec, |p| print_progress(&p)).await?;
+            let state = if installed.freshly_downloaded {
+                "downloaded"
+            } else {
+                "already cached"
+            };
+            println!(
+                "Engine for Tizen {} {state}: {}",
+                profile.version,
+                installed.executable.display()
+            );
+        }
+        EnginesCommand::Remove { profile, all } => {
+            let profiles: Vec<String> = match profile {
+                Some(profile) => vec![profile],
+                None => {
+                    debug_assert!(all);
+                    let mut cached: Vec<String> =
+                        store.list()?.into_iter().map(|e| e.profile).collect();
+                    cached.dedup();
+                    cached
+                }
+            };
+            if profiles.is_empty() {
+                println!("No Engines cached.");
+            }
+            for profile in profiles {
+                let removed = store.remove(&profile).with_context(|| {
+                    format!("removing the Engine for Tizen {profile} (is a Session running on it?)")
+                })?;
+                if removed.is_empty() {
+                    println!("No cached Engine for Tizen {profile}.");
+                }
+                for engine in removed {
+                    println!(
+                        "Removed the Engine for Tizen {} ({}), freeing {} MB.",
+                        engine.profile,
+                        engine.platform,
+                        megabytes(engine.size)
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn megabytes(bytes: u64) -> u64 {
+    bytes.div_ceil(1024 * 1024)
 }
 
 async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {

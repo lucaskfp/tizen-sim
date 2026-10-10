@@ -195,3 +195,77 @@ fn config_goes_with_a_dev_server_url_and_only_with_one() {
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
     }
 }
+
+/// Runs `tizen-sim` with its per-user files in `home`.
+fn tizen_sim_in(home: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
+        .env("TIZEN_SIM_HOME", home)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn profiles_lists_the_version_profiles() {
+    let home = tempfile::tempdir().unwrap();
+    let output = tizen_sim_in(home.path(), &["profiles"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("10.0"))
+        .unwrap_or_else(|| panic!("10.0 not listed: {stdout}"));
+    assert!(line.contains("M130") && line.contains("latest"), "{line}");
+}
+
+#[test]
+fn engines_list_and_remove_on_an_empty_cache() {
+    let home = tempfile::tempdir().unwrap();
+    let list = tizen_sim_in(home.path(), &["engines", "list"]);
+    assert!(list.status.success());
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("No Engines cached"),
+        "{list:?}"
+    );
+
+    let remove = tizen_sim_in(home.path(), &["engines", "remove", "10.0"]);
+    assert!(remove.status.success());
+    assert!(
+        String::from_utf8_lossy(&remove.stdout).contains("No cached Engine for Tizen 10.0"),
+        "{remove:?}"
+    );
+}
+
+#[test]
+fn engines_fetch_rejects_an_unknown_profile() {
+    let home = tempfile::tempdir().unwrap();
+    let output = tizen_sim_in(home.path(), &["engines", "fetch", "1.0"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown Version Profile `1.0`"), "{stderr}");
+}
+
+#[test]
+fn engine_path_launches_the_given_binary_without_downloading() {
+    let home = tempfile::tempdir().unwrap();
+    let missing = home.path().join("my-chromium").join("chrome.exe");
+    let output = tizen_sim_in(
+        home.path(),
+        &[
+            "run",
+            &fixture("hello"),
+            "--headless",
+            "--engine-path",
+            missing.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not start the Engine") && stderr.contains("my-chromium"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("Downloading Engine"), "{stdout}");
+    assert!(!home.path().join("engines").exists());
+}

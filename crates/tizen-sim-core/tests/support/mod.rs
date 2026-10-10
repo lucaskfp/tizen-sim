@@ -114,6 +114,7 @@ fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
     SessionConfig {
         source,
         profile: None,
+        engine_path: None,
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,
         key_map: tizen_sim_core::remote_keys::KeyMap::default(),

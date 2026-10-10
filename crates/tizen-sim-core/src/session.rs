@@ -7,12 +7,10 @@
 use crate::app::{App, AppError, AppFiles, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
 use crate::dev_server::{BridgeMessage, DevServer, ServerSetup};
-use crate::engine::{
-    self, DownloadProgress, EngineSpec, EngineStore, LaunchOptions, RunningEngine,
-};
+use crate::engine::{self, DownloadProgress, EngineSpec, LaunchOptions, RunningEngine};
 use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
-use crate::profile::VersionProfile;
+use crate::profile::{ProfileCatalog, RememberedProfiles, VersionProfile};
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::screen::{self, AppResolution};
 use crate::session_dir::SessionDir;
@@ -30,8 +28,12 @@ use tokio::task::JoinHandle;
 
 pub struct SessionConfig {
     pub source: AppSource,
-    /// Version Profile to use; the latest when `None`.
+    /// Version Profile to use. When `None`: the last one used for the App,
+    /// or the latest for an App never run before.
     pub profile: Option<String>,
+    /// A Chromium executable to run instead of the Version Profile's Engine
+    /// from the Engine Manifest, which is then not downloaded.
+    pub engine_path: Option<PathBuf>,
     /// Run the Engine without a window (CI, automated tests).
     pub headless: bool,
     /// Lenient Mode: allow calls a TV would refuse (undeclared privileges),
@@ -712,12 +714,18 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .map_err(|e| format!("could not create the Session directory: {e}"))?;
     let app =
         App::load_unpacking_in(&config.source, session_dir.path()).map_err(|e| e.to_string())?;
-    let profile = match &config.profile {
-        Some(version) => VersionProfile::find(version).map_err(|e| e.to_string())?,
-        None => VersionProfile::latest(),
-    };
-    app.check_installable_on(profile)
+    let remembered = RememberedProfiles::new(config.home.state_dir());
+    let profile = ProfileCatalog::bundled()
+        .choose(config.profile.as_deref(), app.id(), &remembered)
         .map_err(|e| e.to_string())?;
+    app.check_installable_on(profile)
+        .map_err(|e| match config.profile {
+            Some(_) => e.to_string(),
+            None => format!(
+                "{e} (Tizen {} is the Version Profile last used for this App; choose another one)",
+                profile.version
+            ),
+        })?;
     let device = profile
         .device_values(&config.device)
         .map_err(|e| e.to_string())?;
@@ -728,12 +736,21 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             profile: profile.version.clone(),
         }));
 
-    let platform = engine::current_platform().map_err(|e| e.to_string())?;
-    let spec = EngineSpec::for_profile(&profile.version, platform).map_err(|e| e.to_string())?;
-    let installed = EngineStore::new(config.home.engines_dir().to_path_buf())
-        .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
-        .await
-        .map_err(|e| e.to_string())?;
+    let executable = match &config.engine_path {
+        Some(path) => path.clone(),
+        None => {
+            let platform = engine::current_platform().map_err(|e| e.to_string())?;
+            let spec =
+                EngineSpec::for_profile(&profile.version, platform).map_err(|e| e.to_string())?;
+            config
+                .home
+                .engine_store()
+                .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
+                .await
+                .map_err(|e| e.to_string())?
+                .executable
+        }
+    };
     if let AppFiles::Bundler(bundler) = app.files() {
         check_reachable(bundler).await?;
     }
@@ -760,11 +777,11 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .home
         .state_dir()
         .join("engine-data")
-        .join(sanitize(app.id()));
+        .join(crate::home::app_file_name(app.id()));
     let user_data_dir = app_data_dir.join(&profile.version);
     let devtools_data_dir = app_data_dir.join(format!("{}-devtools", profile.version));
     let engine = engine::launch(
-        &installed.executable,
+        &executable,
         &LaunchOptions {
             user_data_dir,
             headless: config.headless,
@@ -776,6 +793,9 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     )
     .await
     .map_err(|e| e.to_string())?;
+    if let Err(error) = remembered.remember(app.id(), &profile.version) {
+        tracing::warn!(%error, "could not remember the App's Version Profile");
+    }
 
     let (cdp, events) = Cdp::connect(&engine.page_ws_url)
         .await
@@ -843,7 +863,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         lenient: config.lenient,
         runs_in_background: AtomicBool::new(runs_in_background),
         hidden: AtomicBool::new(false),
-        executable: installed.executable.clone(),
+        executable,
         devtools_url,
         devtools_data_dir,
     });
@@ -1134,18 +1154,6 @@ async fn close_engine(running: &mut Running) {
 
 async fn stop_server(server: DevServer) {
     let _ = tokio::time::timeout(Duration::from_secs(5), server.stop()).await;
-}
-
-fn sanitize(id: &str) -> String {
-    id.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 /// The Remote Key that makes the platform close the App.

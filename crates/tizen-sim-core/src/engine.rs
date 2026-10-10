@@ -81,18 +81,39 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> EngineError + '_ {
     }
 }
 
-#[derive(Deserialize)]
-struct Manifest {
-    engine: Vec<EngineSpec>,
+/// The Engine Manifest: where to get the Engine for each Version Profile on
+/// each platform. Bundled as data (`data/engines.toml`), so updating a
+/// download needs no code change.
+#[derive(Debug, Deserialize)]
+pub struct EngineManifest {
+    #[serde(rename = "engine")]
+    engines: Vec<EngineSpec>,
 }
 
-fn manifest() -> &'static [EngineSpec] {
-    static MANIFEST: OnceLock<Vec<EngineSpec>> = OnceLock::new();
-    MANIFEST.get_or_init(|| {
-        toml::from_str::<Manifest>(include_str!("../data/engines.toml"))
-            .expect("bundled engines.toml is valid")
-            .engine
-    })
+impl EngineManifest {
+    pub fn parse(toml: &str) -> Result<EngineManifest, toml::de::Error> {
+        toml::from_str(toml)
+    }
+
+    /// The manifest bundled with the simulator.
+    pub fn bundled() -> &'static EngineManifest {
+        static MANIFEST: OnceLock<EngineManifest> = OnceLock::new();
+        MANIFEST.get_or_init(|| {
+            EngineManifest::parse(include_str!("../data/engines.toml"))
+                .expect("bundled engines.toml is valid")
+        })
+    }
+
+    /// Looks up the entry for a Version Profile on a platform.
+    pub fn for_profile(&self, profile: &str, platform: &str) -> Result<&EngineSpec, EngineError> {
+        self.engines
+            .iter()
+            .find(|e| e.profile == profile && e.platform == platform)
+            .ok_or_else(|| EngineError::NotInManifest {
+                profile: profile.to_string(),
+                platform: platform.to_string(),
+            })
+    }
 }
 
 /// The Engine Manifest platform name for the machine we're running on.
@@ -105,20 +126,25 @@ pub fn current_platform() -> Result<&'static str, EngineError> {
 }
 
 impl EngineSpec {
-    /// Looks up the Engine Manifest entry for a Version Profile on a platform.
+    /// Looks up the bundled Engine Manifest entry for a Version Profile on a
+    /// platform.
     pub fn for_profile(profile: &str, platform: &str) -> Result<&'static EngineSpec, EngineError> {
-        manifest()
-            .iter()
-            .find(|e| e.profile == profile && e.platform == platform)
-            .ok_or_else(|| EngineError::NotInManifest {
-                profile: profile.to_string(),
-                platform: platform.to_string(),
-            })
+        EngineManifest::bundled().for_profile(profile, platform)
     }
 
     fn install_dir_name(&self) -> String {
         format!("{}-{}-{}", self.profile, self.platform, &self.sha256[..12])
     }
+}
+
+/// An Engine in the cache.
+#[derive(Debug, Clone)]
+pub struct CachedEngine {
+    pub profile: String,
+    pub platform: String,
+    pub dir: PathBuf,
+    /// Disk space used, in bytes.
+    pub size: u64,
 }
 
 /// The per-user Engine cache.
@@ -165,6 +191,56 @@ impl EngineStore {
             executable,
             freshly_downloaded: true,
         })
+    }
+
+    /// The Engines in the cache, including ones for downloads the Engine
+    /// Manifest no longer lists.
+    pub fn list(&self) -> Result<Vec<CachedEngine>, EngineError> {
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(error) => return Err(io_err(&self.root)(error)),
+        };
+        let mut cached = vec![];
+        for entry in entries {
+            let dir = entry.map_err(io_err(&self.root))?.path();
+            if !dir.join(INSTALLED_MARKER).is_file() {
+                continue;
+            }
+            // Named by `install_dir_name`: profile-platform-checksum.
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
+            let Some((profile, rest)) = name.split_once('-') else {
+                continue;
+            };
+            let Some((platform, _)) = rest.rsplit_once('-') else {
+                continue;
+            };
+            cached.push(CachedEngine {
+                profile: profile.to_string(),
+                platform: platform.to_string(),
+                size: dir_size(&dir),
+                dir,
+            });
+        }
+        cached.sort_by(|a, b| (&a.profile, &a.platform).cmp(&(&b.profile, &b.platform)));
+        Ok(cached)
+    }
+
+    /// Removes every cached Engine of a Version Profile, returning them.
+    pub fn remove(&self, profile: &str) -> Result<Vec<CachedEngine>, EngineError> {
+        let removed: Vec<CachedEngine> = self
+            .list()?
+            .into_iter()
+            .filter(|engine| engine.profile == profile)
+            .collect();
+        for engine in &removed {
+            // Moved aside first: renaming fails as a whole while the Engine is
+            // running, where deleting in place would leave half an Engine.
+            let doomed = self.root.join(format!(".removing-{}", unique_suffix()));
+            std::fs::rename(&engine.dir, &doomed).map_err(io_err(&engine.dir))?;
+            std::fs::remove_dir_all(&doomed).map_err(io_err(&doomed))?;
+        }
+        Ok(removed)
     }
 
     async fn download_and_unpack(
@@ -243,6 +319,20 @@ impl Drop for RemoveOnDrop {
             }
         }
     }
+}
+
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
+            Ok(_) => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
 }
 
 fn unique_suffix() -> String {
