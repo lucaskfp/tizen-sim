@@ -3,6 +3,7 @@
 
 pub mod app;
 mod cdp;
+mod control;
 mod csp;
 mod dev_server;
 pub mod engine;
@@ -11,6 +12,7 @@ pub mod home;
 pub mod network;
 pub mod profile;
 mod proxy;
+pub mod registry;
 pub mod remote_keys;
 pub mod screen;
 pub mod session;

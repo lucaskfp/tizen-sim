@@ -1,16 +1,18 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::engine::{self, DownloadProgress, EngineSpec};
 use tizen_sim_core::home::Home;
 use tizen_sim_core::network::{NetworkRequest, Verdict};
 use tizen_sim_core::profile::VersionProfile;
+use tizen_sim_core::registry::{ChooseError, RegistryEntry, SessionClient, SessionRegistry};
 use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
 use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{
     ExitReason, HotReload, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
+    SessionStatus,
 };
 
 /// A fast simulator for Tizen TV web apps.
@@ -30,6 +32,73 @@ enum Command {
     Engines(EnginesCommand),
     /// List the Version Profiles.
     Profiles,
+    /// List the running Sessions.
+    Sessions,
+    /// Press a Remote Key in a running Session, e.g. `key Back`.
+    Key {
+        /// The Remote Key's Tizen name, e.g. Back, Enter, ColorF0Red.
+        key: String,
+        #[command(flatten)]
+        choice: SessionChoice,
+    },
+    /// Reload the App in a running Session.
+    Reload {
+        #[command(flatten)]
+        choice: SessionChoice,
+    },
+    /// Save a PNG of a running Session's screen, at the TV's resolution.
+    Screenshot {
+        /// Where to save it.
+        #[arg(long, short, default_value = "screenshot.png")]
+        output: PathBuf,
+        #[command(flatten)]
+        choice: SessionChoice,
+    },
+}
+
+/// Which running Session a command acts on.
+#[derive(Args)]
+struct SessionChoice {
+    /// The Session's id (or the start of it), as `sessions` lists it.
+    /// Needed only when several Sessions are running; in a terminal you are
+    /// asked to choose instead.
+    #[arg(long)]
+    session: Option<String>,
+}
+
+impl SessionChoice {
+    fn connect(&self, home: &Home) -> Result<SessionClient> {
+        match SessionRegistry::new(home).choose(self.session.as_deref()) {
+            Ok(entry) => Ok(entry.connect()),
+            Err(ChooseError::Several(entries)) if std::io::stdin().is_terminal() => {
+                Ok(ask_which(&entries)?.connect())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn ask_which(entries: &[RegistryEntry]) -> Result<&RegistryEntry> {
+    println!("Several Sessions are running:");
+    for (n, entry) in entries.iter().enumerate() {
+        println!(
+            "  {}) {}  {} on Tizen {}",
+            n + 1,
+            entry.id,
+            entry.app_id,
+            entry.profile
+        );
+    }
+    print!("Which one? [1-{}] ", entries.len());
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    answer
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .and_then(|n| entries.get(n.checked_sub(1)?))
+        .with_context(|| format!("`{}` is not one of the Sessions", answer.trim()))
 }
 
 #[derive(Subcommand)]
@@ -181,6 +250,49 @@ async fn main() -> Result<()> {
             profiles(&Home::from_env());
             Ok(())
         }
+        Command::Sessions => {
+            sessions(&Home::from_env()).await;
+            Ok(())
+        }
+        Command::Key { key, choice } => {
+            match choice.connect(&Home::from_env())?.press_key(&key).await? {
+                KeyOutcome::Delivered => println!("{key} delivered."),
+                KeyOutcome::Dropped { reason } => println!("{key} dropped: {reason}"),
+            }
+            Ok(())
+        }
+        Command::Reload { choice } => {
+            choice.connect(&Home::from_env())?.reload().await?;
+            println!("Reloaded.");
+            Ok(())
+        }
+        Command::Screenshot { output, choice } => {
+            let png = choice.connect(&Home::from_env())?.screenshot().await?;
+            std::fs::write(&output, png)
+                .with_context(|| format!("saving the screenshot to {}", output.display()))?;
+            println!("Saved {}", output.display());
+            Ok(())
+        }
+    }
+}
+
+async fn sessions(home: &Home) {
+    let running = SessionRegistry::new(home).list();
+    if running.is_empty() {
+        println!("No Sessions running.");
+    }
+    for entry in running {
+        let status = match entry.connect().status().await {
+            Ok(SessionStatus::Starting) => "starting".to_string(),
+            Ok(SessionStatus::Loaded) => "running".to_string(),
+            Ok(SessionStatus::Failed(error)) => format!("failed: {error}"),
+            Ok(SessionStatus::Exited) => "exited".to_string(),
+            Err(error) => format!("not responding ({error})"),
+        };
+        println!(
+            "{}  {:<28} Tizen {:<5} pid {:<7} {status}",
+            entry.id, entry.app_id, entry.profile, entry.pid
+        );
     }
 }
 
@@ -328,6 +440,7 @@ async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
                                 println!("[devtools] {error}");
                             }
                         }
+                        Lifecycle::Reloaded => println!("App reloaded."),
                         Lifecycle::Hidden => println!("The App is hidden (in the background)."),
                         Lifecycle::Shown => println!("The App is back in the foreground."),
                         Lifecycle::Failed { error } => bail!(error),

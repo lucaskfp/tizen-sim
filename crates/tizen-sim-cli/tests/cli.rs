@@ -269,3 +269,147 @@ fn engine_path_launches_the_given_binary_without_downloading() {
     assert!(!stdout.contains("Downloading Engine"), "{stdout}");
     assert!(!home.path().join("engines").exists());
 }
+
+/// The cached Engine for the latest Version Profile, downloaded if need be,
+/// so runs with a throwaway home don't download it again.
+fn cached_engine() -> String {
+    use tizen_sim_core::engine::{EngineSpec, current_platform};
+    let spec = EngineSpec::for_profile("10.0", current_platform().unwrap()).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let engine = runtime
+        .block_on(
+            tizen_sim_core::home::Home::from_env()
+                .engine_store()
+                .ensure(spec, |_| {}),
+        )
+        .unwrap();
+    engine.executable.to_str().unwrap().to_string()
+}
+
+/// `tizen-sim run` with its per-user files in `home`, its output drained in
+/// the background so it can keep printing. Returns once the App has loaded.
+/// A throwaway home has its own Engine profiles, so tests using one needn't
+/// take turns.
+fn run_in(home: &std::path::Path, app: &str, engine: &str) -> Child {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
+        .env("TIZEN_SIM_HOME", home)
+        .args(["run", &fixture(app), "--headless", "--engine-path", engine])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (loaded_tx, loaded) = std::sync::mpsc::channel();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    std::thread::spawn(move || {
+        for line in stdout.lines().map_while(Result::ok) {
+            if line.starts_with("App loaded:") {
+                let _ = loaded_tx.send(());
+            }
+        }
+    });
+    loaded
+        .recv_timeout(Duration::from_secs(120))
+        .expect("the App never loaded");
+    child
+}
+
+fn stdout_of(output: &std::process::Output) -> String {
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn another_terminal_lists_and_controls_a_running_session() {
+    let engine = cached_engine();
+    let home = tempfile::tempdir().unwrap();
+    let mut owner = run_in(home.path(), "remote-keys", &engine);
+
+    let sessions = stdout_of(&tizen_sim_in(home.path(), &["sessions"]));
+    let line = sessions
+        .lines()
+        .find(|l| l.contains("Fixture006.RemoteKeys"))
+        .unwrap_or_else(|| panic!("the Session is not listed: {sessions}"));
+    assert!(
+        line.contains("Tizen 10.0") && line.contains("running"),
+        "{line}"
+    );
+    assert!(
+        line.contains(&owner.id().to_string()),
+        "no owner pid: {line}"
+    );
+
+    // With one Session running, commands act on it without being told which.
+    let key = stdout_of(&tizen_sim_in(home.path(), &["key", "Back"]));
+    assert!(key.contains("Back delivered"), "{key}");
+    let key = stdout_of(&tizen_sim_in(home.path(), &["key", "ColorF0Red"]));
+    assert!(
+        key.contains("ColorF0Red dropped") && key.contains("not registered"),
+        "{key}"
+    );
+    let unknown = tizen_sim_in(home.path(), &["key", "NotAKey"]);
+    assert!(!unknown.status.success());
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("unknown Remote Key `NotAKey`"),
+        "{unknown:?}"
+    );
+    let reload = stdout_of(&tizen_sim_in(home.path(), &["reload"]));
+    assert!(reload.contains("Reloaded"), "{reload}");
+    let png = home.path().join("shot.png");
+    let shot = stdout_of(&tizen_sim_in(
+        home.path(),
+        &["screenshot", "--output", png.to_str().unwrap()],
+    ));
+    assert!(shot.contains("shot.png"), "{shot}");
+    assert!(
+        std::fs::read(&png)
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+
+    // Killed without a chance to clean up, it leaves no live-looking entry.
+    owner.kill().unwrap();
+    let _ = owner.wait();
+    let sessions = stdout_of(&tizen_sim_in(home.path(), &["sessions"]));
+    assert!(sessions.contains("No Sessions running"), "{sessions}");
+    let key = tizen_sim_in(home.path(), &["key", "Back"]);
+    assert!(!key.status.success());
+    assert!(
+        String::from_utf8_lossy(&key.stderr).contains("no Session is running"),
+        "{key:?}"
+    );
+}
+
+#[test]
+fn with_several_sessions_commands_need_to_be_told_which() {
+    let engine = cached_engine();
+    let home = tempfile::tempdir().unwrap();
+    let mut first = run_in(home.path(), "hello", &engine);
+    let mut second = run_in(home.path(), "remote-keys", &engine);
+
+    let key = tizen_sim_in(home.path(), &["key", "Back"]);
+    assert!(!key.status.success());
+    let stderr = String::from_utf8_lossy(&key.stderr);
+    assert!(
+        stderr.contains("several Sessions are running")
+            && stderr.contains("Fixture001.Hello")
+            && stderr.contains("Fixture006.RemoteKeys"),
+        "{stderr}"
+    );
+
+    let sessions = stdout_of(&tizen_sim_in(home.path(), &["sessions"]));
+    let id = sessions
+        .lines()
+        .find(|l| l.contains("Fixture006.RemoteKeys"))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no id listed: {sessions}"))
+        .to_string();
+    let key = stdout_of(&tizen_sim_in(
+        home.path(),
+        &["key", "Back", "--session", &id],
+    ));
+    assert!(key.contains("Back delivered"), "{key}");
+
+    for owner in [&mut first, &mut second] {
+        owner.kill().unwrap();
+        let _ = owner.wait();
+    }
+}

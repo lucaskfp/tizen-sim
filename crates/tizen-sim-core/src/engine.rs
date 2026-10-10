@@ -25,7 +25,7 @@ pub struct EngineSpec {
 }
 
 /// Progress of an Engine download, in bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DownloadProgress {
     pub received: u64,
     pub total: Option<u64>,
@@ -590,6 +590,44 @@ fn engine_data_in_use(user_data_dir: &Path) -> bool {
             })
             .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
     }
+}
+
+/// The native handle of the Engine's top-level window (an `HWND`), found by
+/// the process that owns it; `None` for a headless Engine or one whose
+/// window isn't up.
+#[cfg(windows)]
+pub fn window_handle(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows::core::BOOL;
+
+    struct Search {
+        pid: u32,
+        found: Option<u64>,
+    }
+    unsafe extern "system" fn visit(window: HWND, search: LPARAM) -> BOOL {
+        let search = unsafe { &mut *(search.0 as *mut Search) };
+        let mut owner_pid = 0;
+        unsafe { GetWindowThreadProcessId(window, Some(&mut owner_pid)) };
+        let top_level = unsafe { GetWindow(window, GW_OWNER) }.is_err();
+        if owner_pid == search.pid && top_level && unsafe { IsWindowVisible(window) }.as_bool() {
+            search.found = Some(window.0 as u64);
+            return false.into();
+        }
+        true.into()
+    }
+    let mut search = Search { pid, found: None };
+    // Stopping the enumeration early reports an error; the result is in `search`.
+    let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut search as *mut Search as isize)) };
+    search.found
+}
+
+/// Embedding the Engine window is Windows-only (ADR-0006).
+#[cfg(not(windows))]
+pub fn window_handle(_pid: u32) -> Option<u64> {
+    None
 }
 
 /// Makes an Engine die with the process that started it, even when that

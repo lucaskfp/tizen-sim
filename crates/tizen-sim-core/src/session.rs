@@ -6,17 +6,20 @@
 
 use crate::app::{App, AppError, AppFiles, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
+use crate::control::ControlEndpoint;
 use crate::dev_server::{BridgeMessage, DevServer, ServerSetup};
 use crate::engine::{self, DownloadProgress, EngineSpec, LaunchOptions, RunningEngine};
 use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::{ProfileCatalog, RememberedProfiles, VersionProfile};
+use crate::registry::{self, RegistryEntry};
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
 use crate::screen::{self, AppResolution};
 use crate::session_dir::SessionDir;
 use crate::shim;
 use crate::watcher::{Action, Batch, SourceWatcher};
 use base64::Engine as _;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -52,7 +55,7 @@ pub struct SessionConfig {
     pub home: Home,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
     Lifecycle(Lifecycle),
     Console(ConsoleMessage),
@@ -71,7 +74,7 @@ pub enum SessionEvent {
 
 /// The Session following edits to its Project Folder or Package, or to the
 /// `config.xml` of a Dev Server URL App (the bundler reloads its own output).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HotReload {
     /// Files changed together; paths relative to the Project Folder,
     /// `/`-separated, or the Package's file name. One of the other events
@@ -90,7 +93,7 @@ pub enum HotReload {
     Failed { error: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeyOutcome {
     Delivered,
     /// Not delivered, as a TV wouldn't; `reason` says why.
@@ -108,14 +111,14 @@ pub enum KeyAction {
 }
 
 /// Something the App did that would behave differently or fail on a real TV.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// Stable identifier, e.g. `privilege-not-declared`.
     pub code: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lifecycle {
     Starting {
         app_id: String,
@@ -131,6 +134,8 @@ pub enum Lifecycle {
     AppLoaded {
         url: String,
     },
+    /// The App was reloaded on request (`Session::reload`).
+    Reloaded,
     /// The App went to the background (`Application.hide()`).
     Hidden,
     /// The App came back to the foreground (`Session::resume`).
@@ -143,7 +148,7 @@ pub enum Lifecycle {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExitReason {
     /// The Session was stopped by its owner.
     Stopped,
@@ -160,7 +165,7 @@ pub enum ExitReason {
 
 /// A message in the App's console: written by the App, or by the Engine
 /// about the App (a CSP violation, a failed resource).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsoleMessage {
     /// The level as the Engine reports it: the console method (`log`,
     /// `info`, `warning`, `error`, `debug`, ...) or, for the Engine's own
@@ -185,10 +190,13 @@ pub enum SessionError {
     Cdp(#[from] CdpError),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Status {
+/// Where a Session is in its life.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionStatus {
+    /// Loading the App, fetching the Engine or launching it.
     Starting,
     Loaded,
+    /// It failed to start, for the reason given.
     Failed(String),
     Exited,
 }
@@ -199,7 +207,7 @@ pub struct Session {
 
 struct Inner {
     log: EventLog,
-    status: watch::Sender<Status>,
+    status: watch::Sender<SessionStatus>,
     /// Set once the App has loaded.
     loaded: OnceLock<Loaded>,
     /// Ends the running App with a reason; set once the Bridge is up.
@@ -210,6 +218,9 @@ struct Inner {
     checkerboard: AtomicBool,
     /// The DevTools window, closed when the Session ends.
     devtools: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    /// Asks the running Session to reload the App, with where to send the
+    /// result.
+    reloads: mpsc::UnboundedSender<oneshot::Sender<Result<(), String>>>,
 }
 
 /// What a Session can act on once its App has loaded.
@@ -232,17 +243,19 @@ struct Loaded {
 impl Session {
     pub fn start(config: SessionConfig) -> Session {
         let (stop_tx, stop_rx) = oneshot::channel();
+        let (reloads, reload_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner {
             log: EventLog::new(),
-            status: watch::channel(Status::Starting).0,
+            status: watch::channel(SessionStatus::Starting).0,
             loaded: OnceLock::new(),
             app_exit: OnceLock::new(),
             stop: Mutex::new(Some(stop_tx)),
             task: tokio::sync::Mutex::new(None),
             checkerboard: AtomicBool::new(config.checkerboard),
             devtools: tokio::sync::Mutex::new(None),
+            reloads,
         });
-        let task = tokio::spawn(run(config, inner.clone(), stop_rx));
+        let task = tokio::spawn(run(config, inner.clone(), stop_rx, reload_rx));
         *inner.task.try_lock().expect("fresh mutex") = Some(task);
         Session { inner }
     }
@@ -252,18 +265,22 @@ impl Session {
         self.inner.log.subscribe()
     }
 
+    pub fn status(&self) -> SessionStatus {
+        self.inner.status.borrow().clone()
+    }
+
     /// Resolves once the App has loaded, or with the reason it never will.
     pub async fn wait_until_loaded(&self) -> Result<(), SessionError> {
         let mut status = self.inner.status.subscribe();
         let status = status
-            .wait_for(|s| *s != Status::Starting)
+            .wait_for(|s| *s != SessionStatus::Starting)
             .await
             .map_err(|_| SessionError::Exited)?
             .clone();
         match status {
-            Status::Loaded => Ok(()),
-            Status::Failed(error) => Err(SessionError::Failed(error)),
-            Status::Exited | Status::Starting => Err(SessionError::Exited),
+            SessionStatus::Loaded => Ok(()),
+            SessionStatus::Failed(error) => Err(SessionError::Failed(error)),
+            SessionStatus::Exited | SessionStatus::Starting => Err(SessionError::Exited),
         }
     }
 
@@ -275,10 +292,25 @@ impl Session {
 
     /// Presses a Remote Key, as on the TV remote: delivered if it's a
     /// Mandatory Key or the App registered it, otherwise dropped (or, in
-    /// Lenient Mode, delivered with a Diagnostic). The outcome is reported as
-    /// a `RemoteKey` event.
-    pub async fn press_key(&self, name: &str) -> Result<(), SessionError> {
+    /// Lenient Mode, delivered with a Diagnostic). The outcome is returned
+    /// and also reported as a `RemoteKey` event.
+    pub async fn press_key(&self, name: &str) -> Result<KeyOutcome, SessionError> {
         self.inner.press_key(name).await
+    }
+
+    /// Reloads the App's page and waits for it to finish loading. A hidden
+    /// App is brought back to the foreground first.
+    pub async fn reload(&self) -> Result<(), SessionError> {
+        self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let (reply, result) = oneshot::channel();
+        self.inner
+            .reloads
+            .send(reply)
+            .map_err(|_| SessionError::Exited)?;
+        result
+            .await
+            .map_err(|_| SessionError::Exited)?
+            .map_err(SessionError::Failed)
     }
 
     /// Presses or releases a key on the desktop keyboard in the Engine window,
@@ -344,7 +376,7 @@ impl Session {
     pub async fn open_devtools(&self) -> Result<String, SessionError> {
         let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
         let mut devtools = self.inner.devtools.lock().await;
-        if *self.inner.status.borrow() == Status::Exited {
+        if *self.inner.status.borrow() == SessionStatus::Exited {
             return Err(SessionError::Exited);
         }
         let open = devtools
@@ -398,12 +430,20 @@ struct Running {
     /// Changes to the Project Folder or Package; `None` if it can't be
     /// watched.
     watcher: Option<SourceWatcher>,
+    /// Lets other clients control the Session; its Registry entry is in the
+    /// Session directory.
+    _control: ControlEndpoint,
     /// Where the Package is unpacked. Declared last, so it is removed after
     /// everything using its files.
     session_dir: SessionDir,
 }
 
-async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiver<()>) {
+async fn run(
+    config: SessionConfig,
+    inner: Arc<Inner>,
+    mut stop: oneshot::Receiver<()>,
+    mut reloads: mpsc::UnboundedReceiver<oneshot::Sender<Result<(), String>>>,
+) {
     let started = tokio::select! {
         result = startup(&config, &inner) => result,
         _ = &mut stop => {
@@ -421,7 +461,7 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
                 .publish(SessionEvent::Lifecycle(Lifecycle::Failed {
                     error: error.clone(),
                 }));
-            inner.status.send_replace(Status::Failed(error));
+            inner.status.send_replace(SessionStatus::Failed(error));
             inner
                 .log
                 .publish(SessionEvent::Lifecycle(Lifecycle::Exited {
@@ -446,6 +486,9 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
             Some(batch) = next_batch(&mut running.watcher) => {
                 inner.hot_reload(&config, &mut running, batch).await;
             }
+            Some(reply) = reloads.recv() => {
+                let _ = reply.send(inner.reload_on_request(&mut running).await);
+            }
         }
     };
     stop_server(running.server).await;
@@ -457,16 +500,17 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
 }
 
 impl Inner {
-    async fn press_key(&self, name: &str) -> Result<(), SessionError> {
+    async fn press_key(&self, name: &str) -> Result<KeyOutcome, SessionError> {
         let key = RemoteKey::find(name)
             .ok_or_else(|| SessionError::UnknownRemoteKey(name.to_string()))?;
         let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
         let drop_key = |reason: String| {
+            let outcome = KeyOutcome::Dropped { reason };
             self.log.publish(SessionEvent::RemoteKey {
                 key: name.to_string(),
-                outcome: KeyOutcome::Dropped { reason },
+                outcome: outcome.clone(),
             });
-            Ok(())
+            Ok(outcome)
         };
 
         if !loaded.profile.supports_key(key) {
@@ -479,9 +523,9 @@ impl Inner {
         // never gets the key, registered or not (Samsung's development
         // checklist, common.html CO-US-04 and CO-GE-07).
         if key.name == EXIT_KEY {
-            drop_key("the platform terminates the App instead".into())?;
+            let outcome = drop_key("the platform terminates the App instead".into());
             self.terminate(ExitReason::TerminatedByRemote);
-            return Ok(());
+            return outcome;
         }
         if !key.mandatory {
             // The page holds the registrations (see the tvinputdevice Shim).
@@ -514,7 +558,7 @@ impl Inner {
             key: name.to_string(),
             outcome: KeyOutcome::Delivered,
         });
-        Ok(())
+        Ok(KeyOutcome::Delivered)
     }
 
     /// Sends the App to the background (TV guides/fundamentals/multitasking.html;
@@ -625,8 +669,17 @@ impl Inner {
         Ok(())
     }
 
+    async fn reload_on_request(&self, running: &mut Running) -> Result<(), String> {
+        // A frozen page doesn't load.
+        self.resume().await.map_err(|e| e.to_string())?;
+        reload_page(running).await?;
+        self.log
+            .publish(SessionEvent::Lifecycle(Lifecycle::Reloaded));
+        Ok(())
+    }
+
     async fn reload(&self, running: &mut Running) -> Result<(), String> {
-        load_page(running, "Page.reload", json!({ "ignoreCache": true })).await?;
+        reload_page(running).await?;
         self.publish_hot_reload(HotReload::Reloaded);
         Ok(())
     }
@@ -705,12 +758,12 @@ impl Inner {
     fn finish(&self, reason: ExitReason) {
         self.log
             .publish(SessionEvent::Lifecycle(Lifecycle::Exited { reason }));
-        self.status.send_replace(Status::Exited);
+        self.status.send_replace(SessionStatus::Exited);
     }
 }
 
 async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
-    let session_dir = SessionDir::create(&config.home.state_dir().join("sessions"))
+    let session_dir = SessionDir::create(&crate::session_dir::sessions_dir(&config.home))
         .map_err(|e| format!("could not create the Session directory: {e}"))?;
     let app =
         App::load_unpacking_in(&config.source, session_dir.path()).map_err(|e| e.to_string())?;
@@ -729,6 +782,26 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let device = profile
         .device_values(&config.device)
         .map_err(|e| e.to_string())?;
+    let token = fresh_token()?;
+    let control = ControlEndpoint::start(
+        Session {
+            inner: inner.clone(),
+        },
+        token.clone(),
+    )
+    .await
+    .map_err(|e| format!("could not start the control endpoint: {e}"))?;
+    let mut entry = RegistryEntry {
+        id: session_dir.id(),
+        app_id: app.id().to_string(),
+        profile: profile.version.clone(),
+        pid: std::process::id(),
+        endpoint: control.url(),
+        token,
+        window: None,
+    };
+    registry::write_entry(session_dir.path(), &entry)
+        .map_err(|e| format!("could not add the Session to the Session Registry: {e}"))?;
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::Starting {
@@ -761,7 +834,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     tokio::spawn(handle_bridge(bridge_rx, inner.clone()));
     let setup = ServerSetup {
         data: shim::session_data(&app, profile, &device, config.lenient, &config.key_map),
-        token: bridge_token()?,
+        token: fresh_token()?,
         profile,
         access_policy: app.access_policy().clone(),
     };
@@ -848,6 +921,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         page_loads,
         app,
         watcher,
+        _control: control,
         session_dir,
     };
     running.network.set_logging(true);
@@ -856,6 +930,14 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
     inner.restore_checkerboard(&cdp).await;
+    if !config.headless {
+        entry.window = engine_window(&running.engine).await;
+    }
+    if entry.window.is_some()
+        && let Err(error) = registry::write_entry(running.session_dir.path(), &entry)
+    {
+        tracing::warn!(%error, "could not record the Engine window in the Session Registry");
+    }
 
     let _ = inner.loaded.set(Loaded {
         cdp,
@@ -870,8 +952,23 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::AppLoaded { url }));
-    inner.status.send_replace(Status::Loaded);
+    inner.status.send_replace(SessionStatus::Loaded);
     Ok(running)
+}
+
+/// The Engine's window, given a moment to show if it hasn't yet.
+async fn engine_window(engine: &RunningEngine) -> Option<u64> {
+    let pid = engine.child.id()?;
+    for _ in 0..20 {
+        if let Some(window) = engine::window_handle(pid) {
+            return Some(window);
+        }
+        if !cfg!(windows) {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    None
 }
 
 /// Loads a page with a `Page.navigate` or `Page.reload` call and waits for it
@@ -893,6 +990,11 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     let _ = running.cdp.call("Page.bringToFront", json!({})).await;
     let _ = running.cdp.evaluate("window.focus(); 0").await;
     Ok(())
+}
+
+/// Reloads the page, bypassing the cache, and waits for it to load.
+async fn reload_page(running: &mut Running) -> Result<(), String> {
+    load_page(running, "Page.reload", json!({ "ignoreCache": true })).await
 }
 
 /// Fails unless the developer's bundler answers at the Dev Server URL, so a
@@ -1043,10 +1145,11 @@ async fn handle_network(mut requests: mpsc::UnboundedReceiver<NetworkRequest>, i
     }
 }
 
-/// A fresh secret for the Bridge, so other local processes can't impersonate the page.
-fn bridge_token() -> Result<String, String> {
+/// A fresh secret for the Bridge or the control endpoint, so other local
+/// processes can't impersonate the page or drive the Session.
+fn fresh_token() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate a Bridge token: {e}"))?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate a token: {e}"))?;
     Ok(hex::encode(bytes))
 }
 

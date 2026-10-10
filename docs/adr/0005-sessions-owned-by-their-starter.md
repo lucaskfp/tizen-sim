@@ -8,4 +8,4 @@ A Session (Engine process, dev server, proxy, watcher, CDP connection) is owned 
 
 ## Consequences
 
-- Registry entries can go stale when an owner crashes, so clients must check that the owning process is alive before using an entry.
+- Registry entries can go stale when an owner crashes, so clients must check that the owning process is alive before using an entry. Each entry lives in its Session's directory, whose lock file the owner holds for the Session's life: the operating system releases the lock however the owner dies, so a free lock marks a stale entry (and, unlike a process id check, can't be fooled by a reused id). Clients remove stale entries when they see them.

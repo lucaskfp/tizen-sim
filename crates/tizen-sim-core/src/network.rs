@@ -32,7 +32,7 @@ use tokio::task::JoinHandle;
 use url::Url;
 
 /// One request the App made over the network, for the Network Log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkRequest {
     /// The HTTP method, or `CONNECT` for a tunnel (HTTPS, WebSockets).
     pub method: String,
@@ -47,7 +47,7 @@ pub struct NetworkRequest {
     pub verdict: Verdict,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Verdict {
     /// The Access Policy lets it through.
     Allowed,
