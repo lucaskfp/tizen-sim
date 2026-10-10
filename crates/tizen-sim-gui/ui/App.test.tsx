@@ -2,7 +2,7 @@
 // records commands and emits Session events as the Rust side would.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
@@ -34,9 +34,104 @@ async function sessionEvents(session: number, ...events: unknown[]) {
   }
 }
 
-async function sessionStarted(session: number, source: string) {
-  await act(() => emit("session-event", { SessionStarted: { session, source } }));
+async function sessionStarted(session: number, source: string, adopted = false) {
+  await act(() => emit("session-event", { SessionStarted: { session, source, adopted } }));
 }
+
+async function screenEvent(session: number, embedded: boolean) {
+  await act(() => emit("session-event", { Screen: { session, embedded } }));
+}
+
+test("a crashed Engine shows on the screen, and Restart starts the App again", async () => {
+  const invoked = rustSide({ "plugin:dialog|open": "C:/apps/hello", embeds_screen: true });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/hello");
+  await sessionEvents(1, { Lifecycle: { AppLoaded: { url: "http://127.0.0.1:1/index.html" } } });
+  await screenEvent(1, true);
+
+  await sessionEvents(1, { Lifecycle: { Exited: { reason: "EngineCrashed" } } });
+
+  const tv = screen.getByRole("region", { name: "TV screen" });
+  expect(tv).toHaveTextContent("The Engine crashed");
+  expect(screen.getByText("Crashed")).toBeInTheDocument();
+  await userEvent.click(within(tv).getByRole("button", { name: /restart/i }));
+  expect(invoked).toContainEqual({ cmd: "restart", args: {} });
+});
+
+test("a Session started from the CLI can be adopted", async () => {
+  const invoked = rustSide({
+    running_sessions: [
+      { id: "ab12cd", app_id: "Fixture006.RemoteKeys", profile: "10.0", source: "C:/apps/remote-keys" },
+    ],
+  });
+  render(<App />);
+
+  await userEvent.click(screen.getByRole("button", { name: /running sessions/i }));
+  const list = await screen.findByRole("list", { name: "Running Sessions" });
+  expect(list).toHaveTextContent("Fixture006.RemoteKeys");
+  expect(list).toHaveTextContent("Tizen 10.0");
+  await userEvent.click(within(list).getByRole("button", { name: /adopt/i }));
+  await sessionStarted(1, "C:/apps/remote-keys", true);
+  await sessionEvents(
+    1,
+    { Lifecycle: { Starting: { app_id: "Fixture006.RemoteKeys", profile: "10.0" } } },
+    { Lifecycle: { AppLoaded: { url: "http://127.0.0.1:1/index.html" } } },
+  );
+
+  expect(invoked).toContainEqual({ cmd: "adopt", args: { id: "ab12cd" } });
+  expect(screen.queryByRole("list", { name: "Running Sessions" })).not.toBeInTheDocument();
+  expect(screen.getByText("Started from the CLI")).toBeInTheDocument();
+  // Its owner chose the profile; the GUI can't restart it on another.
+  expect(screen.getByRole("combobox", { name: "Version Profile" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /reload/i })).toBeEnabled();
+});
+
+test("with no Session running elsewhere there is nothing to adopt", async () => {
+  rustSide({ running_sessions: [] });
+  render(<App />);
+
+  await userEvent.click(screen.getByRole("button", { name: /running sessions/i }));
+
+  expect(await screen.findByText(/no Session is running/i)).toBeInTheDocument();
+});
+
+test("the screen area tells the Rust side where the Engine window goes", async () => {
+  const invoked = rustSide({ embeds_screen: true });
+  render(<App />);
+
+  await screen.findByRole("region", { name: "TV screen" });
+
+  await waitFor(() => expect(invoked.some((i) => i.cmd === "set_screen_area" && i.args.area !== null)).toBe(true));
+  const report = invoked.find((i) => i.cmd === "set_screen_area");
+  expect(report?.args.area).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+});
+
+test("where the Engine keeps its own window, the screen area says so", async () => {
+  rustSide({ "plugin:dialog|open": "C:/apps/hello", embeds_screen: false });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/hello");
+  await sessionEvents(1, { Lifecycle: { AppLoaded: { url: "http://127.0.0.1:1/index.html" } } });
+  await screenEvent(1, false);
+
+  expect(screen.getByRole("region", { name: "TV screen" })).toHaveTextContent(/its own Engine window/);
+});
+
+test("the dev server form opens inline, so it never goes under the TV screen", async () => {
+  const invoked = rustSide({ embeds_screen: true });
+  render(<App />);
+
+  await userEvent.click(screen.getByRole("button", { name: /dev server/i }));
+  await userEvent.type(screen.getByLabelText("config.xml"), "C:/apps/dev/config.xml");
+  await userEvent.click(screen.getByRole("button", { name: "Run" }));
+
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(invoked).toContainEqual({
+    cmd: "open_app",
+    args: { source: { kind: "devServer", url: "http://localhost:5173/", config: "C:/apps/dev/config.xml" } },
+  });
+});
 
 test("opening a Project Folder starts a Session and shows its console output", async () => {
   const invoked = rustSide({ "plugin:dialog|open": "C:/apps/hello" });

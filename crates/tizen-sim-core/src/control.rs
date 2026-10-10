@@ -12,8 +12,8 @@
 //!
 //! Errors answer `{"error": "..."}`.
 //!
-//! These are what the CLI needs for now; the GUI's adopt feature will add
-//! the rest of the handle (stop, resume, DevTools, ...) when it needs them.
+//! These are what the CLI and the GUI's adoption need for now; the rest of
+//! the handle (stop, resume, DevTools, ...) can follow when a client needs it.
 
 use crate::session::{Lifecycle, Session, SessionError, SessionEvent};
 use axum::body::Body;

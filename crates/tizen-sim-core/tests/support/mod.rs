@@ -182,3 +182,19 @@ pub async fn eventually_equals(session: &Session, expression: &str, expected: Va
 
 /// First launch may include an Engine download, so it gets a generous budget.
 pub const STARTUP_SECS: u64 = 600;
+
+/// Kills a process at once, as a crash or Task Manager would, giving it no
+/// chance to clean up.
+pub fn kill_process(pid: u32) {
+    let status = if cfg!(windows) {
+        std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .status()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+    };
+    assert!(status.unwrap().success(), "could not kill process {pid}");
+}

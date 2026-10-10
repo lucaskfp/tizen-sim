@@ -152,8 +152,10 @@ pub enum Lifecycle {
 pub enum ExitReason {
     /// The Session was stopped by its owner.
     Stopped,
-    /// The Engine went away on its own (window closed, crash).
+    /// The Engine's window was closed, so the Engine quit.
     EngineClosed,
+    /// The Engine process died: it crashed or was killed.
+    EngineCrashed,
     /// Startup failed; a `Failed` event with the reason came just before.
     FailedToStart,
     /// The App ended itself (`tizen.application.getCurrentApplication().exit()`).
@@ -221,6 +223,14 @@ struct Inner {
     /// Asks the running Session to reload the App, with where to send the
     /// result.
     reloads: mpsc::UnboundedSender<oneshot::Sender<Result<(), String>>>,
+    /// The Engine's process and window while the App is loaded.
+    engine: Mutex<Option<EngineProcess>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EngineProcess {
+    pid: u32,
+    window: Option<u64>,
 }
 
 /// What a Session can act on once its App has loaded.
@@ -254,6 +264,7 @@ impl Session {
             checkerboard: AtomicBool::new(config.checkerboard),
             devtools: tokio::sync::Mutex::new(None),
             reloads,
+            engine: Mutex::new(None),
         });
         let task = tokio::spawn(run(config, inner.clone(), stop_rx, reload_rx));
         *inner.task.try_lock().expect("fresh mutex") = Some(task);
@@ -402,6 +413,20 @@ impl Session {
         self.inner.resume().await
     }
 
+    /// The Engine's process id, while the App is loaded and until the
+    /// Session exits.
+    pub fn engine_pid(&self) -> Option<u32> {
+        self.inner.engine.lock().unwrap().map(|e| e.pid)
+    }
+
+    /// The Engine's native window (an `HWND` on Windows) for the GUI to
+    /// embed (ADR-0006), as recorded in the Session Registry: `None` for a
+    /// headless Engine, before the App has loaded, after the Session has
+    /// exited, or where windows aren't embedded.
+    pub fn engine_window(&self) -> Option<u64> {
+        self.inner.engine.lock().unwrap().and_then(|e| e.window)
+    }
+
     /// Stops the Session: closes the Engine and every server. Returns once
     /// everything has shut down.
     pub async fn stop(&self) {
@@ -482,7 +507,13 @@ async fn run(
                 close_engine(&mut running).await;
                 break reason;
             }
-            _ = running.engine.child.wait() => break ExitReason::EngineClosed,
+            status = running.engine.child.wait() => {
+                // Closing its window makes the Engine quit normally.
+                break match status {
+                    Ok(status) if status.success() => ExitReason::EngineClosed,
+                    _ => ExitReason::EngineCrashed,
+                };
+            }
             Some(batch) = next_batch(&mut running.watcher) => {
                 inner.hot_reload(&config, &mut running, batch).await;
             }
@@ -756,6 +787,7 @@ impl Inner {
     }
 
     fn finish(&self, reason: ExitReason) {
+        self.engine.lock().unwrap().take();
         self.log
             .publish(SessionEvent::Lifecycle(Lifecycle::Exited { reason }));
         self.status.send_replace(SessionStatus::Exited);
@@ -794,10 +826,12 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let mut entry = RegistryEntry {
         id: session_dir.id(),
         app_id: app.id().to_string(),
+        source: config.source.absolute(),
         profile: profile.version.clone(),
         pid: std::process::id(),
         endpoint: control.url(),
         token,
+        engine_pid: None,
         window: None,
     };
     registry::write_entry(session_dir.path(), &entry)
@@ -930,15 +964,17 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
     inner.restore_checkerboard(&cdp).await;
+    entry.engine_pid = running.engine.child.id();
     if !config.headless {
         entry.window = engine_window(&running.engine).await;
     }
-    if entry.window.is_some()
-        && let Err(error) = registry::write_entry(running.session_dir.path(), &entry)
-    {
-        tracing::warn!(%error, "could not record the Engine window in the Session Registry");
+    if let Err(error) = registry::write_entry(running.session_dir.path(), &entry) {
+        tracing::warn!(%error, "could not record the Engine in the Session Registry");
     }
-
+    *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
+        pid,
+        window: entry.window,
+    });
     let _ = inner.loaded.set(Loaded {
         cdp,
         profile,

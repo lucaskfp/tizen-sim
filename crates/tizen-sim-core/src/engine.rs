@@ -412,6 +412,15 @@ pub struct RunningEngine {
 /// so startup gets a generous budget.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Every Engine window starts without Chromium's first-run prompts, and
+/// without the info bar warning about our flags (`--test-type`), which
+/// would take room from the App.
+const QUIET_START: [&str; 3] = [
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--test-type",
+];
+
 pub async fn launch(
     executable: &Path,
     options: &LaunchOptions,
@@ -433,7 +442,14 @@ pub async fn launch(
         .arg(format!(
             "--remote-allow-origins=http://127.0.0.1:{debug_port}"
         ))
-        .args(["--no-first-run", "--no-default-browser-check"]);
+        .args(QUIET_START)
+        // A window behind others (or embedded in the GUI, ADR-0006) must keep
+        // drawing: otherwise Page.captureScreenshot never answers. Hiding the
+        // App minimizes and freezes it explicitly, so it is unaffected.
+        .args([
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+        ]);
     if let Some(proxy) = options.network_proxy {
         command
             .arg(format!("--proxy-server=http://{proxy}"))
@@ -458,7 +474,9 @@ pub async fn launch(
     if options.headless {
         command.args(["--headless=new", "about:blank"]);
     } else {
-        command.arg("--app=about:blank");
+        // An app window: no tabs or address bar. `--app=about:blank` gets
+        // an ordinary browser window instead.
+        command.arg("--app=data:text/html,");
     }
     command
         .stdin(Stdio::null())
@@ -550,7 +568,7 @@ pub async fn open_window(
     let mut command = tokio::process::Command::new(executable);
     command
         .arg(format!("--user-data-dir={}", user_data_dir.display()))
-        .args(["--no-first-run", "--no-default-browser-check"])
+        .args(QUIET_START)
         .arg(format!("--app={url}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())

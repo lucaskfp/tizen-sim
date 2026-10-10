@@ -4502,6 +4502,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "windows",
 ]
 
 [[package]]

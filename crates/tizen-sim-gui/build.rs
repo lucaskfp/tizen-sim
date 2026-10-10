@@ -23,6 +23,11 @@ fn main() {
                 "reload",
                 "screenshot",
                 "profiles",
+                "restart",
+                "running_sessions",
+                "adopt",
+                "embeds_screen",
+                "set_screen_area",
             ])),
     )
     .expect("failed to run the Tauri build script");

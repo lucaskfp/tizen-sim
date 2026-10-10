@@ -448,6 +448,7 @@ async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
                             match reason {
                                 ExitReason::Stopped => println!("Stopped."),
                                 ExitReason::EngineClosed => println!("The Engine window was closed."),
+                                ExitReason::EngineCrashed => println!("The Engine crashed or was killed."),
                                 ExitReason::AppExited => println!("The App exited."),
                                 ExitReason::TerminatedByRemote => println!("Exit was pressed or Back held: the App was terminated, as on a TV."),
                                 ExitReason::FailedToStart => {}

@@ -2,8 +2,9 @@
 // The types mirror the core's serde output (externally tagged enums).
 
 export type GuiEvent =
-  | { SessionStarted: { session: number; source: string } }
-  | { Session: { session: number; event: SessionEvent } };
+  | { SessionStarted: { session: number; source: string; adopted: boolean } }
+  | { Session: { session: number; event: SessionEvent } }
+  | { Screen: { session: number; embedded: boolean } };
 
 export type SessionEvent =
   | { Lifecycle: Lifecycle }
@@ -27,6 +28,7 @@ export type Lifecycle =
 export type ExitReason =
   | "Stopped"
   | "EngineClosed"
+  | "EngineCrashed"
   | "FailedToStart"
   | "AppExited"
   | "TerminatedByRemote";
@@ -66,12 +68,17 @@ export type Status =
   | { kind: "running" }
   | { kind: "hidden" }
   | { kind: "failed"; error: string }
+  | { kind: "crashed" }
   | { kind: "exited"; reason: ExitReason };
 
 export type SessionView = {
   /** The Session shown; events of other Sessions are ignored. */
   session: number | null;
   source: string | null;
+  /** Started from the CLI and adopted, rather than started by the GUI. */
+  adopted: boolean;
+  /** Whether the Engine window is on the GUI's screen (ADR-0006). */
+  embedded: boolean;
   appId: string | null;
   profile: string | null;
   status: Status;
@@ -84,6 +91,8 @@ export type SessionView = {
 export const initialView: SessionView = {
   session: null,
   source: null,
+  adopted: false,
+  embedded: false,
   appId: null,
   profile: null,
   status: { kind: "idle" },
@@ -98,7 +107,7 @@ const LOG_LIMIT = 5000;
 
 export function reduce(view: SessionView, event: GuiEvent): SessionView {
   if ("SessionStarted" in event) {
-    const { session, source } = event.SessionStarted;
+    const { session, source, adopted } = event.SessionStarted;
     // A new Session starts with fresh panels; the log keeps going, so a
     // profile switch can be compared with what came before.
     return withLog(
@@ -106,6 +115,7 @@ export function reduce(view: SessionView, event: GuiEvent): SessionView {
         ...initialView,
         session,
         source,
+        adopted,
         // The same App restarting, e.g. on another profile, shows its last
         // profile until the new Session says which it runs on.
         profile: source === view.source ? view.profile : null,
@@ -115,8 +125,12 @@ export function reduce(view: SessionView, event: GuiEvent): SessionView {
       },
       "session",
       "info",
-      `Opening ${source}`,
+      adopted ? `Adopting ${source}, started from the CLI` : `Opening ${source}`,
     );
+  }
+  if ("Screen" in event) {
+    const { session, embedded } = event.Screen;
+    return session === view.session ? { ...view, embedded } : view;
   }
   const { session, event: inner } = event.Session;
   if (session !== view.session) return view;
@@ -184,15 +198,26 @@ function lifecycle(view: SessionView, event: Lifecycle): SessionView {
   }
   const { reason } = event.Exited;
   // A failed start already said why.
-  const status: Status = view.status.kind === "failed" ? view.status : { kind: "exited", reason };
+  const status: Status =
+    view.status.kind === "failed"
+      ? view.status
+      : reason === "EngineCrashed"
+        ? { kind: "crashed" }
+        : { kind: "exited", reason };
   return reason === "FailedToStart"
-    ? { ...view, status }
-    : withLog({ ...view, status }, "session", "info", exitText[reason]);
+    ? { ...view, status, embedded: false }
+    : withLog(
+        { ...view, status, embedded: false },
+        "session",
+        reason === "EngineCrashed" ? "error" : "info",
+        exitText[reason],
+      );
 }
 
 const exitText: Record<ExitReason, string> = {
   Stopped: "Stopped.",
   EngineClosed: "The Engine window was closed.",
+  EngineCrashed: "The Engine crashed or was killed.",
   FailedToStart: "The Session failed to start.",
   AppExited: "The App exited.",
   TerminatedByRemote: "Exit was pressed or Back held: the App was terminated, as on a TV.",

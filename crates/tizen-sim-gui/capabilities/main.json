@@ -12,6 +12,11 @@
     "allow-press-key",
     "allow-reload",
     "allow-screenshot",
-    "allow-profiles"
+    "allow-profiles",
+    "allow-restart",
+    "allow-running-sessions",
+    "allow-adopt",
+    "allow-embeds-screen",
+    "allow-set-screen-area"
   ]
 }

@@ -6,6 +6,7 @@ mod support;
 
 use serde_json::json;
 use support::{eventually_equals, expect_event, start};
+use tizen_sim_core::app::AppSource;
 use tizen_sim_core::home::Home;
 use tizen_sim_core::registry::{ClientError, RegistryEntry, SessionClient, SessionRegistry};
 use tizen_sim_core::session::{KeyOutcome, Lifecycle, SessionEvent, SessionStatus};
@@ -30,7 +31,14 @@ async fn a_running_session_is_in_the_registry_until_it_stops() {
     assert_eq!(entry.app_id, "Fixture006.RemoteKeys");
     assert_eq!(entry.profile, "10.0");
     assert_eq!(entry.pid, std::process::id());
+    // Where the App comes from, so the GUI can start it again.
+    assert!(
+        matches!(&entry.source, AppSource::ProjectFolder(path) if path == &std::path::absolute(support::fixture("remote-keys")).unwrap()),
+        "{entry:?}"
+    );
     assert!(!entry.token.is_empty());
+    assert_eq!(entry.engine_pid, t.session.engine_pid());
+    assert!(entry.engine_pid.is_some(), "{entry:?}");
     // Only a windowed Engine has a window to embed, and only on Windows (ADR-0006).
     let windowed = cfg!(windows) && std::env::var_os("TIZEN_SIM_TEST_HEADED").is_some();
     assert_eq!(entry.window.is_some(), windowed, "{entry:?}");
@@ -156,6 +164,23 @@ async fn the_control_endpoint_rejects_a_missing_or_wrong_token() {
     assert_eq!(
         t.session.evaluate("window.keyLog").await.unwrap(),
         json!([])
+    );
+    t.session.stop().await;
+}
+
+#[tokio::test]
+async fn the_registry_names_the_app_source_absolutely_for_other_processes() {
+    let relative = std::path::PathBuf::from("../../fixtures/apps/hello");
+    let t = support::start_source(AppSource::ProjectFolder(relative.clone()), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+
+    let entry = only_entry(t.state.path());
+
+    // Another process, e.g. the GUI restarting it, runs somewhere else.
+    let expected = std::path::absolute(&relative).unwrap();
+    assert!(
+        matches!(&entry.source, AppSource::ProjectFolder(path) if path == &expected),
+        "{entry:?}"
     );
     t.session.stop().await;
 }

@@ -5,6 +5,7 @@
 //! directory's lock says whether the owner is still alive, so an entry left
 //! behind by a killed owner is never listed, and is removed on sight.
 
+use crate::app::AppSource;
 use crate::home::Home;
 use crate::session::{KeyOutcome, SessionEvent, SessionStatus};
 use crate::session_dir;
@@ -25,6 +26,8 @@ pub struct RegistryEntry {
     /// The Session id, unique among running Sessions.
     pub id: String,
     pub app_id: String,
+    /// Where the App comes from.
+    pub source: AppSource,
     /// The Version Profile, e.g. `10.0`.
     pub profile: String,
     /// The process that owns the Session.
@@ -33,6 +36,8 @@ pub struct RegistryEntry {
     pub endpoint: String,
     /// The secret every control request must carry.
     pub token: String,
+    /// The Engine's process, once the App has loaded.
+    pub engine_pid: Option<u32>,
     /// The Engine's native window (an `HWND` on Windows), for the GUI to
     /// embed (ADR-0006). `None` for a headless Engine, before the App has
     /// loaded, or where windows aren't embedded.
@@ -285,10 +290,12 @@ mod tests {
         RegistryEntry {
             id: id.into(),
             app_id: "Fixture001.Hello".into(),
+            source: AppSource::ProjectFolder("hello".into()),
             profile: "10.0".into(),
             pid: 1,
             endpoint: "http://127.0.0.1:1".into(),
             token: "t".into(),
+            engine_pid: None,
             window: None,
         }
     }

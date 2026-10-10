@@ -7,6 +7,7 @@
 //! guides/concepts/web-runtime.md, reference/security-privileges.md).
 
 use crate::profile::VersionProfile;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +17,7 @@ const WIDGET_NS: &str = "http://www.w3.org/ns/widgets";
 const TIZEN_NS: &str = "http://tizen.org/ns/widgets";
 
 /// Where an App's files come from.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppSource {
     /// A directory containing the App's unpacked files, including `config.xml`.
     ProjectFolder(PathBuf),
@@ -38,6 +39,21 @@ impl AppSource {
             AppSource::Package(path)
         } else {
             AppSource::ProjectFolder(path)
+        }
+    }
+
+    /// The same source with its paths absolute, so another process (the GUI
+    /// adopting a Session) finds it from any working directory. A path that
+    /// can't be made absolute is kept as it is.
+    pub fn absolute(&self) -> AppSource {
+        let absolute = |path: &PathBuf| std::path::absolute(path).unwrap_or_else(|_| path.clone());
+        match self {
+            AppSource::ProjectFolder(path) => AppSource::ProjectFolder(absolute(path)),
+            AppSource::Package(path) => AppSource::Package(absolute(path)),
+            AppSource::DevServerUrl { url, config } => AppSource::DevServerUrl {
+                url: url.clone(),
+                config: absolute(config),
+            },
         }
     }
 }

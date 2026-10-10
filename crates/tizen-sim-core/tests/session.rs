@@ -221,3 +221,28 @@ async fn a_session_remembers_its_profile_for_the_app() {
     let latest = &tizen_sim_core::profile::VersionProfile::latest().version;
     assert_eq!(remembered.get("Fixture001.Hello").as_ref(), Some(latest));
 }
+
+#[tokio::test]
+async fn an_engine_that_dies_ends_the_session_as_crashed() {
+    let mut t = start("hello");
+    t.session.wait_until_loaded().await.unwrap();
+    let pid = t
+        .session
+        .engine_pid()
+        .expect("a running Engine has a process");
+
+    support::kill_process(pid);
+
+    expect_event(&mut t.events, 30, |e| {
+        is_lifecycle(e, |l| {
+            matches!(
+                l,
+                Lifecycle::Exited {
+                    reason: ExitReason::EngineCrashed
+                }
+            )
+        })
+    })
+    .await;
+    assert_eq!(t.session.engine_pid(), None);
+}
