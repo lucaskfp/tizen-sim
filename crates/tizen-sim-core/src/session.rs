@@ -4,9 +4,9 @@
 //! download, dev server, Engine launch) runs in the background and reports
 //! through the Session's event stream.
 
-use crate::app::{App, AppError, AppSource};
+use crate::app::{App, AppError, AppFiles, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
-use crate::dev_server::{BridgeMessage, DevServer, ShimSetup};
+use crate::dev_server::{BridgeMessage, DevServer, ServerSetup};
 use crate::engine::{
     self, DownloadProgress, EngineSpec, EngineStore, LaunchOptions, RunningEngine,
 };
@@ -52,7 +52,8 @@ pub enum SessionEvent {
     HotReload(HotReload),
 }
 
-/// The Session following edits to its Project Folder or Package.
+/// The Session following edits to its Project Folder or Package, or to the
+/// `config.xml` of a Dev Server URL App (the bundler reloads its own output).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotReload {
     /// Files changed together; paths relative to the Project Folder,
@@ -491,10 +492,11 @@ impl Inner {
         if let Err(error) = self.resume().await {
             tracing::warn!(%error, "could not bring the App back before a hot reload");
         }
-        // A new Package may hold any change, config.xml included.
+        // A new Package may hold any change, config.xml included; a Dev
+        // Server URL App's only watched file is its config.xml.
         let action = match config.source {
             AppSource::ProjectFolder(_) => batch.action(),
-            AppSource::Package(_) => Action::Restart,
+            AppSource::Package(_) | AppSource::DevServerUrl { .. } => Action::Restart,
         };
         let result = match action {
             Action::SwapStyles => self.swap_styles(running).await,
@@ -551,7 +553,7 @@ impl Inner {
                 app.id()
             ));
         }
-        running.server.set_root(app.root());
+        running.server.set_files(app.files());
         running.server.set_shim_data(shim::session_data(
             &app,
             loaded.profile,
@@ -561,7 +563,7 @@ impl Inner {
         loaded
             .runs_in_background
             .store(app.runs_in_background(), Ordering::SeqCst);
-        let url = running.server.url(app.entry_point());
+        let url = running.server.url(&app.entry_path());
         // The previous Package's files go once the new App has loaded.
         let previous = std::mem::replace(&mut running.app, app);
         let navigated = load_page(running, "Page.navigate", json!({ "url": url })).await;
@@ -615,16 +617,20 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
         .await
         .map_err(|e| e.to_string())?;
+    if let AppFiles::Bundler(bundler) = app.files() {
+        check_reachable(bundler).await?;
+    }
 
     let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
     let (app_exit_tx, app_exit) = mpsc::unbounded_channel();
     let _ = inner.app_exit.set(app_exit_tx);
     tokio::spawn(handle_bridge(bridge_rx, inner.clone()));
-    let shims = ShimSetup {
+    let setup = ServerSetup {
         data: shim::session_data(&app, profile, config.lenient, &config.key_map),
         token: bridge_token()?,
+        profile,
     };
-    let server = DevServer::start(app.root(), shims, bridge_tx)
+    let server = DevServer::start(app.files(), setup, bridge_tx)
         .await
         .map_err(|e| format!("could not start the dev server: {e}"))?;
     let user_data_dir = config
@@ -667,13 +673,14 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let watcher = match &config.source {
         AppSource::ProjectFolder(root) => SourceWatcher::start(root),
         AppSource::Package(wgt) => SourceWatcher::start_file(wgt),
+        AppSource::DevServerUrl { config, .. } => SourceWatcher::start_file(config),
     }
     .inspect_err(
         |error| tracing::warn!(%error, "could not watch the App Source; hot reload is off"),
     )
     .ok();
 
-    let url = server.url(app.entry_point());
+    let url = server.url(&app.entry_path());
     let runs_in_background = app.runs_in_background();
     let mut running = Running {
         engine,
@@ -722,6 +729,22 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     let _ = running.cdp.call("Page.bringToFront", json!({})).await;
     let _ = running.cdp.evaluate("window.focus(); 0").await;
     Ok(())
+}
+
+/// Fails unless the developer's bundler answers at the Dev Server URL, so a
+/// dev server that isn't running is named instead of loading an error page.
+async fn check_reachable(bundler: &url::Url) -> Result<(), String> {
+    // The client the proxy uses, so both reach the bundler the same way.
+    let request = crate::proxy::client().get(bundler.clone()).send();
+    match tokio::time::timeout(Duration::from_secs(10), request).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(format!(
+            "could not reach the dev server at {bundler}; is it running? ({error})"
+        )),
+        Err(_) => Err(format!(
+            "the dev server at {bundler} did not answer within 10s"
+        )),
+    }
 }
 
 /// How often, and how far apart, a Package that can't be read or unpacked

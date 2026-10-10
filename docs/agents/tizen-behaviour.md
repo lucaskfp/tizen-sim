@@ -128,6 +128,11 @@ Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/
   - (TV: `guides/multimedia/media-playback/using-avplay.html`)
 - **Video plane.** The rule that the AVPlay video sits behind the page comes from the user's specification (ADR-0004). The guides fetched so far don't state it explicitly.
 
+## Engine features
+
+- **Milestones.** Each Tizen TV release ships a fixed Chromium milestone (TV: `specifications/web-engine-specifications.html`), mirrored in `crates/tizen-sim-core/data/profiles.toml`. Which web features an App can use follows from that milestone.
+- **ES modules** arrived in Chromium 61 (chromestatus.com/feature/5365692190687232). Older Engines ignore `<script type="module">` and run `<script nomodule>`. A document with module scripts and no `nomodule` fallback, such as a bundler's dev output, runs none of its App code on those TVs. tizen-sim raises the `es-modules-unsupported` Diagnostic for it. That Tizen TVs before M61 behave exactly like upstream Chromium here is **unverified**.
+
 ## Text input (IME)
 
 Source: TV `guides/user-interaction/keyboardime.html`.

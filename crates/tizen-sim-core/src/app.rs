@@ -1,5 +1,6 @@
 //! App loading: turns an App Source into an App by reading its `config.xml`.
-//! A Package is unpacked first, then read like a Project Folder.
+//! A Package is unpacked first, then read like a Project Folder. A Dev Server
+//! URL App is read from the `config.xml` it is paired with.
 //!
 //! What a TV checks when it installs the App is checked here too, so an App
 //! that wouldn't install fails to load (TD reference/config-xml.md,
@@ -22,6 +23,9 @@ pub enum AppSource {
     /// A packaged App: a `.wgt` file, which is a zip archive (W3C Widget
     /// Packaging, which TD guides/concepts/web-runtime.md follows).
     Package(PathBuf),
+    /// The developer's own bundler dev server, paired with the App's
+    /// `config.xml`, which can live anywhere.
+    DevServerUrl { url: Url, config: PathBuf },
 }
 
 impl AppSource {
@@ -51,9 +55,18 @@ pub struct App {
     background_categories: Vec<String>,
     entry_point: String,
     access_policy: AccessPolicy,
-    root: PathBuf,
+    files: AppFiles,
     /// Where a Package was unpacked; removed once the last clone is dropped.
     _unpacked: Option<Arc<tempfile::TempDir>>,
+}
+
+/// Where the App's files are served from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppFiles {
+    /// A Project Folder, or the directory a Package was unpacked into.
+    Folder(PathBuf),
+    /// The developer's bundler dev server, at the Dev Server URL.
+    Bundler(Url),
 }
 
 /// The network and navigation rules an App declares in its `config.xml`
@@ -156,6 +169,8 @@ pub enum AppError {
     },
     #[error("{path} is not a valid Package (a .wgt zip archive): {message}")]
     PackageCorrupt { path: PathBuf, message: String },
+    #[error("unsupported Dev Server URL {url}: tizen-sim proxies plain http:// dev servers only")]
+    DevServerUrlUnsupported { url: Url },
     #[error("could not unpack the Package {path}: {source}")]
     UnpackFailed {
         path: PathBuf,
@@ -205,6 +220,13 @@ impl App {
                 let mut app = load_folder(unpacked.path(), package)?;
                 app._unpacked = Some(Arc::new(unpacked));
                 Ok(app)
+            }
+            AppSource::DevServerUrl { url, config } => {
+                // Proxying https would mean terminating TLS for the bundler.
+                if url.scheme() != "http" {
+                    return Err(AppError::DevServerUrlUnsupported { url: url.clone() });
+                }
+                read_config(config, config, AppFiles::Bundler(url.clone()))
             }
         }
     }
@@ -269,17 +291,61 @@ impl App {
         &self.access_policy
     }
 
-    /// The directory the App's files are served from.
-    pub fn root(&self) -> &Path {
-        &self.root
+    /// Where the App's files are served from.
+    pub fn files(&self) -> &AppFiles {
+        &self.files
+    }
+
+    /// The directory the App's files are in; `None` for a Dev Server URL App.
+    pub fn folder(&self) -> Option<&Path> {
+        match &self.files {
+            AppFiles::Folder(root) => Some(root),
+            AppFiles::Bundler(_) => None,
+        }
+    }
+
+    /// The path (and query) of the entry page on the Session's dev server:
+    /// the entry point below the App's root. For a Dev Server URL App the
+    /// root is the URL's path, taken as a folder, and the URL's query is kept,
+    /// so `http://host/tv?mode=dev` starts at `/tv/index.html?mode=dev`.
+    pub fn entry_path(&self) -> String {
+        match &self.files {
+            AppFiles::Folder(_) => format!("/{}", self.entry_point.trim_start_matches('/')),
+            AppFiles::Bundler(url) => {
+                let mut root = url.clone();
+                if !root.path().ends_with('/') {
+                    root.set_path(&format!("{}/", root.path()));
+                }
+                let mut entry = root.join(&self.entry_point).unwrap_or(root);
+                entry.set_query(url.query());
+                entry[url::Position::BeforePath..url::Position::AfterQuery].to_string()
+            }
+        }
     }
 }
 
 /// Reads the App in `root`. Errors name files under `shown_as` instead, so
 /// a Package's problems point at the `.wgt`, not where it was unpacked.
 fn load_folder(root: &Path, shown_as: &Path) -> Result<App, AppError> {
-    let path = shown_as.join("config.xml");
-    let text = match std::fs::read_to_string(root.join("config.xml")) {
+    let app = read_config(
+        &root.join("config.xml"),
+        &shown_as.join("config.xml"),
+        AppFiles::Folder(root.to_path_buf()),
+    )?;
+    if !root.join(&app.entry_point).is_file() {
+        return Err(AppError::EntryPointMissing {
+            root: shown_as.to_path_buf(),
+            entry_point: app.entry_point,
+        });
+    }
+    Ok(app)
+}
+
+/// Reads the App declared by the `config.xml` at `file`, whose files are
+/// served from `files`. Errors name the file as `shown_as`.
+fn read_config(file: &Path, shown_as: &Path, files: AppFiles) -> Result<App, AppError> {
+    let path = shown_as.to_path_buf();
+    let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(AppError::ConfigMissing { path });
@@ -408,12 +474,6 @@ fn load_folder(root: &Path, shown_as: &Path) -> Result<App, AppError> {
         .and_then(|n| n.attribute("src"))
         .unwrap_or("index.html")
         .to_string();
-    if !root.join(&entry_point).is_file() {
-        return Err(AppError::EntryPointMissing {
-            root: shown_as.to_path_buf(),
-            entry_point,
-        });
-    }
     let access_policy = access_policy(widget);
 
     Ok(App {
@@ -427,7 +487,7 @@ fn load_folder(root: &Path, shown_as: &Path) -> Result<App, AppError> {
         background_categories,
         entry_point,
         access_policy,
-        root: root.to_path_buf(),
+        files,
         _unpacked: None,
     })
 }

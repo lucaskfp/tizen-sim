@@ -1,17 +1,23 @@
-//! The Session's dev server: serves the App's files over local HTTP, rewrites
-//! every HTML document to load the Shim bootstrap first (ADR-0002), and hosts
-//! the Bridge WebSocket.
+//! The Session's dev server: serves the App's files over local HTTP, or
+//! proxies the developer's bundler for a Dev Server URL App, rewrites every
+//! HTML document to load the Shim bootstrap first (ADR-0002), and hosts the
+//! Bridge WebSocket.
 
+use crate::app::AppFiles;
+use crate::es_modules::{ES_MODULES_MILESTONE, needs_es_modules};
+use crate::profile::VersionProfile;
+use crate::proxy;
 use crate::shim::{self, BOOTSTRAP_PATH, BRIDGE_PATH};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -25,12 +31,14 @@ pub struct BridgeMessage {
     pub params: Value,
 }
 
-/// What the dev server needs to serve the Shims for one Session.
-pub struct ShimSetup {
+/// What the dev server needs to serve one Session's App.
+pub struct ServerSetup {
     /// Session data for the bootstrap (see `shim::session_data`).
     pub data: Value,
     /// Secret the page must present to open the Bridge.
     pub token: String,
+    /// The Session's Version Profile, whose Engine the documents must suit.
+    pub profile: &'static VersionProfile,
 }
 
 pub struct DevServer {
@@ -42,34 +50,45 @@ pub struct DevServer {
 
 struct ServerState {
     /// Replaced when a changed Package is unpacked again.
-    root: RwLock<PathBuf>,
+    files: RwLock<AppFiles>,
+    /// This server's own origin, e.g. `http://127.0.0.1:1234`.
+    origin: String,
     bridge_url: String,
     /// Replaced when the Session restarts with a re-read `config.xml`.
     bootstrap: RwLock<String>,
     token: String,
+    /// Carries the page's messages, and the dev server's own Diagnostics.
     bridge: mpsc::UnboundedSender<BridgeMessage>,
+    profile: &'static VersionProfile,
+    /// Set once the ES modules Diagnostic has been raised.
+    modules_diagnosed: AtomicBool,
+    http: reqwest::Client,
 }
 
 impl DevServer {
     pub async fn start(
-        root: &Path,
-        shims: ShimSetup,
+        files: &AppFiles,
+        setup: ServerSetup,
         bridge: mpsc::UnboundedSender<BridgeMessage>,
     ) -> std::io::Result<DevServer> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        let bridge_url = format!("ws://{addr}{BRIDGE_PATH}?token={}", shims.token);
+        let bridge_url = format!("ws://{addr}{BRIDGE_PATH}?token={}", setup.token);
         let state = Arc::new(ServerState {
-            root: RwLock::new(root.to_path_buf()),
-            bootstrap: RwLock::new(shim::bootstrap_script(shims.data, &bridge_url)),
+            files: RwLock::new(files.clone()),
+            origin: format!("http://{addr}"),
+            bootstrap: RwLock::new(shim::bootstrap_script(setup.data, &bridge_url)),
             bridge_url,
-            token: shims.token,
+            token: setup.token,
             bridge,
+            profile: setup.profile,
+            modules_diagnosed: AtomicBool::new(false),
+            http: proxy::client(),
         });
         let router = axum::Router::new()
             .route(BOOTSTRAP_PATH, get(serve_bootstrap))
             .route(BRIDGE_PATH, get(open_bridge))
-            .fallback(serve_app_file)
+            .fallback(serve_app)
             .with_state(state.clone());
         let (shutdown, shutdown_rx) = oneshot::channel::<()>();
         let task = tokio::spawn(async move {
@@ -98,9 +117,9 @@ impl DevServer {
             shim::bootstrap_script(data, &self.state.bridge_url);
     }
 
-    /// Serves the App's files from `root` from now on.
-    pub fn set_root(&self, root: &Path) {
-        *self.state.root.write().unwrap() = root.to_path_buf();
+    /// Serves the App's files from `files` from now on.
+    pub fn set_files(&self, files: &AppFiles) {
+        *self.state.files.write().unwrap() = files.clone();
     }
 
     pub async fn stop(self) {
@@ -120,10 +139,23 @@ async fn serve_bootstrap(State(state): State<Arc<ServerState>>) -> Response {
         .into_response()
 }
 
-/// HTML documents get the bootstrap injected; everything else is served as-is.
-async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request) -> Response {
-    let root = state.root.read().unwrap().clone();
-    if let Some(file) = html_document(&root, request.uri().path())
+/// HTML documents get the bootstrap injected; everything else is served or
+/// passed through as-is.
+async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> Response {
+    let files = state.files.read().unwrap().clone();
+    match files {
+        AppFiles::Folder(root) => serve_app_file(&state, &root, request).await,
+        AppFiles::Bundler(bundler) => {
+            proxy::forward(&state.http, &bundler, &state.origin, request, |html| {
+                rewrite_document(&state, html)
+            })
+            .await
+        }
+    }
+}
+
+async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> Response {
+    if let Some(file) = html_document(root, request.uri().path())
         && let Ok(html) = tokio::fs::read(&file).await
     {
         // No charset: the document's own <meta charset> decides, as on a TV.
@@ -132,11 +164,11 @@ async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request)
                 (header::CONTENT_TYPE, "text/html"),
                 (header::CACHE_CONTROL, "no-store"),
             ],
-            shim::inject_bootstrap(&html),
+            rewrite_document(state, &html),
         )
             .into_response();
     }
-    match ServeDir::new(&root).oneshot(request).await {
+    match ServeDir::new(root).oneshot(request).await {
         // Revalidate every time, so a hot reload never runs a stale file.
         Ok(mut response) => {
             response.headers_mut().insert(
@@ -147,6 +179,29 @@ async fn serve_app_file(State(state): State<Arc<ServerState>>, request: Request)
         }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
+}
+
+/// Injects the bootstrap into an HTML document. First, once per Session,
+/// raises a Diagnostic if the document only starts on Engines with ES modules
+/// and the Session's Engine predates them, as a bundler's dev output does.
+fn rewrite_document(state: &ServerState, html: &[u8]) -> Vec<u8> {
+    if state.profile.milestone < ES_MODULES_MILESTONE
+        && needs_es_modules(html)
+        && !state.modules_diagnosed.swap(true, Ordering::SeqCst)
+    {
+        let message = format!(
+            "The App loads its scripts as ES modules (<script type=\"module\">), which the \
+             Engine of Tizen {} TVs (Chromium M{}) ignores, so they never run and the App \
+             doesn't start. Serve a legacy build for this Version Profile instead, e.g. with \
+             @vitejs/plugin-legacy or a non-module bundle transpiled to ES5.",
+            state.profile.version, state.profile.milestone
+        );
+        let _ = state.bridge.send(BridgeMessage {
+            method: "diagnostic".into(),
+            params: json!({ "code": "es-modules-unsupported", "message": message }),
+        });
+    }
+    shim::inject_bootstrap(html)
 }
 
 /// The file for a request path if it names an HTML document inside `root`.
@@ -204,3 +259,6 @@ async fn run_bridge(mut socket: WebSocket, state: Arc<ServerState>) {
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

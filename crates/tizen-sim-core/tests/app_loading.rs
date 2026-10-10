@@ -3,7 +3,9 @@
 mod support;
 
 use support::{fixture, fixture_entries, write_package};
-use tizen_sim_core::app::{AccessPolicy, AccessRequest, App, AppError, AppSource, CspPolicy};
+use tizen_sim_core::app::{
+    AccessPolicy, AccessRequest, App, AppError, AppFiles, AppSource, CspPolicy,
+};
 use tizen_sim_core::profile::VersionProfile;
 
 fn load(name: &str) -> Result<App, AppError> {
@@ -561,14 +563,14 @@ fn a_package_is_unpacked_and_loaded_like_a_project_folder() {
     let app = load_package(&entries).unwrap();
     assert_eq!(app.id(), "Fixture001.Hello");
     assert_eq!(app.entry_point(), "index.html");
-    assert!(app.root().join("index.html").is_file());
-    assert!(app.root().join("css/style.css").is_file());
+    assert!(app.folder().unwrap().join("index.html").is_file());
+    assert!(app.folder().unwrap().join("css/style.css").is_file());
 }
 
 #[test]
 fn an_unpacked_package_is_removed_with_the_last_app_using_it() {
     let app = load_package(&fixture_entries("hello")).unwrap();
-    let root = app.root().to_path_buf();
+    let root = app.folder().unwrap().to_path_buf();
     let copy = app.clone();
     drop(app);
     assert!(root.is_dir(), "a clone still uses it");
@@ -656,4 +658,69 @@ fn malformed_packages_fail_with_the_problem_named() {
     let err = load_package(&broken).unwrap_err();
     assert!(matches!(err, AppError::ConfigMalformed { .. }), "{err:?}");
     assert_names(err, &["app.wgt", "config.xml", "line"]);
+}
+
+fn dev_server(url: &str, config: std::path::PathBuf) -> AppSource {
+    AppSource::DevServerUrl {
+        url: url.parse().unwrap(),
+        config,
+    }
+}
+
+#[test]
+fn a_dev_server_url_app_is_read_from_the_given_config_xml() {
+    // The bundler serves the start page, so no file needs to exist for it.
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("tizen-config.xml");
+    std::fs::copy(fixture("missing-entry-point").join("config.xml"), &config).unwrap();
+    let app = App::load(&dev_server("http://localhost:5173/", config)).unwrap();
+    assert_eq!(app.entry_point(), "main.html");
+    assert_eq!(
+        app.files(),
+        &AppFiles::Bundler("http://localhost:5173/".parse().unwrap())
+    );
+}
+
+#[test]
+fn a_dev_server_url_app_starts_at_its_content_src_below_the_url() {
+    let config = fixture("hello").join("config.xml");
+    let app = App::load(&dev_server("http://localhost:5173/", config.clone())).unwrap();
+    assert_eq!(app.entry_path(), "/index.html");
+    // The URL's path is the App's root folder, with or without a final `/`,
+    // and its query reaches the start page.
+    for url in [
+        "http://localhost:8080/tv/?mode=dev",
+        "http://localhost:8080/tv?mode=dev",
+    ] {
+        let app = App::load(&dev_server(url, config.clone())).unwrap();
+        assert_eq!(app.entry_path(), "/tv/index.html?mode=dev", "{url}");
+    }
+}
+
+#[test]
+fn a_dev_server_url_app_names_its_config_file_in_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("tizen-config.xml");
+    std::fs::write(&config, "<widget").unwrap();
+    let err = App::load(&dev_server("http://localhost:5173/", config)).unwrap_err();
+    assert!(err.to_string().contains("tizen-config.xml"), "{err}");
+
+    let err = App::load(&dev_server(
+        "http://localhost:5173/",
+        dir.path().join("absent.xml"),
+    ))
+    .unwrap_err();
+    assert!(matches!(err, AppError::ConfigMissing { .. }), "{err:?}");
+    assert!(err.to_string().contains("absent.xml"), "{err}");
+}
+
+#[test]
+fn only_http_dev_server_urls_are_supported() {
+    let config = fixture("hello").join("config.xml");
+    let err = App::load(&dev_server("https://localhost:5173/", config)).unwrap_err();
+    assert!(
+        matches!(err, AppError::DevServerUrlUnsupported { .. }),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("https://localhost:5173/"), "{err}");
 }

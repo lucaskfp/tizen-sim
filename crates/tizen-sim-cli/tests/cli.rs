@@ -169,3 +169,25 @@ fn map_key_rejects_unknown_keys() {
         assert!(stderr.contains(expected), "{mapping}: {stderr}");
     }
 }
+
+#[test]
+fn config_goes_with_a_dev_server_url_and_only_with_one() {
+    let config = format!("{}/config.xml", fixture("dev-server"));
+    for (args, expected) in [
+        (vec!["http://localhost:5173/"], "--config <CONFIG_XML>"),
+        (
+            vec![&fixture("hello") as &str, "--config", &config],
+            "--config only applies to a dev server URL",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tizen-sim"))
+            .arg("run")
+            .args(&args)
+            .arg("--headless")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?} was accepted");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+    }
+}

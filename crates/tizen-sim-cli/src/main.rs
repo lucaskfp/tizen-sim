@@ -26,8 +26,12 @@ enum Command {
 
 #[derive(Args)]
 struct RunArgs {
-    /// A Project Folder containing config.xml, or a Package (.wgt file).
-    app: PathBuf,
+    /// A Project Folder containing config.xml, a Package (.wgt file), or the
+    /// http:// URL of your bundler's dev server (with --config).
+    app: String,
+    /// The App's config.xml, for a dev server URL. Changing it restarts the App.
+    #[arg(long, value_name = "CONFIG_XML")]
+    config: Option<PathBuf>,
     /// Version Profile to use (defaults to the latest).
     #[arg(long)]
     profile: Option<String>,
@@ -57,8 +61,27 @@ impl RunArgs {
                 .insert(physical, remote.trim())
                 .with_context(|| format!("--map-key {mapping}"))?;
         }
+        let is_url = self.app.starts_with("http://") || self.app.starts_with("https://");
+        let source = match (is_url, self.config) {
+            (true, Some(config)) => AppSource::DevServerUrl {
+                url: self
+                    .app
+                    .parse()
+                    .with_context(|| format!("invalid dev server URL {}", self.app))?,
+                config,
+            },
+            (true, None) => {
+                bail!("a dev server URL needs the App's config.xml: --config <CONFIG_XML>")
+            }
+            (false, Some(_)) => {
+                bail!(
+                    "--config only applies to a dev server URL; a Project Folder or Package has its own"
+                )
+            }
+            (false, None) => AppSource::from_path(PathBuf::from(self.app)),
+        };
         Ok(SessionConfig {
-            source: AppSource::from_path(self.app),
+            source,
             profile: self.profile,
             headless: self.headless,
             lenient: self.lenient,
@@ -82,7 +105,7 @@ async fn main() -> Result<()> {
 
 async fn run(config: SessionConfig) -> Result<()> {
     let changed = match config.source {
-        AppSource::ProjectFolder(_) => "config.xml changed",
+        AppSource::ProjectFolder(_) | AppSource::DevServerUrl { .. } => "config.xml changed",
         AppSource::Package(_) => "The Package changed and was unpacked again",
     };
     let session = Session::start(config);
