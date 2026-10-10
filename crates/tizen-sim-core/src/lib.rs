@@ -12,6 +12,7 @@ pub mod network;
 pub mod profile;
 mod proxy;
 pub mod remote_keys;
+pub mod screen;
 pub mod session;
 mod session_dir;
 mod shim;

@@ -61,6 +61,10 @@ fn run_prints_lifecycle_and_console() {
         "{all}"
     );
     assert!(all.contains("Engine ready: Chrome/130."), "{all}");
+    assert!(
+        all.contains("DevTools: http://127.0.0.1:") && all.contains("/devtools/inspector.html?ws="),
+        "{all}"
+    );
     assert!(all.contains("[console.log] hello from fixture"), "{all}");
 }
 

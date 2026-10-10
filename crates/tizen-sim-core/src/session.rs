@@ -14,11 +14,14 @@ use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, PhysicalKey, RemoteKey};
+use crate::screen::{self, AppResolution};
 use crate::session_dir::SessionDir;
 use crate::shim;
 use crate::watcher::{Action, Batch, SourceWatcher};
+use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -39,6 +42,11 @@ pub struct SessionConfig {
     /// Per-Session overrides of the Version Profile's device values (model,
     /// DUID, network settings, ...), by name. Unknown names fail the start.
     pub device: serde_json::Map<String, Value>,
+    /// The TV screen size the App is laid out at.
+    pub resolution: AppResolution,
+    /// Start with the transparency checkerboard on (see
+    /// `Session::set_checkerboard`).
+    pub checkerboard: bool,
     pub home: Home,
 }
 
@@ -114,6 +122,9 @@ pub enum Lifecycle {
     EngineReady {
         engine_version: String,
         debugger_url: String,
+        /// The Engine's own bundled inspector for the App, to open in a
+        /// browser or with `Session::open_devtools`.
+        devtools_url: String,
     },
     AppLoaded {
         url: String,
@@ -164,6 +175,8 @@ pub enum SessionError {
     Exited,
     #[error("the App is not loaded yet")]
     NotLoaded,
+    #[error("could not open DevTools: {0}")]
+    DevTools(String),
     #[error("unknown Remote Key `{0}`")]
     UnknownRemoteKey(String),
     #[error(transparent)]
@@ -191,6 +204,10 @@ struct Inner {
     app_exit: OnceLock<mpsc::UnboundedSender<ExitReason>>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Whether the transparency checkerboard is on.
+    checkerboard: AtomicBool,
+    /// The DevTools window, closed when the Session ends.
+    devtools: tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
 /// What a Session can act on once its App has loaded.
@@ -203,6 +220,11 @@ struct Loaded {
     runs_in_background: AtomicBool,
     /// Whether the App is in the background.
     hidden: AtomicBool,
+    /// The Engine's executable, which also runs the DevTools window.
+    executable: PathBuf,
+    devtools_url: String,
+    /// The DevTools window's own Engine data.
+    devtools_data_dir: PathBuf,
 }
 
 impl Session {
@@ -215,6 +237,8 @@ impl Session {
             app_exit: OnceLock::new(),
             stop: Mutex::new(Some(stop_tx)),
             task: tokio::sync::Mutex::new(None),
+            checkerboard: AtomicBool::new(config.checkerboard),
+            devtools: tokio::sync::Mutex::new(None),
         });
         let task = tokio::spawn(run(config, inner.clone(), stop_rx));
         *inner.task.try_lock().expect("fresh mutex") = Some(task);
@@ -276,6 +300,65 @@ impl Session {
             repeat,
         )
         .await
+    }
+
+    /// A PNG of the App's screen at the TV's resolution, whatever the size of
+    /// the Engine window.
+    pub async fn screenshot(&self) -> Result<Vec<u8>, SessionError> {
+        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let shot = loaded
+            .cdp
+            .call("Page.captureScreenshot", json!({ "format": "png" }))
+            .await?;
+        base64::engine::general_purpose::STANDARD
+            .decode(shot["data"].as_str().unwrap_or_default())
+            .map_err(|e| {
+                SessionError::Cdp(CdpError::Protocol {
+                    method: "Page.captureScreenshot".into(),
+                    message: format!("the screenshot is not valid base64: {e}"),
+                })
+            })
+    }
+
+    /// Turns the transparency checkerboard on or off. A TV shows transparent
+    /// page areas black; the checkerboard shows instead, so the developer
+    /// can see where the page is transparent. It stays on across reloads.
+    pub async fn set_checkerboard(&self, on: bool) -> Result<(), SessionError> {
+        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        self.inner.checkerboard.store(on, Ordering::SeqCst);
+        screen::show_checkerboard(&loaded.cdp, on).await?;
+        Ok(())
+    }
+
+    /// The Engine's own bundled inspector for the App; `None` until the App
+    /// has loaded.
+    pub fn devtools_url(&self) -> Option<String> {
+        self.inner.loaded.get().map(|l| l.devtools_url.clone())
+    }
+
+    /// Opens DevTools for the App in a window of its own, run by the App's
+    /// Engine so its inspector matches the Engine's protocol. Does nothing
+    /// more while that window is open. Returns the inspector's address.
+    pub async fn open_devtools(&self) -> Result<String, SessionError> {
+        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let mut devtools = self.inner.devtools.lock().await;
+        if *self.inner.status.borrow() == Status::Exited {
+            return Err(SessionError::Exited);
+        }
+        let open = devtools
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        if !open {
+            let child = engine::open_window(
+                &loaded.executable,
+                &loaded.devtools_data_dir,
+                &loaded.devtools_url,
+            )
+            .await
+            .map_err(|e| SessionError::DevTools(e.to_string()))?;
+            *devtools = Some(child);
+        }
+        Ok(loaded.devtools_url.clone())
     }
 
     /// Brings a hidden App back to the foreground, as returning to it on a TV
@@ -366,6 +449,9 @@ async fn run(config: SessionConfig, inner: Arc<Inner>, mut stop: oneshot::Receiv
     stop_server(running.server).await;
     running.network.stop().await;
     inner.finish(reason);
+    // Dropping the DevTools window's process closes it. After `finish`, so
+    // `open_devtools` sees the Session has exited and opens no new one.
+    inner.devtools.lock().await.take();
 }
 
 impl Inner {
@@ -593,6 +679,16 @@ impl Inner {
         Ok(())
     }
 
+    /// Shows the checkerboard in a new document, if it is on.
+    async fn restore_checkerboard(&self, cdp: &Cdp) {
+        if !self.checkerboard.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Err(error) = screen::show_checkerboard(cdp, true).await {
+            tracing::warn!(%error, "could not show the checkerboard");
+        }
+    }
+
     fn publish_hot_reload(&self, event: HotReload) {
         self.log.publish(SessionEvent::HotReload(event));
     }
@@ -660,12 +756,13 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let network = NetworkProxy::start(app.access_policy().clone(), server.addr(), network_tx)
         .await
         .map_err(|e| format!("could not start the network proxy: {e}"))?;
-    let user_data_dir = config
+    let app_data_dir = config
         .home
         .state_dir()
         .join("engine-data")
-        .join(sanitize(app.id()))
-        .join(&profile.version);
+        .join(sanitize(app.id()));
+    let user_data_dir = app_data_dir.join(&profile.version);
+    let devtools_data_dir = app_data_dir.join(format!("{}-devtools", profile.version));
     let engine = engine::launch(
         &installed.executable,
         &LaunchOptions {
@@ -697,11 +794,15 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     cdp.call("Log.enable", json!({}))
         .await
         .map_err(|e| e.to_string())?;
+    screen::set_up(&cdp, config.resolution, !config.headless)
+        .await
+        .map_err(|e| format!("could not set up the TV screen: {e}"))?;
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::EngineReady {
             engine_version: engine.engine_version.clone(),
             debugger_url: engine.page_ws_url.clone(),
+            devtools_url: engine.devtools_url.clone(),
         }));
 
     // Watch before the first load, so no edit made once the App is up is missed.
@@ -717,6 +818,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     let url = server.url(&app.entry_path());
     let runs_in_background = app.runs_in_background();
+    let devtools_url = engine.devtools_url.clone();
     let mut running = Running {
         engine,
         server,
@@ -732,6 +834,8 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     load_page(&mut running, "Page.navigate", json!({ "url": url }))
         .await
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
+    // Later documents get it from `forward_events`, once the App has loaded.
+    inner.restore_checkerboard(&cdp).await;
 
     let _ = inner.loaded.set(Loaded {
         cdp,
@@ -739,6 +843,9 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         lenient: config.lenient,
         runs_in_background: AtomicBool::new(runs_in_background),
         hidden: AtomicBool::new(false),
+        executable: installed.executable.clone(),
+        devtools_url,
+        devtools_data_dir,
     });
     inner
         .log
@@ -945,6 +1052,10 @@ async fn forward_events(
             }
             "Page.loadEventFired" => {
                 let _ = loaded.send(());
+                if let Some(session) = inner.loaded.get() {
+                    let (inner, cdp) = (inner.clone(), session.cdp.clone());
+                    tokio::spawn(async move { inner.restore_checkerboard(&cdp).await });
+                }
             }
             _ => {}
         }

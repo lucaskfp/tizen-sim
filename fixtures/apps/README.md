@@ -13,6 +13,7 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `webapis-unprivileged`: loads `$WEBAPIS/webapis/webapis.js` without declaring any privilege.
 - `remote-keys`: declares `tv.inputdevice` and records every keydown `keyCode` in `window.keyLog` and every keyup `keyCode` in `window.keyUpLog`.
 - `background-support`: enables `background-support` with a `media` background category, so it keeps running while hidden.
+- `screen`: a page with no background and an opaque red 100x100 box at its top-left corner, so everything else is transparent.
 - `required-version-too-high`: declares `required_version="99.0"`, newer than any Version Profile.
 - `hot-reload`: loads `style.css` and `app.js`, which sets `window.scriptVersion`. Tests copy it to a temporary folder and edit the copy.
 - `dev-server`: an App for a stand-in bundler: `index.html` loads `app.js` as an ES module, which opens an HMR WebSocket and applies updates without reloading. Tests serve it from a fake dev server and copy its `config.xml` to edit it.

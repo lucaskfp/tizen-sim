@@ -151,7 +151,9 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
 
 ## Screen and media
 
-- **Resolution.** The App is 1920×1080 CSS px on all models, or 1280×720 on FHD TVs per the resolution guide. Larger content is scaled down. A custom width comes from the viewport meta. (TV: `guides/fundamentals/managing-screen-resolution.html`, `specifications/general-specifications.html`)
+- **Resolution.** The App is 1920×1080 CSS px on all models, or 1280×720 on FHD TVs per the resolution guide. Larger content is scaled down. A custom width comes from the viewport meta. The guide names `screen.width`/`height` and the system info `DISPLAY` property as how an App reads the resolution. (TV: `guides/fundamentals/managing-screen-resolution.html`, `specifications/general-specifications.html`)
+  - What `DISPLAY.resolutionWidth`/`Height` and `devicePixelRatio` report on an FHD TV is **unverified**.
+- **Transparent page areas** show black on a TV. That comes from the product spec (#23); no guide fetched so far states it. **Unverified.**
 - **AVPlay:**
   - States go NONE → IDLE (`open`) → READY (`prepare`) → PLAYING/PAUSED. `stop()` returns to IDLE; `close()` returns to NONE.
   - `setDisplayRect` always uses 1920×1080 coordinates.

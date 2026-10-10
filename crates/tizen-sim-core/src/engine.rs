@@ -313,6 +313,9 @@ pub struct RunningEngine {
     pub debug_port: u16,
     /// WebSocket URL of the Engine's initial page target.
     pub page_ws_url: String,
+    /// The Engine's own bundled inspector (DevTools), attached to that page.
+    /// Served by the Engine, so it speaks its protocol whatever its age.
+    pub devtools_url: String,
 }
 
 /// First launches of a freshly unpacked Engine can be slow (antivirus scans),
@@ -335,6 +338,11 @@ pub async fn launch(
             options.user_data_dir.display()
         ))
         .arg(format!("--remote-debugging-port={debug_port}"))
+        // The Engine's bundled inspector, served from the debugging port,
+        // may connect back to it (refused without this since Chromium M111).
+        .arg(format!(
+            "--remote-allow-origins=http://127.0.0.1:{debug_port}"
+        ))
         .args(["--no-first-run", "--no-default-browser-check"]);
     if let Some(proxy) = options.network_proxy {
         command
@@ -391,11 +399,13 @@ pub async fn launch(
             return Err(EngineError::DebugPortTimeout(STARTUP_TIMEOUT));
         }
         if let Some((engine_version, page_ws_url)) = discover(&http, &base).await {
+            let devtools_url = devtools_url(debug_port, &page_ws_url);
             return Ok(RunningEngine {
                 child,
                 engine_version,
                 debug_port,
                 page_ws_url,
+                devtools_url,
             });
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -423,6 +433,46 @@ async fn discover(http: &reqwest::Client, base: &str) -> Option<(String, String)
         version["Browser"].as_str()?.to_string(),
         page["webSocketDebuggerUrl"].as_str()?.to_string(),
     ))
+}
+
+/// The bundled inspector's address for a page target. `/json/list` gives it
+/// as `devtoolsFrontendUrl`, but with `localhost`, which isn't the origin the
+/// Engine allows (see `launch`).
+fn devtools_url(debug_port: u16, page_ws_url: &str) -> String {
+    let page = page_ws_url.rsplit('/').next().unwrap_or_default();
+    format!(
+        "http://127.0.0.1:{debug_port}/devtools/inspector.html?ws=127.0.0.1:{debug_port}/devtools/page/{page}"
+    )
+}
+
+/// Opens `url` in a window of its own, in a separate instance of the Engine
+/// at `executable` with its own data directory: the bundled inspector then
+/// runs on the Engine it came from, outside the App's network proxy. The
+/// window closes when the returned process is dropped.
+pub async fn open_window(
+    executable: &Path,
+    user_data_dir: &Path,
+    url: &str,
+) -> Result<tokio::process::Child, EngineError> {
+    tokio::fs::create_dir_all(user_data_dir)
+        .await
+        .map_err(io_err(user_data_dir))?;
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .arg(format!("--user-data-dir={}", user_data_dir.display()))
+        .args(["--no-first-run", "--no-default-browser-check"])
+        .arg(format!("--app={url}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    containment::die_with_parent(&mut command);
+    let child = command.spawn().map_err(|source| EngineError::Spawn {
+        path: executable.to_path_buf(),
+        source,
+    })?;
+    containment::tie_to_this_process(&child);
+    Ok(child)
 }
 
 /// Whether a running Engine holds the lock on its data directory.

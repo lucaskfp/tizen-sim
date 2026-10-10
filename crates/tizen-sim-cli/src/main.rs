@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::Write;
 use std::path::PathBuf;
 use tizen_sim_core::app::AppSource;
@@ -7,6 +7,7 @@ use tizen_sim_core::engine::DownloadProgress;
 use tizen_sim_core::home::Home;
 use tizen_sim_core::network::{NetworkRequest, Verdict};
 use tizen_sim_core::remote_keys::{KeyMap, PhysicalKey};
+use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{
     ExitReason, HotReload, KeyOutcome, Lifecycle, Session, SessionConfig, SessionEvent,
 };
@@ -52,6 +53,25 @@ struct RunArgs {
     /// (numbers, booleans) are taken as such; anything else is a string.
     #[arg(long = "device", value_name = "NAME=VALUE")]
     device: Vec<String>,
+    /// The TV screen size the App is laid out at: 1920x1080 as on UHD TVs,
+    /// or 1280x720 as on FHD TVs.
+    #[arg(long, value_enum, default_value = "1920x1080")]
+    resolution: Resolution,
+    /// Show a checkerboard where the page is transparent, instead of the
+    /// black a TV shows there.
+    #[arg(long)]
+    checkerboard: bool,
+    /// Open DevTools for the App once it has loaded.
+    #[arg(long)]
+    devtools: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Resolution {
+    #[value(name = "1920x1080")]
+    Uhd,
+    #[value(name = "1280x720")]
+    Fhd,
 }
 
 impl RunArgs {
@@ -102,6 +122,11 @@ impl RunArgs {
             lenient: self.lenient,
             key_map,
             device,
+            resolution: match self.resolution {
+                Resolution::Uhd => AppResolution::Uhd,
+                Resolution::Fhd => AppResolution::Fhd,
+            },
+            checkerboard: self.checkerboard,
             home: Home::from_env(),
         })
     }
@@ -115,11 +140,14 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Command::Run(args) => run(args.into_config()?).await,
+        Command::Run(args) => {
+            let devtools = args.devtools;
+            run(args.into_config()?, devtools).await
+        }
     }
 }
 
-async fn run(config: SessionConfig) -> Result<()> {
+async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
     let changed = match config.source {
         AppSource::ProjectFolder(_) | AppSource::DevServerUrl { .. } => "config.xml changed",
         AppSource::Package(_) => "The Package changed and was unpacked again",
@@ -152,11 +180,19 @@ async fn run(config: SessionConfig) -> Result<()> {
                         Lifecycle::Starting { app_id, profile } => {
                             println!("Starting {app_id} on Tizen {profile}");
                         }
-                        Lifecycle::EngineReady { engine_version, debugger_url } => {
+                        Lifecycle::EngineReady { engine_version, debugger_url, devtools_url } => {
                             println!("Engine ready: {engine_version}");
                             println!("  DevTools endpoint: {debugger_url}");
+                            println!("  DevTools: {devtools_url}");
                         }
-                        Lifecycle::AppLoaded { url } => println!("App loaded: {url} (Ctrl+C to stop)"),
+                        Lifecycle::AppLoaded { url } => {
+                            println!("App loaded: {url} (Ctrl+C to stop)");
+                            if open_devtools
+                                && let Err(error) = session.open_devtools().await
+                            {
+                                println!("[devtools] {error}");
+                            }
+                        }
                         Lifecycle::Hidden => println!("The App is hidden (in the background)."),
                         Lifecycle::Shown => println!("The App is back in the foreground."),
                         Lifecycle::Failed { error } => bail!(error),
