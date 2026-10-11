@@ -66,6 +66,10 @@ _Avoid_: polyfill, stub, mock, fake
 The simulator side that backs Shims needing state outside the page, such as files, registered keys or app exit.
 _Avoid_: backend, native side
 
+**Sandbox**:
+An App's directory on the developer's disk that stands in for the TV's storage of the App's files, under Tizen's virtual roots (`wgt-private`, `documents`, ...). It persists across Sessions until the App is reset.
+_Avoid_: app storage, data folder
+
 **Bridge**:
 The channel over which Shims and the Host talk.
 _Avoid_: IPC, RPC layer

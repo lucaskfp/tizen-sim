@@ -171,6 +171,10 @@ mod tests {
             on_3.absent
                 .contains(&"tizen.systeminfo.getDeviceUptime".to_string())
         );
-        assert!(ApiCatalog::bundled().for_version("10.0").absent.is_empty());
+        // The latest lacks only what was removed before it.
+        assert_eq!(
+            ApiCatalog::bundled().for_version("10.0").absent,
+            ["tizen.filesystem.resolve"]
+        );
     }
 }

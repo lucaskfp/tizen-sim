@@ -10,7 +10,8 @@
 #   releases, the deprecation notice included (TD
 #   reference/deprecation-policy.md); the reference says which ones.
 #
-# No Shimmed member is deprecated in the 9.0/10.0 references at present.
+# Of the Shimmed members, only tizen.filesystem's pre-5.0 ones are
+# deprecated, and no Version Profile falls in their deprecation window.
 #
 # "Since" versions come from each member's API reference ("Since: x.y"); the
 # references are cited per module.
@@ -81,3 +82,76 @@ since = "4.0"
 [[api]]
 name = "webapis.network.getWiFiFrequency"
 since = "6.0"
+
+# filesystem.html: the 5.0 rework adds the path-based methods and openFile
+# (9.0 TV reference, "Since: 5.0"), and deprecates resolve, and with it File
+# and FileStream (5.0 reference, "Deprecated. Since 5.0"). The 6.0 reference
+# no longer has them (4.0-10.0 references).
+[[api]]
+name = "tizen.filesystem.resolve"
+deprecated = "5.0"
+removed = "6.0"
+
+[[api]]
+name = "tizen.filesystem.openFile"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.createDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.deleteFile"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.deleteDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.copyFile"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.copyDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.moveFile"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.moveDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.rename"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.listDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.toURI"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.isFile"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.isDirectory"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.pathExists"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.getDirName"
+since = "5.0"
+
+[[api]]
+name = "tizen.filesystem.maxNameLength"
+since = "5.0"

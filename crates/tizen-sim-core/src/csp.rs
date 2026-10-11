@@ -26,6 +26,8 @@ pub struct ShimSources<'a> {
     pub script: &'a str,
     /// The Bridge's WebSocket URL, without its query.
     pub bridge: &'a str,
+    /// The Bridge's URL for the calls the page waits on, without its query.
+    pub bridge_http: &'a str,
 }
 
 /// The headers for `policy`'s pages; `None` in WARP mode.
@@ -65,6 +67,7 @@ fn allow_shims(policy: &str, shims: &ShimSources) -> String {
         ("script-src", shims.script),
         ("script-src-elem", shims.script),
         ("connect-src", shims.bridge),
+        ("connect-src", shims.bridge_http),
     ] {
         let at = match find(&directives, name) {
             Some(at) => at,
@@ -100,6 +103,7 @@ mod tests {
     const SHIMS: ShimSources = ShimSources {
         script: "http://127.0.0.1:1/boot.js",
         bridge: "ws://127.0.0.1:1/bridge",
+        bridge_http: "http://127.0.0.1:1/bridge",
     };
 
     fn csp(policy: Option<&str>, report_only: Option<&str>) -> AccessPolicy {
@@ -122,7 +126,7 @@ mod tests {
             page.enforced.as_deref(),
             Some(
                 "default-src 'none'; img-src *; script-src http://127.0.0.1:1/boot.js; \
-                 connect-src ws://127.0.0.1:1/bridge"
+                 connect-src ws://127.0.0.1:1/bridge http://127.0.0.1:1/bridge"
             )
         );
         assert_eq!(page.report_only, None);
@@ -152,7 +156,8 @@ mod tests {
             page.enforced.as_deref(),
             Some(
                 "default-src *; script-src 'self' http://127.0.0.1:1/boot.js; style-src 'self'; \
-                 object-src 'none'; connect-src * ws://127.0.0.1:1/bridge"
+                 object-src 'none'; connect-src * ws://127.0.0.1:1/bridge \
+                 http://127.0.0.1:1/bridge"
             )
         );
     }

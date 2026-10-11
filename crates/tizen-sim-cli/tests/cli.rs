@@ -413,3 +413,30 @@ fn with_several_sessions_commands_need_to_be_told_which() {
         let _ = owner.wait();
     }
 }
+
+#[test]
+fn reset_clears_what_the_app_stored() {
+    let home = tempfile::tempdir().unwrap();
+    let state = home.path().join("state");
+    let sandbox = state.join("sandboxes/Fixture013.Filesystem/wgt-private");
+    let engine_data = state.join("engine-data/Fixture013.Filesystem/10.0");
+    let other = state.join("sandboxes/Fixture001.Hello");
+    for dir in [&sandbox, &engine_data, &other] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(sandbox.join("state.json"), "{}").unwrap();
+
+    let reset = tizen_sim_in(home.path(), &["reset", &fixture("filesystem")]);
+    assert!(reset.status.success(), "{reset:?}");
+    assert!(
+        stdout_of(&reset).contains("Fixture013.Filesystem"),
+        "{reset:?}"
+    );
+    assert!(!state.join("sandboxes/Fixture013.Filesystem").exists());
+    assert!(!state.join("engine-data/Fixture013.Filesystem").exists());
+    assert!(other.exists(), "another App's data was cleared");
+
+    let again = tizen_sim_in(home.path(), &["reset", &fixture("filesystem")]);
+    assert!(again.status.success(), "{again:?}");
+    assert!(stdout_of(&again).contains("Nothing to reset"), "{again:?}");
+}

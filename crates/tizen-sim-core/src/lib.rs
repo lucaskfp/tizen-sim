@@ -16,6 +16,7 @@ pub mod profile;
 mod proxy;
 pub mod registry;
 pub mod remote_keys;
+pub mod sandbox;
 pub mod screen;
 pub mod session;
 mod session_dir;

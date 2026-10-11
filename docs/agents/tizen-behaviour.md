@@ -150,6 +150,20 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
   - `getTVName` exists since 4.0 and `getWiFiFrequency` since 6.0. The setters (`setIp`, `setSubnetMask`, `setGateway`, `setDns`, `setIpMode`) and the proxy methods are for B2B products only, so a TV has none of them.
   - `NetworkIpMode`'s descriptions conflict (DYNAMIC is described as IPv6, AUTO as IPv4 DHCP): **docs conflict**.
 
+## File system
+
+Sources: `filesystem.html` in the 4.0 TV reference (before the 5.0 rework), the 5.0 one (deprecations) and the 9.0 one (after it); TD `guides/data/file-system.md`.
+
+- **Two shapes.** Up to 4.0, `tizen.filesystem.resolve()` hands out `File` objects, and `File.openStream()` hands out `FileStream`s. 5.0 adds `openFile()`/`FileHandle` and path-based methods (`createDirectory`, `copyFile`, `listDirectory`, `pathExists`, ...), and deprecates `resolve`, `File` and `FileStream`. The 6.0 reference no longer has them. `getStorage`, `listStorages` and the storage listeners exist throughout.
+- **Virtual roots.** Paths are `<root>/<path>`. The roots are `documents`, `downloads`, `images`, `music`, `videos`, `camera`, `wgt-package` (the App's files, read-only), `wgt-private` and `wgt-private-tmp`. `ringtones` isn't supported on TV (file-system guide). File URIs and absolute paths are also accepted on a TV.
+  - tizen-sim keeps each App in its Sandbox, so paths outside the roots fail and raise the `filesystem-outside-sandbox` Diagnostic.
+- **`wgt-private-tmp`** holds data "available during a widget execution cycle" and "can be removed" when the App closes (4.0 `resolve`). tizen-sim empties it when a Session starts.
+- **Privileges.** Each method names `filesystem.read` and/or `filesystem.write`. `openFile` needs write for modes `a`, `rw`, `rwo`, `w` and read for `r`, `rw`, `rwo`. From 5.0, the reference adds that internal storage needs `mediastorage` (external storage needs `externalstorage`). tizen-sim applies that to the media roots, not to `wgt-*`. That this is where the line falls is **unverified**.
+- **`resolve(location, ..., mode)`:** `mode` defaults to `rw`. A writable mode on a read-only root goes to the error callback as `InvalidValuesError`, and an unknown location as `NotFoundError`.
+- **`openFile` modes.** `r` and `rw` throw `NotFoundError` for a missing file. `w` and `rwo` create or empty it, and `a` creates it and always writes at the end. `makeParents` defaults to true.
+- **Unverified:** whether a legacy `openStream('w')` empties the file; what reading a write-only stream throws (tizen-sim throws `IOError`); which labels `listStorages` reports (tizen-sim reports the virtual roots); `maxNameLength` 255 and `maxPathLength` 4096 come from the reference's examples.
+- **`toURI`** returns a `file://` URI on a TV. A page served over HTTP can't load one, so tizen-sim returns its dev server's URL for the file.
+
 ## Screen and media
 
 - **Resolution.** The App is 1920×1080 CSS px on all models, or 1280×720 on FHD TVs per the resolution guide. Larger content is scaled down. A custom width comes from the viewport meta. The guide names `screen.width`/`height` and the system info `DISPLAY` property as how an App reads the resolution. (TV: `guides/fundamentals/managing-screen-resolution.html`, `specifications/general-specifications.html`)

@@ -19,8 +19,8 @@ When the generic Tizen docs and the Samsung TV guides disagree, the TV guide des
 ## Tizen Web Device API reference
 
 - **Path pattern:** `docs/application/web/api/<version>/device_api/tv/tizen/<module>.html` in tizen-docs.
-  - Versions in the repo: 6.5, 7.0, 8.0, 9.0. `latest` is a symlink to a missing `10.0` folder, so guide links to `api/latest/...` are broken.
-  - Use 9.0 there, or samsungtizenos.com for 10.0.
+  - Versions in the repo: 4.0 to 10.0 (4.0, 5.0 and 5.5 also carry the `device_api/device` references). Guide links to `api/latest/...` are broken.
+  - Pre-5.0 shapes of an API are in the 4.0 folder; "Deprecated. Since x.y" notes are in the version that deprecated a member.
 - **Anchors** look like `#Interface::member`, e.g. `tvinputdevice.html#TVInputDeviceManager::getKey`.
 
 | Module | Page | Notes |

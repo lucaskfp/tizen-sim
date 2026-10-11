@@ -65,6 +65,7 @@ async fn start_proxy(
         token: "token".into(),
         profile: profile(milestone),
         access_policy: crate::app::AccessPolicy::Warp(vec![]),
+        sandbox_dir: std::env::temp_dir().join("tizen-sim-test-sandbox"),
     };
     let server = DevServer::start(&AppFiles::Bundler(bundler.clone()), setup, bridge)
         .await

@@ -8,7 +8,8 @@ use crate::csp::{self, PageCsp, ShimSources};
 use crate::es_modules::{ES_MODULES_MILESTONE, needs_es_modules};
 use crate::profile::VersionProfile;
 use crate::proxy;
-use crate::shim::{self, BOOTSTRAP_PATH, BRIDGE_PATH};
+use crate::sandbox::Sandbox;
+use crate::shim::{self, BOOTSTRAP_PATH, BRIDGE_PATH, SANDBOX_PATH};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
 use axum::http::{StatusCode, header};
@@ -42,6 +43,8 @@ pub struct ServerSetup {
     pub profile: &'static VersionProfile,
     /// The App's Access Policy, whose CSP the documents get in CSP mode.
     pub access_policy: AccessPolicy,
+    /// The App's Sandbox (`Home::sandbox_dir`).
+    pub sandbox_dir: PathBuf,
 }
 
 pub struct DevServer {
@@ -66,6 +69,7 @@ struct ServerState {
     /// Carries the page's messages, and the dev server's own Diagnostics.
     bridge: mpsc::UnboundedSender<BridgeMessage>,
     profile: &'static VersionProfile,
+    sandbox_dir: PathBuf,
     /// Set once the ES modules Diagnostic has been raised.
     modules_diagnosed: AtomicBool,
     http: reqwest::Client,
@@ -89,12 +93,22 @@ impl DevServer {
             token: setup.token,
             bridge,
             profile: setup.profile,
+            sandbox_dir: setup.sandbox_dir.clone(),
             modules_diagnosed: AtomicBool::new(false),
             http: proxy::client(),
         });
         let router = axum::Router::new()
             .route(BOOTSTRAP_PATH, get(serve_bootstrap))
-            .route(BRIDGE_PATH, get(open_bridge))
+            .route(BRIDGE_PATH, get(open_bridge).post(call_host))
+            .nest(
+                SANDBOX_PATH,
+                axum::Router::new()
+                    .fallback_service(ServeDir::new(&setup.sandbox_dir))
+                    .layer(axum::middleware::from_fn_with_state(
+                        state.clone(),
+                        require_token,
+                    )),
+            )
             .fallback(serve_app)
             .with_state(state.clone());
         let (shutdown, shutdown_rx) = oneshot::channel::<()>();
@@ -224,6 +238,7 @@ fn page_csp(policy: &AccessPolicy, addr: SocketAddr) -> Option<PageCsp> {
         &ShimSources {
             script: &format!("http://{addr}{BOOTSTRAP_PATH}"),
             bridge: &format!("ws://{addr}{BRIDGE_PATH}"),
+            bridge_http: &format!("http://{addr}{BRIDGE_PATH}"),
         },
     )
 }
@@ -292,6 +307,20 @@ fn html_document(root: &Path, uri_path: &str) -> Option<PathBuf> {
     (is_html && file.is_file()).then_some(file)
 }
 
+/// Lets only the page, which has the Session's token, read the Sandbox: it
+/// holds the App's private files.
+async fn require_token(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<HashMap<String, String>>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if query.get("token") != Some(&state.token) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(request).await
+}
+
 async fn open_bridge(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<HashMap<String, String>>,
@@ -303,8 +332,54 @@ async fn open_bridge(
     upgrade.on_upgrade(move |socket| run_bridge(socket, state))
 }
 
-/// The page only sends notifications so far; replies come with the first API
-/// that needs a result from the Host.
+/// A call the page waits on (ADR-0008): a JSON-RPC 2.0 request, answered
+/// with its result or with the WebAPI error to raise, named in the error's
+/// `data.name`.
+async fn call_host(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<HashMap<String, String>>,
+    body: String,
+) -> Response {
+    if query.get("token") != Some(&state.token) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Ok(request) = serde_json::from_str::<Value>(&body) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let id = request["id"].clone();
+    let method = request["method"].as_str().unwrap_or_default().to_string();
+    let params = request["params"].clone();
+    let package = match &*state.files.read().unwrap() {
+        AppFiles::Folder(root) => Some(root.clone()),
+        AppFiles::Bundler(_) => None,
+    };
+    let sandbox = Sandbox::new(state.sandbox_dir.clone(), package);
+    let outcome = tokio::task::spawn_blocking(move || match method.strip_prefix("filesystem.") {
+        Some(call) => sandbox.call(call, &params),
+        None => Err(crate::sandbox::SandboxError {
+            name: "NotSupportedError",
+            message: format!("the Host has no {method}"),
+        }),
+    })
+    .await;
+    let reply = match outcome {
+        Ok(Ok(result)) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Ok(Err(error)) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32000, "message": error.message, "data": { "name": error.name } },
+        }),
+        Err(panic) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32603, "message": panic.to_string(), "data": { "name": "UnknownError" } },
+        }),
+    };
+    ([(header::CACHE_CONTROL, "no-store")], axum::Json(reply)).into_response()
+}
+
+/// The page's notifications; the calls it waits on come as `POST`s instead
+/// (`call_host`).
 async fn run_bridge(mut socket: WebSocket, state: Arc<ServerState>) {
     while let Some(Ok(message)) = socket.recv().await {
         let Message::Text(text) = message else {

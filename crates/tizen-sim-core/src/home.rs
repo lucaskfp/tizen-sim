@@ -49,6 +49,17 @@ impl Home {
     pub fn state_dir(&self) -> &Path {
         &self.state
     }
+
+    /// Where an App's Engine data lives (one directory per Version
+    /// Profile): its web storage, IndexedDB and cookies.
+    pub fn engine_data_dir(&self, app_id: &str) -> PathBuf {
+        self.state.join("engine-data").join(app_file_name(app_id))
+    }
+
+    /// An App's Sandbox: its files under Tizen's virtual roots.
+    pub fn sandbox_dir(&self, app_id: &str) -> PathBuf {
+        self.state.join("sandboxes").join(app_file_name(app_id))
+    }
 }
 
 /// An App id made safe to use as a file or directory name.

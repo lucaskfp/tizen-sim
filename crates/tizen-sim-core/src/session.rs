@@ -896,6 +896,10 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         check_reachable(bundler).await?;
     }
 
+    let sandbox_dir = config.home.sandbox_dir(app.id());
+    crate::sandbox::Sandbox::new(sandbox_dir.clone(), None)
+        .start_session()
+        .map_err(|e| format!("could not prepare the App's Sandbox: {e}"))?;
     let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
     let (app_exit_tx, app_exit) = mpsc::unbounded_channel();
     let _ = inner.app_exit.set(app_exit_tx);
@@ -912,6 +916,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         token: fresh_token()?,
         profile,
         access_policy: app.access_policy().clone(),
+        sandbox_dir,
     };
     let server = DevServer::start(app.files(), setup, bridge_tx)
         .await
@@ -921,11 +926,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let network = NetworkProxy::start(app.access_policy().clone(), server.addr(), network_tx)
         .await
         .map_err(|e| format!("could not start the network proxy: {e}"))?;
-    let app_data_dir = config
-        .home
-        .state_dir()
-        .join("engine-data")
-        .join(crate::home::app_file_name(app.id()));
+    let app_data_dir = config.home.engine_data_dir(app.id());
     let user_data_dir = app_data_dir.join(&profile.version);
     let devtools_data_dir = app_data_dir.join(format!("{}-devtools", profile.version));
     let engine = engine::launch(
@@ -1266,6 +1267,9 @@ async fn forward_events(
             }
             "Log.entryAdded" => {
                 let entry = &params["entry"];
+                if deprecates_shims(entry, &entry["stackTrace"]["callFrames"]) {
+                    continue;
+                }
                 inner.log.publish(SessionEvent::Console(ConsoleMessage {
                     level: entry["level"].as_str().unwrap_or("info").to_string(),
                     text: entry["text"].as_str().unwrap_or_default().to_string(),
@@ -1273,6 +1277,9 @@ async fn forward_events(
             }
             "Console.messageAdded" => {
                 let message = &params["message"];
+                if deprecates_shims(message, &message["stackTrace"]) {
+                    continue;
+                }
                 inner.log.publish(SessionEvent::Console(ConsoleMessage {
                     level: message["level"].as_str().unwrap_or("log").to_string(),
                     text: message["text"].as_str().unwrap_or_default().to_string(),
@@ -1288,6 +1295,17 @@ async fn forward_events(
             _ => {}
         }
     }
+}
+
+/// Whether an Engine message is a deprecation notice about the Shims' own
+/// code, such as M47's about the Bridge's synchronous requests (ADR-0008).
+/// The App didn't cause it and can't act on it.
+fn deprecates_shims(message: &Value, frames: &Value) -> bool {
+    let in_shims = |url: &Value| {
+        url.as_str()
+            .is_some_and(|url| url.ends_with(shim::BOOTSTRAP_PATH))
+    };
+    message["source"] == "deprecation" && (in_shims(&message["url"]) || in_shims(&frames[0]["url"]))
 }
 
 /// Renders console arguments the way DevTools' console line would.

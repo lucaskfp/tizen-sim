@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://example.com/filesystem" version="1.0.0">
+    <tizen:application id="Fixture013.Filesystem" package="Fixture013" required_version="2.3"/>
+    <content src="index.html"/>
+    <name>Filesystem fixture</name>
+    <tizen:profile name="tv"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+    <tizen:privilege name="http://tizen.org/privilege/mediastorage"/>
+</widget>

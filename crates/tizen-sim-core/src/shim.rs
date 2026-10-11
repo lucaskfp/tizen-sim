@@ -12,8 +12,12 @@ const SHIM_BUNDLE: &str = include_str!("../../../shims/dist/tizen-sim-shims.js")
 
 /// Where the dev server serves the bootstrap script.
 pub const BOOTSTRAP_PATH: &str = "/__tizen-sim/bootstrap.js";
-/// Where the dev server accepts the Bridge WebSocket.
+/// Where the dev server accepts the Bridge: the WebSocket for the page's
+/// notifications, and `POST`s for the calls the page waits on (ADR-0008).
 pub const BRIDGE_PATH: &str = "/__tizen-sim/bridge";
+/// Where the dev server serves the files of the App's Sandbox, by virtual
+/// path, so the URIs `tizen.filesystem` hands out load in the page.
+pub const SANDBOX_PATH: &str = "/__tizen-sim/sandbox";
 /// The script that gives a page the Samsung Product API, as Apps reference it
 /// (samsung-product-api-references.html). Relative references resolve below
 /// any directory, so the dev server answers it at every path depth.
@@ -53,6 +57,7 @@ pub fn session_data(
         .collect();
     json!({
         "lenient": lenient,
+        "sandboxPath": SANDBOX_PATH,
         "keyMap": key_map.to_json(),
         "screen": { "width": width, "height": height },
         "app": {

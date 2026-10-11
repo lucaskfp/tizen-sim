@@ -30,6 +30,8 @@ interface ProfileConfig {
 
 interface SimConfig {
   bridgeUrl: string;
+  // Where the dev server serves the files of the App's Sandbox.
+  sandboxPath: string;
   lenient: boolean;
   // The App's screen size in CSS px.
   screen: { width: number; height: number };

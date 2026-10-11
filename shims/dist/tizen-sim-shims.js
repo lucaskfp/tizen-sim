@@ -5,6 +5,8 @@ var config = window.__TIZEN_SIM__;
 var bridge = (function () {
     var queue = [];
     var socket = null;
+    var callUrl = config.bridgeUrl.replace(/^ws:/, "http:");
+    var lastCallId = 0;
     function connect() {
         socket = new WebSocket(config.bridgeUrl);
         socket.onopen = function () {
@@ -30,6 +32,25 @@ var bridge = (function () {
     return {
         notify: function (method, params) {
             send(JSON.stringify({ jsonrpc: "2.0", method: method, params: params || {} }));
+        },
+        call: function (method, params) {
+            var request = new XMLHttpRequest();
+            request.open("POST", callUrl, false);
+            request.setRequestHeader("Content-Type", "text/plain");
+            try {
+                request.send(JSON.stringify({ jsonrpc: "2.0", id: ++lastCallId, method: method, params: params }));
+            }
+            catch (e) {
+                throw new WebAPIException("UnknownError", "The simulator did not answer " + method + ": " + e);
+            }
+            if (request.status !== 200) {
+                throw new WebAPIException("UnknownError", "The simulator refused " + method + " (HTTP " + request.status + ")");
+            }
+            var reply = JSON.parse(request.responseText);
+            if (reply.error) {
+                throw new WebAPIException((reply.error.data && reply.error.data.name) || "UnknownError", reply.error.message);
+            }
+            return reply.result;
         },
     };
 })();
@@ -559,6 +580,994 @@ function onKeyUp(e) {
 }
 window.addEventListener("keydown", onKeyDown, true);
 window.addEventListener("keyup", onKeyUp, true);
+var FS_READ_PRIVILEGE = "http://tizen.org/privilege/filesystem.read";
+var FS_WRITE_PRIVILEGE = "http://tizen.org/privilege/filesystem.write";
+var MEDIA_STORAGE_PRIVILEGE = "http://tizen.org/privilege/mediastorage";
+var VIRTUAL_ROOTS = [
+    "documents",
+    "downloads",
+    "images",
+    "music",
+    "videos",
+    "camera",
+    "wgt-package",
+    "wgt-private",
+    "wgt-private-tmp",
+];
+var MEDIA_ROOTS = ["documents", "downloads", "images", "music", "videos", "camera"];
+var PACKAGE_ROOT = "wgt-package";
+function contains(list, value) {
+    for (var i = 0; i < list.length; i++) {
+        if (list[i] === value) {
+            return true;
+        }
+    }
+    return false;
+}
+function parseVirtualPath(path) {
+    if (typeof path !== "string") {
+        return null;
+    }
+    var all = path.split("/");
+    var parts = [];
+    for (var i = 0; i < all.length; i++) {
+        if (all[i] === "." || all[i] === "..") {
+            return null;
+        }
+        if (all[i] !== "") {
+            parts.push(all[i]);
+        }
+    }
+    if (path.charAt(0) === "/" || !parts.length || !contains(VIRTUAL_ROOTS, parts[0])) {
+        return null;
+    }
+    return { root: parts[0], parts: parts.slice(1), full: parts.join("/") };
+}
+function requireVirtualPath(path, api, errorName) {
+    var parsed = parseVirtualPath(path);
+    if (parsed) {
+        return parsed;
+    }
+    var text = String(path);
+    if (text.charAt(0) === "/" || /^file:/i.test(text)) {
+        raiseDiagnostic("filesystem-outside-sandbox", api + " was given " + text + ", which is outside Tizen's virtual roots. A TV can reach such paths, " +
+            "but the simulator keeps each App in its Sandbox, so here the call fails. Use a virtual root such as " +
+            "wgt-private instead.");
+    }
+    throw new WebAPIException(errorName, text + " is not a valid path");
+}
+function parentPath(path) {
+    if (!path.parts.length) {
+        return null;
+    }
+    return parseVirtualPath(path.full.slice(0, path.full.lastIndexOf("/")));
+}
+function childPath(path, relative, errorName) {
+    return requireVirtualPath(path.full + "/" + relative, "tizen.filesystem", errorName);
+}
+function requireStorageAccess(path, api) {
+    if (contains(MEDIA_ROOTS, path.root) && parseFloat(config.profile.version) >= 5) {
+        requirePrivilege(MEDIA_STORAGE_PRIVILEGE, api);
+    }
+}
+function sandboxCall(method, params) {
+    return bridge.call("filesystem." + method, params);
+}
+function statOrNull(path) {
+    try {
+        return sandboxCall("stat", { path: path.full });
+    }
+    catch (e) {
+        if (e instanceof WebAPIException && e.name === "NotFoundError") {
+            return null;
+        }
+        throw e;
+    }
+}
+function fileUrl(path) {
+    var encoded = [];
+    for (var i = 0; i < path.parts.length; i++) {
+        encoded.push(encodeURIComponent(path.parts[i]));
+    }
+    var origin = location.protocol + "//" + location.host;
+    if (path.root === PACKAGE_ROOT) {
+        return origin + "/" + encoded.join("/");
+    }
+    var token = config.bridgeUrl.slice(config.bridgeUrl.indexOf("?"));
+    return origin + config.sandboxPath + "/" + path.root + (encoded.length ? "/" + encoded.join("/") : "") + token;
+}
+function runLater(work, succeed, onerror) {
+    setTimeout(function () {
+        var result;
+        try {
+            result = work();
+        }
+        catch (e) {
+            if (!(e instanceof WebAPIException)) {
+                throw e;
+            }
+            if (typeof onerror === "function") {
+                onerror(new WebAPIError(e.name, e.message));
+            }
+            return;
+        }
+        succeed(result);
+    }, 0);
+}
+function callIfFunction(callback, args) {
+    if (typeof callback === "function") {
+        callback.apply(null, args);
+    }
+}
+function encodingName(encoding) {
+    if (encoding === undefined || encoding === null) {
+        return "UTF-8";
+    }
+    var name = String(encoding).toUpperCase();
+    if (name === "UTF-8" || name === "UTF8") {
+        return "UTF-8";
+    }
+    if (name === "ISO-8859-1" || name === "LATIN1") {
+        return "ISO-8859-1";
+    }
+    return null;
+}
+function encodeText(text, encoding) {
+    var bytes = [];
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i);
+        if (encoding === "ISO-8859-1") {
+            bytes.push(code < 256 ? code : 63);
+            continue;
+        }
+        if (code >= 0xd800 && code < 0xdc00 && i + 1 < text.length) {
+            var low = text.charCodeAt(i + 1);
+            if (low >= 0xdc00 && low < 0xe000) {
+                code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                i++;
+            }
+        }
+        if (code < 0x80) {
+            bytes.push(code);
+        }
+        else if (code < 0x800) {
+            bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+        }
+        else if (code < 0x10000) {
+            bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+        }
+        else {
+            bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+        }
+    }
+    return bytes;
+}
+function decodeText(bytes, encoding, maxChars) {
+    var text = "";
+    var chars = 0;
+    var i = 0;
+    while (i < bytes.length && (maxChars === null || chars < maxChars)) {
+        var first = bytes[i];
+        if (encoding === "ISO-8859-1" || first < 0x80) {
+            text += String.fromCharCode(first);
+            i++;
+            chars++;
+            continue;
+        }
+        var length = first >= 0xf0 ? 4 : first >= 0xe0 ? 3 : first >= 0xc0 ? 2 : 0;
+        if (length && i + length > bytes.length) {
+            break;
+        }
+        var code = length === 4 ? first & 7 : length === 3 ? first & 15 : first & 31;
+        for (var k = 1; k < length; k++) {
+            if ((bytes[i + k] & 0xc0) !== 0x80) {
+                length = 0;
+                break;
+            }
+            code = (code << 6) | (bytes[i + k] & 63);
+        }
+        if (!length) {
+            text += "�";
+            i++;
+        }
+        else {
+            if (code >= 0x10000) {
+                code -= 0x10000;
+                text += String.fromCharCode(0xd800 + (code >> 10), 0xdc00 + (code & 1023));
+            }
+            else {
+                text += String.fromCharCode(code);
+            }
+            i += length;
+        }
+        chars++;
+    }
+    return { text: text, bytes: i };
+}
+function bytesToBase64(bytes) {
+    var binary = "";
+    for (var i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i] & 255);
+    }
+    return btoa(binary);
+}
+function base64ToBytes(base64) {
+    var binary = atob(base64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+function readBytes(path, offset, length) {
+    var params = { path: path.full, offset: offset };
+    if (length !== null) {
+        params.length = length;
+    }
+    return base64ToBytes(sandboxCall("read", params).data);
+}
+function writeBytes(path, offset, bytes) {
+    return sandboxCall("write", { path: path.full, offset: offset, data: bytesToBase64(bytes) }).size;
+}
+function nameMatches(name, pattern) {
+    var source = "";
+    for (var i = 0; i < pattern.length; i++) {
+        var c = pattern.charAt(i);
+        if (c === "\\" && pattern.charAt(i + 1) === "%") {
+            source += "%";
+            i++;
+        }
+        else if (c === "%") {
+            source += ".*";
+        }
+        else {
+            source += c.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+        }
+    }
+    return new RegExp("^" + source + "$", "i").test(name);
+}
+function dateMatches(time, start, end) {
+    if (start instanceof Date && (time === null || time < start.getTime())) {
+        return false;
+    }
+    return !(end instanceof Date && (time === null || time > end.getTime()));
+}
+function filterMatches(entry, filter) {
+    if (!filter) {
+        return true;
+    }
+    if (filter.name !== undefined && filter.name !== null && !nameMatches(entry.name || "", String(filter.name))) {
+        return false;
+    }
+    if (typeof filter.isFile === "boolean" && filter.isFile !== (entry.kind === "file")) {
+        return false;
+    }
+    if (typeof filter.isDirectory === "boolean" && filter.isDirectory !== (entry.kind === "directory")) {
+        return false;
+    }
+    return (dateMatches(entry.modified, filter.startModified, filter.endModified) &&
+        dateMatches(entry.created, filter.startCreated, filter.endCreated));
+}
+function listDirectoryEntries(path, filter) {
+    var entries = sandboxCall("list", { path: path.full });
+    var matching = [];
+    for (var i = 0; i < entries.length; i++) {
+        if (filterMatches(entries[i], filter)) {
+            matching.push(entries[i]);
+        }
+    }
+    return matching;
+}
+var nextStorageListenerId = 1;
+function storages() {
+    var list = [];
+    for (var i = 0; i < VIRTUAL_ROOTS.length; i++) {
+        list.push({ label: VIRTUAL_ROOTS[i], type: "INTERNAL", state: "MOUNTED" });
+    }
+    return list;
+}
+var storageMethods = {
+    maxPathLength: 4096,
+    getStorage: function (label, onsuccess, onerror) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.getStorage");
+        requireFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        runLater(function () {
+            var all = storages();
+            for (var i = 0; i < all.length; i++) {
+                if (all[i].label === String(label)) {
+                    return all[i];
+                }
+            }
+            throw new WebAPIException("NotFoundError", "No storage is labelled " + label);
+        }, onsuccess, onerror);
+    },
+    listStorages: function (onsuccess, onerror) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.listStorages");
+        requireFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        runLater(storages, onsuccess, onerror);
+    },
+    addStorageStateChangeListener: function (onsuccess, onerror) {
+        requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem.addStorageStateChangeListener");
+        requireFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        return nextStorageListenerId++;
+    },
+    removeStorageStateChangeListener: function (watchId) {
+        requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem.removeStorageStateChangeListener");
+    },
+};
+function createFilesystem() {
+    var filesystem = {};
+    var groups = [storageMethods, fileApiMethods, pathApiMethods];
+    for (var g = 0; g < groups.length; g++) {
+        var methods = groups[g];
+        for (var name in methods) {
+            if (methods.hasOwnProperty(name) && available("tizen.filesystem." + name)) {
+                filesystem[name] = methods[name];
+            }
+        }
+    }
+    return filesystem;
+}
+var FILE_MODES = ["a", "r", "rw", "w"];
+function requireFileMode(mode) {
+    if (!contains(FILE_MODES, mode)) {
+        throw new WebAPIException("TypeMismatchError", "mode must be one of a, r, rw, w");
+    }
+    return mode;
+}
+function fileObject(path, mode, stat) {
+    var isDirectory = stat.kind === "directory";
+    var parent = parentPath(path);
+    var current = function () {
+        return sandboxCall("stat", { path: path.full });
+    };
+    var file = {
+        get parent() {
+            if (!parent) {
+                return null;
+            }
+            return fileObject(parent, mode, sandboxCall("stat", { path: parent.full }));
+        },
+        readOnly: stat.readOnly,
+        isFile: !isDirectory,
+        isDirectory: isDirectory,
+        created: stat.created === null ? null : new Date(stat.created),
+        get modified() {
+            var modified = current().modified;
+            return modified === null ? null : new Date(modified);
+        },
+        path: parent ? parent.full + "/" : path.root,
+        name: path.parts.length ? path.parts[path.parts.length - 1] : "",
+        fullPath: path.full,
+        get fileSize() {
+            return isDirectory ? undefined : current().size;
+        },
+        get length() {
+            return isDirectory ? current().entries : undefined;
+        },
+        toURI: function () {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem File.toURI");
+            return fileUrl(path);
+        },
+        listFiles: function (onsuccess, onerror, filter) {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem File.listFiles");
+            requireFunction(onsuccess, "onsuccess");
+            requireOptionalFunction(onerror, "onerror");
+            runLater(function () {
+                requireDirectory();
+                var entries = listDirectoryEntries(path, filter);
+                var files = [];
+                for (var i = 0; i < entries.length; i++) {
+                    files.push(fileObject(childPath(path, entries[i].name || "", "IOError"), mode, entries[i]));
+                }
+                return files;
+            }, onsuccess, onerror);
+        },
+        openStream: function (streamMode, onsuccess, onerror, encoding) {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem File.openStream");
+            requireFileMode(streamMode);
+            requireFunction(onsuccess, "onsuccess");
+            requireOptionalFunction(onerror, "onerror");
+            runLater(function () {
+                var name = encodingName(encoding);
+                if (!name) {
+                    throw new WebAPIException("InvalidValuesError", "Unsupported encoding: " + encoding);
+                }
+                var now = statOrNull(path);
+                if (!now || now.kind !== "file") {
+                    throw new WebAPIException("IOError", path.full + " is not an existing file");
+                }
+                if (streamMode === "w") {
+                    sandboxCall("createFile", { path: path.full, ifExists: "truncate" });
+                }
+                return fileStream(path, streamMode, name);
+            }, onsuccess, onerror);
+        },
+        readAsText: function (onsuccess, onerror, encoding) {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem File.readAsText");
+            requireFunction(onsuccess, "onsuccess");
+            requireOptionalFunction(onerror, "onerror");
+            runLater(function () {
+                var name = encodingName(encoding);
+                if (!name) {
+                    throw new WebAPIException("InvalidValuesError", "Unsupported encoding: " + encoding);
+                }
+                if (isDirectory) {
+                    throw new WebAPIException("IOError", path.full + " is a directory");
+                }
+                return decodeText(readBytes(path, 0, null), name, null).text;
+            }, onsuccess, onerror);
+        },
+        copyTo: function (origin, destination, overwrite, onsuccess, onerror) {
+            transferFrom("copy", "File.copyTo", origin, destination, overwrite, onsuccess, onerror);
+        },
+        moveTo: function (origin, destination, overwrite, onsuccess, onerror) {
+            transferFrom("move", "File.moveTo", origin, destination, overwrite, onsuccess, onerror);
+        },
+        createDirectory: function (dirPath) {
+            requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem File.createDirectory");
+            requireDirectory();
+            var child = childPath(path, dirPath, "InvalidValuesError");
+            sandboxCall("createDirectory", { path: child.full, makeParents: true });
+            return fileObject(child, mode, sandboxCall("stat", { path: child.full }));
+        },
+        createFile: function (relativeFilePath) {
+            requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem File.createFile");
+            requireDirectory();
+            var child = childPath(path, relativeFilePath, "InvalidValuesError");
+            try {
+                sandboxCall("createFile", { path: child.full });
+            }
+            catch (e) {
+                if (e instanceof WebAPIException && e.name === "NotFoundError") {
+                    throw new WebAPIException("IOError", e.message);
+                }
+                throw e;
+            }
+            return fileObject(child, mode, sandboxCall("stat", { path: child.full }));
+        },
+        resolve: function (filePath) {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem File.resolve");
+            requireDirectory();
+            var child = childPath(path, filePath, "InvalidValuesError");
+            return fileObject(child, mode, sandboxCall("stat", { path: child.full }));
+        },
+        deleteDirectory: function (directoryPath, recursive, onsuccess, onerror) {
+            deleteBelow("directory", "File.deleteDirectory", directoryPath, !!recursive, onsuccess, onerror);
+        },
+        deleteFile: function (filePath, onsuccess, onerror) {
+            deleteBelow("file", "File.deleteFile", filePath, false, onsuccess, onerror);
+        },
+    };
+    function requireDirectory() {
+        if (!isDirectory) {
+            throw new WebAPIException("IOError", path.full + " is not a directory");
+        }
+    }
+    function requireBelow(target, errorName) {
+        var below = requireVirtualPath(target, "tizen.filesystem File", errorName);
+        if (below.full.indexOf(path.full + "/") !== 0) {
+            throw new WebAPIException("InvalidValuesError", below.full + " is not under " + path.full);
+        }
+        return below;
+    }
+    function transferFrom(call, api, origin, destination, overwrite, onsuccess, onerror) {
+        requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem " + api);
+        requireOptionalFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        runLater(function () {
+            requireDirectory();
+            var from = requireBelow(origin, "InvalidValuesError");
+            var to = requireVirtualPath(destination, "tizen.filesystem " + api, "InvalidValuesError");
+            requireStorageAccess(to, "tizen.filesystem " + api);
+            sandboxCall(call, { from: from.full, to: to.full, overwrite: !!overwrite });
+        }, function () {
+            callIfFunction(onsuccess, []);
+        }, onerror);
+    }
+    function deleteBelow(kind, api, target, recursive, onsuccess, onerror) {
+        requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem " + api);
+        requireOptionalFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        runLater(function () {
+            requireDirectory();
+            var below = requireBelow(target, "InvalidValuesError");
+            sandboxCall("delete", { path: below.full, kind: kind, recursive: recursive });
+        }, function () {
+            callIfFunction(onsuccess, []);
+        }, onerror);
+    }
+    return file;
+}
+function fileStream(path, mode, encoding) {
+    var size = sandboxCall("stat", { path: path.full }).size;
+    var position = mode === "a" ? size : 0;
+    var closed = false;
+    function use(write, api) {
+        if (closed) {
+            throw new Error("The FileStream is closed");
+        }
+        requirePrivilege(write ? FS_WRITE_PRIVILEGE : FS_READ_PRIVILEGE, "tizen.filesystem FileStream." + api);
+        if (write ? mode === "r" : mode === "w" || mode === "a") {
+            throw new WebAPIException("IOError", "The FileStream was not opened for " + (write ? "writing" : "reading"));
+        }
+    }
+    function requireCount(count) {
+        var n = Number(count);
+        if (isNaN(n)) {
+            throw new WebAPIException("TypeMismatchError", "The count must be a number");
+        }
+        if (n < 0) {
+            throw new WebAPIException("InvalidValuesError", "The count must not be negative");
+        }
+        return Math.floor(n);
+    }
+    function write(bytes) {
+        size = writeBytes(path, position, bytes);
+        position += bytes.length;
+    }
+    return {
+        get eof() {
+            return position >= size;
+        },
+        get position() {
+            return position;
+        },
+        set position(value) {
+            position = Math.max(0, Math.floor(Number(value)) || 0);
+        },
+        get bytesAvailable() {
+            return position >= size ? -1 : size - position;
+        },
+        close: function () {
+            closed = true;
+        },
+        read: function (charCount) {
+            use(false, "read");
+            var count = requireCount(charCount);
+            var bytes = readBytes(path, position, encoding === "UTF-8" ? count * 4 : count);
+            var decoded = decodeText(bytes, encoding, count);
+            position += decoded.bytes;
+            return decoded.text;
+        },
+        readBytes: function (byteCount) {
+            use(false, "readBytes");
+            var bytes = readBytes(path, position, requireCount(byteCount));
+            position += bytes.length;
+            var octets = [];
+            for (var i = 0; i < bytes.length; i++) {
+                octets.push(bytes[i]);
+            }
+            return octets;
+        },
+        readBase64: function (byteCount) {
+            use(false, "readBase64");
+            var bytes = readBytes(path, position, requireCount(byteCount));
+            position += bytes.length;
+            return bytesToBase64(bytes);
+        },
+        write: function (stringData) {
+            use(true, "write");
+            write(encodeText(String(stringData), encoding));
+        },
+        writeBytes: function (byteData) {
+            use(true, "writeBytes");
+            if (!(byteData instanceof Array)) {
+                throw new WebAPIException("TypeMismatchError", "byteData must be an array of octets");
+            }
+            write(byteData);
+        },
+        writeBase64: function (base64Data) {
+            use(true, "writeBase64");
+            var bytes;
+            try {
+                bytes = base64ToBytes(String(base64Data));
+            }
+            catch (e) {
+                throw new WebAPIException("InvalidValuesError", "base64Data is not valid Base64");
+            }
+            write(bytes);
+        },
+    };
+}
+var fileApiMethods = {
+    resolve: function (location, onsuccess, onerror, mode) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.resolve");
+        requireFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        var access = mode === undefined || mode === null ? "rw" : requireFileMode(mode);
+        var path = parseVirtualPath(location);
+        if (path) {
+            requireStorageAccess(path, "tizen.filesystem.resolve");
+        }
+        runLater(function () {
+            var resolved = path || requireVirtualPath(location, "tizen.filesystem.resolve", "NotFoundError");
+            if (resolved.root === PACKAGE_ROOT && access !== "r") {
+                throw new WebAPIException("InvalidValuesError", PACKAGE_ROOT + " is read-only; resolve it with mode r");
+            }
+            return fileObject(resolved, access, sandboxCall("stat", { path: resolved.full }));
+        }, onsuccess, onerror);
+    },
+};
+var OPEN_MODES = ["a", "r", "rw", "rwo", "w"];
+var SEEK_POSITIONS = ["BEGIN", "CURRENT", "END"];
+var MAX_NAME_LENGTH = 255;
+function fileHandle(givenPath, path, mode) {
+    var position = 0;
+    var closed = false;
+    var queue = [];
+    var canRead = mode === "r" || mode === "rw" || mode === "rwo";
+    var canWrite = mode !== "r";
+    function size() {
+        return sandboxCall("stat", { path: path.full }).size;
+    }
+    function requireOpen() {
+        if (closed) {
+            throw new WebAPIException("IOError", "The FileHandle is closed");
+        }
+    }
+    function requireAccess(write) {
+        requireOpen();
+        if (write ? !canWrite : !canRead) {
+            throw new WebAPIException("IOError", "The file was opened in mode " + mode + ", which doesn't allow " + (write ? "writing" : "reading"));
+        }
+    }
+    function requireEncoding(encoding) {
+        var name = encodingName(encoding);
+        if (!name) {
+            throw new WebAPIException("NotSupportedError", "Unsupported encoding: " + encoding);
+        }
+        return name;
+    }
+    function requireSize(value) {
+        if (value === undefined || value === null) {
+            return null;
+        }
+        var n = Number(value);
+        if (isNaN(n)) {
+            throw new WebAPIException("TypeMismatchError", "The size must be a number");
+        }
+        if (n < 0) {
+            throw new WebAPIException("InvalidValuesError", "The size must not be negative");
+        }
+        return Math.floor(n);
+    }
+    function read(length) {
+        requireAccess(false);
+        var bytes = readBytes(path, position, length);
+        position += bytes.length;
+        return bytes;
+    }
+    function write(bytes) {
+        requireAccess(true);
+        if (mode === "a") {
+            position = size();
+        }
+        writeBytes(path, position, bytes);
+        position += bytes.length;
+        return bytes.length;
+    }
+    function seek(offset, whence) {
+        var from = whence === undefined ? "BEGIN" : whence;
+        if (!contains(SEEK_POSITIONS, from) || isNaN(Number(offset))) {
+            throw new WebAPIException("TypeMismatchError", "seek takes an offset and BEGIN, CURRENT or END");
+        }
+        requireOpen();
+        if (mode === "a") {
+            position = size();
+            return position;
+        }
+        var base = from === "BEGIN" ? 0 : from === "CURRENT" ? position : size();
+        var target = base + Math.floor(Number(offset));
+        if (target < 0) {
+            throw new WebAPIException("IOError", "Can't seek before the start of the file");
+        }
+        position = target;
+        return position;
+    }
+    function readString(count, encoding) {
+        requireAccess(false);
+        var chars = requireSize(count);
+        var length = chars === null ? null : encoding === "UTF-8" ? chars * 4 : chars;
+        var decoded = decodeText(readBytes(path, position, length), encoding, chars);
+        position += decoded.bytes;
+        return decoded.text;
+    }
+    function writeBlob(blob) {
+        if (!(blob instanceof Blob)) {
+            throw new WebAPIException("TypeMismatchError", "blob must be a Blob");
+        }
+        write(blobBytes(blob));
+    }
+    function writeData(data) {
+        if (!(data instanceof Uint8Array)) {
+            throw new WebAPIException("TypeMismatchError", "data must be a Uint8Array");
+        }
+        write(data);
+    }
+    function close() {
+        drain();
+        requireOpen();
+        closed = true;
+    }
+    function drain() {
+        while (queue.length) {
+            queue.shift()();
+        }
+    }
+    function later(work, onsuccess, onerror) {
+        requireOptionalFunction(onsuccess, "onsuccess");
+        requireOptionalFunction(onerror, "onerror");
+        queue.push(function () {
+            var result;
+            try {
+                result = work();
+            }
+            catch (e) {
+                if (!(e instanceof WebAPIException)) {
+                    throw e;
+                }
+                callIfFunction(onerror, [new WebAPIError(e.name, e.message)]);
+                return;
+            }
+            callIfFunction(onsuccess, result === undefined ? [] : [result]);
+        });
+        setTimeout(function () {
+            if (queue.length) {
+                queue.shift()();
+            }
+        }, 0);
+    }
+    return {
+        path: givenPath,
+        seek: seek,
+        seekNonBlocking: function (offset, onsuccess, onerror, whence) {
+            if (whence !== undefined && !contains(SEEK_POSITIONS, whence)) {
+                throw new WebAPIException("TypeMismatchError", "whence must be BEGIN, CURRENT or END");
+            }
+            later(function () {
+                return seek(offset, whence);
+            }, onsuccess, onerror);
+        },
+        readString: function (count, inputEncoding) {
+            return readString(count, requireEncoding(inputEncoding));
+        },
+        readStringNonBlocking: function (onsuccess, onerror, count, inputEncoding) {
+            var encoding = requireEncoding(inputEncoding);
+            requireSize(count);
+            later(function () {
+                return readString(count, encoding);
+            }, onsuccess, onerror);
+        },
+        writeString: function (inputString, outputEncoding) {
+            return write(encodeText(String(inputString), requireEncoding(outputEncoding)));
+        },
+        writeStringNonBlocking: function (inputString, onsuccess, onerror, outputEncoding) {
+            var bytes = encodeText(String(inputString), requireEncoding(outputEncoding));
+            later(function () {
+                return write(bytes);
+            }, onsuccess, onerror);
+        },
+        readBlob: function (size) {
+            return new Blob([read(requireSize(size))]);
+        },
+        readBlobNonBlocking: function (onsuccess, onerror, size) {
+            var length = requireSize(size);
+            later(function () {
+                return new Blob([read(length)]);
+            }, onsuccess, onerror);
+        },
+        writeBlob: writeBlob,
+        writeBlobNonBlocking: function (blob, onsuccess, onerror) {
+            if (!(blob instanceof Blob)) {
+                throw new WebAPIException("TypeMismatchError", "blob must be a Blob");
+            }
+            later(function () {
+                writeBlob(blob);
+            }, onsuccess, onerror);
+        },
+        readData: function (size) {
+            return read(requireSize(size));
+        },
+        readDataNonBlocking: function (onsuccess, onerror, size) {
+            var length = requireSize(size);
+            later(function () {
+                return read(length);
+            }, onsuccess, onerror);
+        },
+        writeData: writeData,
+        writeDataNonBlocking: function (data, onsuccess, onerror) {
+            if (!(data instanceof Uint8Array)) {
+                throw new WebAPIException("TypeMismatchError", "data must be a Uint8Array");
+            }
+            later(function () {
+                writeData(data);
+            }, onsuccess, onerror);
+        },
+        flush: requireOpen,
+        flushNonBlocking: function (onsuccess, onerror) {
+            later(requireOpen, onsuccess, onerror);
+        },
+        sync: requireOpen,
+        syncNonBlocking: function (onsuccess, onerror) {
+            later(requireOpen, onsuccess, onerror);
+        },
+        close: close,
+        closeNonBlocking: function (onsuccess, onerror) {
+            later(close, onsuccess, onerror);
+        },
+    };
+}
+function blobBytes(blob) {
+    var url = URL.createObjectURL(blob);
+    try {
+        var request = new XMLHttpRequest();
+        request.open("GET", url, false);
+        request.overrideMimeType("text/plain; charset=x-user-defined");
+        request.send();
+        var text = request.responseText;
+        var bytes = new Uint8Array(text.length);
+        for (var i = 0; i < text.length; i++) {
+            bytes[i] = text.charCodeAt(i) & 255;
+        }
+        return bytes;
+    }
+    finally {
+        URL.revokeObjectURL(url);
+    }
+}
+function requirePathArgument(path, api) {
+    var parsed = requireVirtualPath(path, "tizen.filesystem." + api, "InvalidValuesError");
+    requireStorageAccess(parsed, "tizen.filesystem." + api);
+    return parsed;
+}
+function lastPart(path) {
+    return path.parts.length ? path.parts[path.parts.length - 1] : path.root;
+}
+function changeLater(privileges, api, onsuccess, onerror, prepare) {
+    for (var i = 0; i < privileges.length; i++) {
+        requirePrivilege(privileges[i], "tizen.filesystem." + api);
+    }
+    var change = prepare();
+    requireOptionalFunction(onsuccess, "successCallback");
+    requireOptionalFunction(onerror, "errorCallback");
+    runLater(change, function (reported) {
+        callIfFunction(onsuccess, [reported ? reported.full : ""]);
+    }, onerror);
+}
+var READ_WRITE = [FS_READ_PRIVILEGE, FS_WRITE_PRIVILEGE];
+function transfer(api, call, kind, into) {
+    return function (sourcePath, destinationPath, overwrite, onsuccess, onerror) {
+        changeLater(READ_WRITE, api, onsuccess, onerror, function () {
+            var from = requirePathArgument(sourcePath, api);
+            var destination = requirePathArgument(destinationPath, api);
+            var to = into ? childPath(destination, lastPart(from), "InvalidValuesError") : destination;
+            return function () {
+                sandboxCall(call, { from: from.full, to: to.full, kind: kind, overwrite: !!overwrite });
+                return to;
+            };
+        });
+    };
+}
+var pathApiMethods = {
+    maxNameLength: MAX_NAME_LENGTH,
+    openFile: function (path, openMode, makeParents) {
+        if (!contains(OPEN_MODES, openMode)) {
+            throw new WebAPIException("TypeMismatchError", "openMode must be one of a, r, rw, rwo, w");
+        }
+        if (openMode !== "r") {
+            requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem.openFile");
+        }
+        if (openMode === "r" || openMode === "rw" || openMode === "rwo") {
+            requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.openFile");
+        }
+        var parsed = requireVirtualPath(path, "tizen.filesystem.openFile", "IOError");
+        requireStorageAccess(parsed, "tizen.filesystem.openFile");
+        if (openMode === "r" || openMode === "rw") {
+            var stat = sandboxCall("stat", { path: parsed.full });
+            if (stat.kind !== "file") {
+                throw new WebAPIException("IOError", parsed.full + " is a directory");
+            }
+        }
+        else {
+            sandboxCall("createFile", {
+                path: parsed.full,
+                makeParents: makeParents === undefined || !!makeParents,
+                ifExists: openMode === "a" ? "keep" : "truncate",
+            });
+        }
+        return fileHandle(String(path), parsed, openMode);
+    },
+    createDirectory: function (path, makeParents, successCallback, errorCallback) {
+        changeLater([FS_WRITE_PRIVILEGE], "createDirectory", successCallback, errorCallback, function () {
+            var parsed = requirePathArgument(path, "createDirectory");
+            return function () {
+                sandboxCall("createDirectory", { path: parsed.full, makeParents: makeParents === undefined || !!makeParents });
+                return parsed;
+            };
+        });
+    },
+    deleteFile: function (path, successCallback, errorCallback) {
+        changeLater([FS_WRITE_PRIVILEGE], "deleteFile", successCallback, errorCallback, function () {
+            var parsed = requirePathArgument(path, "deleteFile");
+            return function () {
+                sandboxCall("delete", { path: parsed.full, kind: "file" });
+                return parentPath(parsed);
+            };
+        });
+    },
+    deleteDirectory: function (path, recursive, successCallback, errorCallback) {
+        changeLater([FS_WRITE_PRIVILEGE], "deleteDirectory", successCallback, errorCallback, function () {
+            var parsed = requirePathArgument(path, "deleteDirectory");
+            return function () {
+                sandboxCall("delete", { path: parsed.full, kind: "directory", recursive: recursive === undefined || !!recursive });
+                return parentPath(parsed);
+            };
+        });
+    },
+    copyFile: transfer("copyFile", "copy", "file", false),
+    copyDirectory: transfer("copyDirectory", "copy", "directory", false),
+    moveFile: transfer("moveFile", "move", "file", true),
+    moveDirectory: transfer("moveDirectory", "move", "directory", true),
+    rename: function (path, newName, successCallback, errorCallback) {
+        changeLater([FS_WRITE_PRIVILEGE], "rename", successCallback, errorCallback, function () {
+            var from = requirePathArgument(path, "rename");
+            var name = String(newName);
+            var parent = parentPath(from);
+            if (!parent || !name || name.indexOf("/") >= 0 || name === "." || name === "..") {
+                throw new WebAPIException("InvalidValuesError", newName + " is not a valid new name");
+            }
+            var to = childPath(parent, name, "InvalidValuesError");
+            return function () {
+                sandboxCall("move", { from: from.full, to: to.full });
+                return to;
+            };
+        });
+    },
+    listDirectory: function (path, successCallback, errorCallback, filter) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.listDirectory");
+        requireFunction(successCallback, "successCallback");
+        requireOptionalFunction(errorCallback, "errorCallback");
+        var parsed = requirePathArgument(path, "listDirectory");
+        runLater(function () {
+            var stat = sandboxCall("stat", { path: parsed.full });
+            if (stat.kind !== "directory") {
+                throw new WebAPIException("NotFoundError", parsed.full + " is not a directory");
+            }
+            var entries = listDirectoryEntries(parsed, filter);
+            var names = [];
+            for (var i = 0; i < entries.length; i++) {
+                names.push(entries[i].name || "");
+            }
+            return names;
+        }, function (names) {
+            successCallback(names, String(path));
+        }, errorCallback);
+    },
+    toURI: function (path) {
+        return fileUrl(requireVirtualPath(path, "tizen.filesystem.toURI", "InvalidValuesError"));
+    },
+    isFile: function (path) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.isFile");
+        return sandboxCall("stat", { path: requirePathArgument(path, "isFile").full }).kind === "file";
+    },
+    isDirectory: function (path) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.isDirectory");
+        return sandboxCall("stat", { path: requirePathArgument(path, "isDirectory").full }).kind === "directory";
+    },
+    pathExists: function (path) {
+        requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.pathExists");
+        return statOrNull(requirePathArgument(path, "pathExists")) !== null;
+    },
+    getDirName: function (path) {
+        var text = String(path).replace(/\/+$/, "");
+        var slash = text.lastIndexOf("/");
+        return slash < 0 ? "" : text.slice(0, slash);
+    },
+};
 var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
     INVALID_VALUES_ERR: 26,
     IO_ERR: 27,
@@ -966,6 +1975,7 @@ window.tizen = {
     application: application,
     systeminfo: systeminfo,
     tvinputdevice: tvinputdevice,
+    filesystem: createFilesystem(),
 };
 warnOnDeprecated("tizen");
 config.installWebapis = installWebapis;

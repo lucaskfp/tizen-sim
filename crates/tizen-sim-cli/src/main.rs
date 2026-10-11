@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
-use tizen_sim_core::app::AppSource;
+use tizen_sim_core::app::{App, AppSource};
 use tizen_sim_core::engine::{self, DownloadProgress, EngineSpec};
 use tizen_sim_core::home::Home;
 use tizen_sim_core::network::{NetworkRequest, Verdict};
@@ -46,6 +46,9 @@ enum Command {
         #[command(flatten)]
         choice: SessionChoice,
     },
+    /// Clear what an App has stored (its files and web storage), so its next
+    /// launch is a first launch.
+    Reset(ResetArgs),
     /// Save a PNG of a running Session's screen, at the TV's resolution.
     Screenshot {
         /// Where to save it.
@@ -166,6 +169,16 @@ struct RunArgs {
     devtools: bool,
 }
 
+#[derive(Args)]
+struct ResetArgs {
+    /// The App: a Project Folder, a Package (.wgt file), or a dev server URL
+    /// (with --config).
+    app: String,
+    /// The App's config.xml, for a dev server URL.
+    #[arg(long, value_name = "CONFIG_XML")]
+    config: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Resolution {
     #[value(name = "1920x1080")]
@@ -196,25 +209,7 @@ impl RunArgs {
                 .unwrap_or_else(|_| serde_json::Value::String(value.trim().to_string()));
             device.insert(name.trim().to_string(), value);
         }
-        let is_url = self.app.starts_with("http://") || self.app.starts_with("https://");
-        let source = match (is_url, self.config) {
-            (true, Some(config)) => AppSource::DevServerUrl {
-                url: self
-                    .app
-                    .parse()
-                    .with_context(|| format!("invalid dev server URL {}", self.app))?,
-                config,
-            },
-            (true, None) => {
-                bail!("a dev server URL needs the App's config.xml: --config <CONFIG_XML>")
-            }
-            (false, Some(_)) => {
-                bail!(
-                    "--config only applies to a dev server URL; a Project Folder or Package has its own"
-                )
-            }
-            (false, None) => AppSource::from_path(PathBuf::from(self.app)),
-        };
+        let source = app_source(&self.app, self.config)?;
         Ok(SessionConfig {
             source,
             profile: self.profile,
@@ -232,6 +227,28 @@ impl RunArgs {
             home: Home::from_env(),
         })
     }
+}
+
+/// The App Source an `app` argument names, with `--config` for a dev server URL.
+fn app_source(app: &str, config: Option<PathBuf>) -> Result<AppSource> {
+    let is_url = app.starts_with("http://") || app.starts_with("https://");
+    Ok(match (is_url, config) {
+        (true, Some(config)) => AppSource::DevServerUrl {
+            url: app
+                .parse()
+                .with_context(|| format!("invalid dev server URL {app}"))?,
+            config,
+        },
+        (true, None) => {
+            bail!("a dev server URL needs the App's config.xml: --config <CONFIG_XML>")
+        }
+        (false, Some(_)) => {
+            bail!(
+                "--config only applies to a dev server URL; a Project Folder or Package has its own"
+            )
+        }
+        (false, None) => AppSource::from_path(PathBuf::from(app)),
+    })
 }
 
 #[tokio::main]
@@ -265,6 +282,15 @@ async fn main() -> Result<()> {
         Command::Reload { choice } => {
             choice.connect(&Home::from_env())?.reload().await?;
             println!("Reloaded.");
+            Ok(())
+        }
+        Command::Reset(args) => {
+            let app = App::load(&app_source(&args.app, args.config)?)?;
+            if tizen_sim_core::sandbox::reset(app.id(), &Home::from_env())? {
+                println!("Reset {}: its next launch is a first launch.", app.id());
+            } else {
+                println!("Nothing to reset: {} has stored nothing.", app.id());
+            }
             Ok(())
         }
         Command::Screenshot { output, choice } => {

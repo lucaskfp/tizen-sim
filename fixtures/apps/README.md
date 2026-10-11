@@ -17,6 +17,8 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `required-version-too-high`: declares `required_version="99.0"`, newer than any Version Profile.
 - `hot-reload`: loads `style.css` and `app.js`, which sets `window.scriptVersion`. Tests copy it to a temporary folder and edit the copy.
 - `dev-server`: an App for a stand-in bundler: `index.html` loads `app.js` as an ES module, which opens an HMR WebSocket and applies updates without reloading. Tests serve it from a fake dev server and copy its `config.xml` to edit it.
+- `filesystem`: declares `filesystem.read`, `filesystem.write` and `mediastorage`, for `tizen.filesystem` on the App's Sandbox.
+- `filesystem-read-only`: declares only `filesystem.read`.
 - `network`: declares `internet` and no `<access>` element. An inline script defines `window.request(method, url, done)` (XHR) and sets `window.inlineScriptRan`. Tests copy it and write the `<access>` elements or CSP they need into the copy's `config.xml`, since the servers it calls listen on ports chosen at test time.
 
 The Package (`.wgt`) tests build their archives from these folders at test time, so no binary Packages are checked in.
