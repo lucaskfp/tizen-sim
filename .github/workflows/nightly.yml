@@ -37,7 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # One build cache per runner image: objects built on ubuntu-latest's
+      # newer glibc don't link on the ubuntu-22.04 runner of old Engines.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.runner }}
       - uses: actions/cache@v4
         with:
           path: ~/.tizen-sim/engines
