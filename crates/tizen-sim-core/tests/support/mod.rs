@@ -259,3 +259,50 @@ pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
     let at = (y * frame.width + x) as usize * channels;
     [buffer[at], buffer[at + 1], buffer[at + 2]]
 }
+
+/// The lock a running Engine holds on its data directory, held by the test
+/// until dropped, like an Engine still going away.
+pub struct EngineDataLock {
+    #[cfg(windows)]
+    _lockfile: std::fs::File,
+    #[cfg(not(windows))]
+    link: PathBuf,
+}
+
+impl EngineDataLock {
+    pub fn hold(user_data_dir: &std::path::Path) -> EngineDataLock {
+        std::fs::create_dir_all(user_data_dir).unwrap();
+        #[cfg(windows)]
+        {
+            // Chromium keeps `lockfile` open without sharing while it runs.
+            use std::os::windows::fs::OpenOptionsExt;
+            let lockfile = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .share_mode(0)
+                .open(user_data_dir.join("lockfile"))
+                .unwrap();
+            EngineDataLock {
+                _lockfile: lockfile,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            // `SingletonLock` points at `<hostname>-<pid>`, here the test's
+            // own pid. Chromium seeing it would take it for another host's,
+            // and never try to take it over from the test.
+            let link = user_data_dir.join("SingletonLock");
+            std::os::unix::fs::symlink(format!("elsewhere-{}", std::process::id()), &link).unwrap();
+            EngineDataLock { link }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for EngineDataLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.link);
+    }
+}

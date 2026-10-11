@@ -144,13 +144,14 @@ impl EngineSpec {
         EngineManifest::bundled().for_profile(profile, platform)
     }
 
-    /// Whether the Version Profile's pinned Engine on this platform runs
-    /// with Chromium's sandbox, which a developer's own build of the same
-    /// milestone (`--engine-path`) needs too; true where there is none.
-    pub fn sandbox_for(profile: &str) -> bool {
+    /// The Version Profile's pinned Engine on this platform, if any. A
+    /// developer's own build of the same milestone (`--engine-path`) shares
+    /// its needs: whether it has a headless mode, whether it runs with
+    /// Chromium's sandbox.
+    pub fn pinned(profile: &str) -> Option<&'static EngineSpec> {
         current_platform()
             .and_then(|platform| EngineSpec::for_profile(profile, platform))
-            .map_or(true, |spec| spec.sandbox)
+            .ok()
     }
 
     fn install_dir_name(&self) -> String {
@@ -471,6 +472,10 @@ const OFF_SCREEN: (i32, i32) = (-20000, -20000);
 /// so startup gets a generous budget.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// How long a launch waits for an Engine going away (e.g. its CLI killed) to
+/// let go of the data directory, before taking it for one still running.
+const DATA_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Every Engine window starts without Chromium's first-run prompts, and
 /// without the info bar warning about our flags (`--test-type`), which
 /// would take room from the App.
@@ -487,6 +492,15 @@ pub async fn launch(
     tokio::fs::create_dir_all(&options.user_data_dir)
         .await
         .map_err(io_err(&options.user_data_dir))?;
+    // Launched while another Engine holds the data directory, Chromium hands
+    // over to it and exits.
+    let waiting = Instant::now();
+    while engine_data_in_use(&options.user_data_dir) {
+        if waiting.elapsed() > DATA_RELEASE_TIMEOUT {
+            return Err(EngineError::EngineDataInUse(options.user_data_dir.clone()));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let debug_port = free_port().map_err(io_err(executable))?;
 
     let mut command = tokio::process::Command::new(executable);

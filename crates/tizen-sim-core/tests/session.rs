@@ -146,6 +146,26 @@ async fn the_same_app_and_profile_cannot_run_twice_at_once() {
     first.stop().await;
 }
 
+/// An Engine going away (its CLI was just killed) still holds the App's
+/// Engine data for a moment; a Session started meanwhile waits for it.
+#[tokio::test]
+async fn a_session_waits_for_an_engine_going_away() {
+    let state = tempfile::tempdir().unwrap();
+    let data = tizen_sim_core::home::Home::from_env()
+        .with_state_dir(state.path().to_path_buf())
+        .engine_data_dir("Fixture001.Hello")
+        .join(&support::profile().version);
+    let lock = support::EngineDataLock::hold(&data);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        drop(lock);
+    });
+
+    let session = support::start_session("hello", state.path());
+    session.wait_until_loaded().await.unwrap();
+    session.stop().await;
+}
+
 #[tokio::test]
 async fn invalid_config_fails_the_session_with_the_problem_named() {
     let mut t = start("no-application");

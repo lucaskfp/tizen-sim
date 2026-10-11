@@ -41,7 +41,8 @@ pub struct SessionConfig {
     /// from the Engine Manifest, which is then not downloaded.
     pub engine_path: Option<PathBuf>,
     /// Whether the Engine has a headless mode, in place of what the Engine
-    /// Manifest says (an `engine_path` Engine is taken to have one). Without
+    /// Manifest says (an `engine_path` Engine goes by the Version Profile's
+    /// pinned Engine, see `EngineSpec::pinned`). Without
     /// one, a headless Session runs the Engine in a window off the screen.
     pub engine_has_headless: Option<bool>,
     /// Run the Engine without a window (CI, automated tests).
@@ -881,13 +882,17 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             profile: profile.version.clone(),
         }));
 
-    // An Engine given by path is taken to have a headless mode.
+    // An Engine given by path is taken to be like the pinned one, or to have
+    // a headless mode and a sandbox where there is none.
     let (executable, has_headless, sandbox) = match &config.engine_path {
-        Some(path) => (
-            path.clone(),
-            true,
-            EngineSpec::sandbox_for(&profile.version),
-        ),
+        Some(path) => {
+            let pinned = EngineSpec::pinned(&profile.version);
+            (
+                path.clone(),
+                pinned.is_none_or(|spec| spec.headless),
+                pinned.is_none_or(|spec| spec.sandbox),
+            )
+        }
         None => {
             let platform = engine::current_platform().map_err(|e| e.to_string())?;
             let spec =
