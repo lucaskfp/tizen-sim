@@ -238,3 +238,14 @@ pub fn kill_process(pid: u32) {
     };
     assert!(status.unwrap().success(), "could not kill process {pid}");
 }
+
+/// The RGB colour of a pixel of a PNG screenshot.
+pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().unwrap();
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+    let frame = reader.next_frame(&mut buffer).unwrap();
+    let channels = frame.color_type.samples();
+    let at = (y * frame.width + x) as usize * channels;
+    [buffer[at], buffer[at + 1], buffer[at + 2]]
+}

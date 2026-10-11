@@ -474,7 +474,11 @@ pub async fn launch(
         .args([
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
-        ]);
+        ])
+        // AVPlay's Video Plane plays decodable streams in a <video> (ADR-0004),
+        // which a TV plays without a user gesture. Engines before the policy
+        // (M66) ignore the flag.
+        .arg("--autoplay-policy=no-user-gesture-required");
     if let Some(proxy) = options.network_proxy {
         command
             .arg(format!("--proxy-server=http://{proxy}"))

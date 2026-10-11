@@ -1998,8 +1998,698 @@ function installWebapis() {
         productinfo: createProductInfo(device),
         tvinfo: createTvInfo(device),
         network: createNetwork(device),
+        avplay: createAVPlay(),
     };
     warnOnDeprecated("webapis");
+}
+var CANVAS_CHECK_MS = 250;
+var DECODE_PROBE_MS = 5000;
+var PATTERN_BARS = ["#c0c0c0", "#c0c000", "#00c0c0", "#00c000", "#c000c0", "#c00000", "#0000c0"];
+function createVideoPlane() {
+    var plane = document.createElement("div");
+    plane.setAttribute("data-tizen-sim", "video-plane");
+    plane.style.cssText =
+        "position:fixed;z-index:-2147483647;pointer-events:none;overflow:hidden;background:#000;display:none";
+    var pattern = document.createElement("div");
+    var stops = [];
+    for (var i = 0; i < PATTERN_BARS.length; i++) {
+        var from = ((i * 100) / PATTERN_BARS.length).toFixed(4) + "%";
+        var to = (((i + 1) * 100) / PATTERN_BARS.length).toFixed(4) + "%";
+        stops.push(PATTERN_BARS[i] + " " + from, PATTERN_BARS[i] + " " + to);
+    }
+    pattern.style.cssText =
+        "position:absolute;left:0;top:0;width:100%;height:100%;display:none;" +
+            "background-image:linear-gradient(to right, " + stops.join(", ") + ")";
+    var label = document.createElement("div");
+    label.style.cssText =
+        "position:absolute;left:0;right:0;bottom:8%;padding:4px 8px;background:#000;color:#fff;" +
+            "font:16px sans-serif;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+    pattern.appendChild(label);
+    plane.appendChild(pattern);
+    var tint = document.createElement("div");
+    tint.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;display:none";
+    var video = null;
+    var rect = null;
+    var objectFit = "fill";
+    var checkTimer = 0;
+    var reported = "";
+    function attach() {
+        var root = document.documentElement;
+        if (root && plane.parentNode !== root) {
+            root.appendChild(plane);
+        }
+    }
+    function paint() {
+        attach();
+        if (!rect) {
+            plane.style.display = "none";
+            return;
+        }
+        var canvas = canvasBackground();
+        if (canvas && canvas.opaque) {
+            plane.style.display = "none";
+            var key = canvas.element + " " + canvas.color;
+            if (key !== reported) {
+                reported = key;
+                raiseDiagnostic("video-plane-hidden", "The Video Plane is hidden: the <" + canvas.element + "> background " + canvas.color +
+                    " is opaque and fills the screen" +
+                    (canvas.element === "body" ? " (a body background with none on html paints the whole canvas)" : "") +
+                    ". On a TV the page covers AVPlay's video, so it isn't seen.");
+            }
+            return;
+        }
+        reported = "";
+        tint.style.display = canvas ? "block" : "none";
+        if (canvas) {
+            tint.style.backgroundColor = canvas.color;
+        }
+        var scale = config.screen.width / 1920;
+        plane.style.left = rect.x * scale + "px";
+        plane.style.top = rect.y * scale + "px";
+        plane.style.width = rect.width * scale + "px";
+        plane.style.height = rect.height * scale + "px";
+        plane.style.display = "block";
+    }
+    function watch(on) {
+        if (on && !checkTimer) {
+            checkTimer = setInterval(paint, CANVAS_CHECK_MS);
+        }
+        else if (!on && checkTimer) {
+            clearInterval(checkTimer);
+            checkTimer = 0;
+        }
+    }
+    function unload() {
+        if (video) {
+            video.pause();
+            video.removeAttribute("src");
+            try {
+                video.load();
+            }
+            catch (e) {
+            }
+            if (video.parentNode) {
+                video.parentNode.removeChild(video);
+            }
+            video = null;
+        }
+        pattern.style.display = "none";
+    }
+    plane.appendChild(tint);
+    return {
+        load: function (url, decodable, settled) {
+            unload();
+            var element = (video = document.createElement("video"));
+            element.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;display:none";
+            element.style.setProperty("object-fit", objectFit);
+            element.preload = "auto";
+            plane.insertBefore(element, tint);
+            var done = false;
+            function settle() {
+                if (!done) {
+                    done = true;
+                    settled();
+                }
+            }
+            var probe = setTimeout(function () {
+                if (video === element && element.style.display === "none") {
+                    pattern.style.display = "block";
+                }
+                settle();
+            }, DECODE_PROBE_MS);
+            element.addEventListener("canplay", function () {
+                if (video !== element || element.style.display === "block") {
+                    return;
+                }
+                clearTimeout(probe);
+                pattern.style.display = "none";
+                element.style.display = "block";
+                decodable(element);
+                settle();
+            });
+            element.addEventListener("error", function () {
+                if (video !== element) {
+                    return;
+                }
+                clearTimeout(probe);
+                element.style.display = "none";
+                pattern.style.display = "block";
+                settle();
+            });
+            element.src = url;
+        },
+        unload: unload,
+        show: function (next) {
+            rect = next;
+            paint();
+            watch(!!next);
+        },
+        fit: function (next) {
+            objectFit = next;
+            if (video) {
+                video.style.setProperty("object-fit", next);
+            }
+        },
+        caption: function (text) {
+            label.textContent = text;
+        },
+    };
+}
+function canvasBackground() {
+    var html = getComputedStyle(document.documentElement);
+    var element = "html";
+    var color = html.backgroundColor;
+    if (alpha(color) === 0 && html.backgroundImage === "none" && document.body) {
+        element = "body";
+        color = getComputedStyle(document.body).backgroundColor;
+    }
+    var opacity = alpha(color);
+    return opacity === 0 ? null : { element: element, color: color, opaque: opacity >= 1 };
+}
+function alpha(color) {
+    if (!color || color === "transparent") {
+        return 0;
+    }
+    var given = /^rgba\(.*,\s*([\d.]+)\)$/.exec(color) || /\/\s*([\d.]+%?)\s*\)$/.exec(color);
+    if (!given) {
+        return 1;
+    }
+    var value = parseFloat(given[1]);
+    return given[1].charAt(given[1].length - 1) === "%" ? value / 100 : value;
+}
+var DRMPLAY_PRIVILEGE = "http://developer.samsung.com/privilege/drmplay";
+var SIMULATED_DURATION_MS = 600000;
+var PLAYTIME_INTERVAL_MS = 500;
+var BUFFERING_STEPS = [25, 50, 75, 100];
+var BUFFERING_STEP_MS = 100;
+var SIMULATED_SEEK_MS = 100;
+var AVPLAY_SPEEDS = [-16, -8, -4, -2, 1, 2, 4, 8, 16];
+var DISPLAY_MODES = {
+    PLAYER_DISPLAY_MODE_LETTER_BOX: "contain",
+    PLAYER_DISPLAY_MODE_FULL_SCREEN: "fill",
+    PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO: "contain",
+};
+var STREAMING_PROPERTIES = [
+    "COOKIE",
+    "USER_AGENT",
+    "PREBUFFER_MODE",
+    "ADAPTIVE_INFO",
+    "SET_MODE_4K",
+    "LISTEN_SPARSE_TRACK",
+    "IS_LIVE",
+    "AVAILABLE_BITRATE",
+    "GET_LIVE_DURATION",
+    "CURRENT_BANDWIDTH",
+    "USE_VIDEOMIXER",
+    "SET_MIXEDFRAME",
+    "PORTRAIT_MODE",
+    "IN_APP_MULTIVIEW",
+];
+var STREAM_TYPES = ["VIDEO", "AUDIO", "TEXT"];
+var DRM_TYPES = ["PLAYREADY", "VERIMATRIX", "WIDEVINE_CDM"];
+var ANY_STATE = ["NONE", "IDLE", "READY", "PLAYING", "PAUSED"];
+var OPENED = ["IDLE", "READY", "PLAYING", "PAUSED"];
+var PREPARED = ["READY", "PLAYING", "PAUSED"];
+function createAVPlay() {
+    var plane = createVideoPlane();
+    var state = "NONE";
+    var url = "";
+    var listener = {};
+    var rect = null;
+    var media = null;
+    var position = 0;
+    var runningSince = 0;
+    var speed = 1;
+    var looping = false;
+    var completed = false;
+    var seeking = false;
+    var preparing = false;
+    var ticker = 0;
+    var streamingProperties = {};
+    var generation = 0;
+    function fail(name, message) {
+        return webapisFail(name, message);
+    }
+    function requireState(method, allowed) {
+        if (allowed.indexOf(state) < 0) {
+            fail("InvalidStateError", "webapis.avplay." + method + "() can't be called in the " + state + " state");
+        }
+    }
+    function requireOneOf(value, values, argument) {
+        requireType(value, "string", argument);
+        if (values.indexOf(value) < 0) {
+            fail("InvalidValuesError", argument + " must be one of " + values.join(", "));
+        }
+    }
+    function requireCallback(value, argument) {
+        if (value !== undefined && value !== null && typeof value !== "function") {
+            fail("TypeMismatchError", argument + " must be a function");
+        }
+    }
+    function emit(name, args) {
+        var current = generation;
+        setTimeout(function () {
+            if (current === generation && listener && typeof listener[name] === "function") {
+                listener[name].apply(listener, args || []);
+            }
+        }, 0);
+    }
+    function duration() {
+        if (state === "NONE" || state === "IDLE") {
+            return 0;
+        }
+        if (media && isFinite(media.duration)) {
+            return Math.round(media.duration * 1000);
+        }
+        return SIMULATED_DURATION_MS;
+    }
+    function currentTime() {
+        if (media) {
+            return Math.round(media.currentTime * 1000);
+        }
+        var now = position;
+        if (runningSince) {
+            now += (Date.now() - runningSince) * speed;
+        }
+        return Math.max(0, Math.min(now, state === "IDLE" ? now : duration()));
+    }
+    function setClock(ms) {
+        position = ms;
+        runningSince = state === "PLAYING" && !completed ? Date.now() : 0;
+    }
+    function tick() {
+        var now = currentTime();
+        emit("oncurrentplaytime", [now]);
+        if (!media) {
+            plane.caption("AVPlay test pattern: the Engine can't decode " + url + " | " + formatTime(now));
+            if (now >= duration() && speed > 0) {
+                complete();
+            }
+        }
+    }
+    function startTicking() {
+        if (!ticker) {
+            ticker = setInterval(tick, PLAYTIME_INTERVAL_MS);
+        }
+    }
+    function stopTicking() {
+        if (ticker) {
+            clearInterval(ticker);
+            ticker = 0;
+        }
+    }
+    function complete() {
+        if (looping) {
+            setClock(0);
+            return;
+        }
+        setClock(duration());
+        completed = true;
+        runningSince = 0;
+        stopTicking();
+        emit("onstreamcompleted");
+    }
+    function adopt(video) {
+        var at = currentTime();
+        media = video;
+        runningSince = 0;
+        video.loop = looping;
+        video.playbackRate = speed > 0 ? speed : 1;
+        try {
+            video.currentTime = at / 1000;
+        }
+        catch (e) {
+        }
+        video.addEventListener("ended", function () {
+            if (media === video) {
+                complete();
+            }
+        });
+        if (state === "PLAYING") {
+            playMedia();
+        }
+    }
+    function playMedia() {
+        if (media) {
+            var playing = media.play();
+            if (playing && typeof playing.catch === "function") {
+                playing.catch(function () { });
+            }
+        }
+    }
+    function buffer(ready) {
+        var current = generation;
+        var steps = BUFFERING_STEPS.length;
+        var probed = false;
+        emit("onbufferingstart");
+        plane.caption("AVPlay test pattern: the Engine can't decode " + url);
+        plane.load(url, function (video) {
+            if (current === generation) {
+                adopt(video);
+            }
+        }, function () {
+            probed = true;
+            finish();
+        });
+        for (var i = 0; i < BUFFERING_STEPS.length; i++) {
+            setTimeout((function (percent) {
+                return function () {
+                    emit("onbufferingprogress", [percent]);
+                    steps--;
+                    finish();
+                };
+            })(BUFFERING_STEPS[i]), (i + 1) * BUFFERING_STEP_MS);
+        }
+        function finish() {
+            if (steps === 0 && (probed || !ready) && current === generation) {
+                steps = -1;
+                emit("onbufferingcomplete");
+                if (ready) {
+                    setTimeout(function () {
+                        if (current === generation) {
+                            ready();
+                        }
+                    }, 0);
+                }
+            }
+        }
+    }
+    function reset() {
+        generation++;
+        stopTicking();
+        plane.unload();
+        media = null;
+        position = 0;
+        runningSince = 0;
+        completed = false;
+        seeking = false;
+        preparing = false;
+    }
+    function seek(ms, done) {
+        var current = generation;
+        seeking = true;
+        completed = false;
+        var finished = function () {
+            if (current === generation) {
+                seeking = false;
+                done();
+            }
+        };
+        if (media) {
+            var video = media;
+            var onSeeked = function () {
+                video.removeEventListener("seeked", onSeeked);
+                finished();
+            };
+            video.addEventListener("seeked", onSeeked);
+            video.currentTime = ms / 1000;
+            if (state === "PLAYING") {
+                playMedia();
+            }
+        }
+        else {
+            setClock(Math.max(0, state === "IDLE" ? ms : Math.min(ms, duration())));
+            setTimeout(finished, SIMULATED_SEEK_MS);
+        }
+        if (state === "PLAYING") {
+            startTicking();
+        }
+    }
+    function seekMethod(method, allowed, target) {
+        return function (milliseconds, onsuccess, onerror) {
+            requireType(milliseconds, "number", "milliseconds");
+            requireCallback(onsuccess, "successCallback");
+            requireCallback(onerror, "errorCallback");
+            if (allowed.indexOf(state) < 0) {
+                failLater(onerror, "InvalidStateError", "webapis.avplay." + method + "() can't be called in the " + state + " state", WebapisError);
+                return;
+            }
+            seek(target(milliseconds), function () {
+                if (typeof onsuccess === "function") {
+                    onsuccess();
+                }
+            });
+        };
+    }
+    function setting(method, allowed, type) {
+        return function (value) {
+            requireType(value, type, "argument");
+            requireState(method, allowed);
+        };
+    }
+    function streamInfo() {
+        var width = media ? media.videoWidth : 1920;
+        var height = media ? media.videoHeight : 1080;
+        return [
+            {
+                index: 0,
+                type: "VIDEO",
+                extra_info: JSON.stringify({ fourCC: "", Width: String(width), Height: String(height), Bit_rate: "0" }),
+            },
+        ];
+    }
+    var avplay = {
+        open: function (newUrl) {
+            requireType(newUrl, "string", "url");
+            requireState("open", ["NONE", "IDLE"]);
+            if (!newUrl) {
+                fail("InvalidValuesError", "url must not be empty");
+            }
+            reset();
+            url = newUrl;
+            speed = 1;
+            streamingProperties = {};
+            state = "IDLE";
+        },
+        close: function () {
+            reset();
+            rect = null;
+            plane.show(null);
+            url = "";
+            state = "NONE";
+        },
+        prepare: function () {
+            requireState("prepare", ["IDLE", "READY"]);
+            if (preparing) {
+                fail("InvalidStateError", "webapis.avplay.prepareAsync() is still preparing the stream");
+            }
+            if (state === "READY") {
+                return;
+            }
+            state = "READY";
+            plane.show(rect);
+            buffer();
+        },
+        prepareAsync: function (onsuccess, onerror) {
+            requireCallback(onsuccess, "successCallback");
+            requireCallback(onerror, "errorCallback");
+            if (state !== "IDLE" && state !== "READY") {
+                failLater(onerror, "InvalidStateError", "webapis.avplay.prepareAsync() can't be called in the " + state + " state", WebapisError);
+                return;
+            }
+            if (preparing) {
+                failLater(onerror, "InvalidStateError", "webapis.avplay.prepareAsync() is already preparing the stream", WebapisError);
+                return;
+            }
+            if (state === "READY") {
+                setTimeout(function () {
+                    if (typeof onsuccess === "function") {
+                        onsuccess();
+                    }
+                }, 0);
+                return;
+            }
+            preparing = true;
+            buffer(function () {
+                preparing = false;
+                state = "READY";
+                plane.show(rect);
+                if (typeof onsuccess === "function") {
+                    onsuccess();
+                }
+            });
+        },
+        setDisplayRect: function (x, y, width, height) {
+            var values = [x, y, width, height];
+            for (var i = 0; i < values.length; i++) {
+                requireType(values[i], "number", "rectangle");
+                if (values[i] < 0 || !isFinite(values[i])) {
+                    fail("InvalidValuesError", "the display rectangle can't have negative values");
+                }
+            }
+            requireState("setDisplayRect", OPENED);
+            rect = { x: x, y: y, width: width, height: height };
+            if (state !== "IDLE") {
+                plane.show(rect);
+            }
+        },
+        setDisplayMethod: function (mode) {
+            requireOneOf(mode, Object.keys(DISPLAY_MODES), "displayMode");
+            requireState("setDisplayMethod", OPENED);
+            plane.fit(DISPLAY_MODES[mode]);
+        },
+        play: function () {
+            requireState("play", PREPARED);
+            if (state === "PLAYING") {
+                return;
+            }
+            setClock(currentTime());
+            state = "PLAYING";
+            if (!completed) {
+                runningSince = media ? 0 : Date.now();
+                playMedia();
+                startTicking();
+            }
+            tick();
+        },
+        pause: function () {
+            requireState("pause", ["PLAYING", "PAUSED"]);
+            if (seeking) {
+                fail("InvalidAccessError", "webapis.avplay.pause() can't be called while seeking");
+            }
+            position = currentTime();
+            runningSince = 0;
+            if (media) {
+                media.pause();
+            }
+            stopTicking();
+            state = "PAUSED";
+        },
+        stop: function () {
+            if (state === "NONE") {
+                return;
+            }
+            reset();
+            plane.show(null);
+            state = "IDLE";
+        },
+        seekTo: seekMethod("seekTo", OPENED, function (ms) {
+            return ms;
+        }),
+        jumpForward: seekMethod("jumpForward", PREPARED, function (ms) {
+            return currentTime() + ms;
+        }),
+        jumpBackward: seekMethod("jumpBackward", PREPARED, function (ms) {
+            return Math.max(0, currentTime() - ms);
+        }),
+        getState: function () {
+            return state;
+        },
+        getDuration: duration,
+        getCurrentTime: function () {
+            return state === "NONE" ? 0 : currentTime();
+        },
+        setListener: function (callbacks) {
+            if (!callbacks || typeof callbacks !== "object") {
+                fail("TypeMismatchError", "listener must be an AVPlayPlaybackCallback object");
+            }
+            listener = callbacks;
+        },
+        setSpeed: function (playbackSpeed) {
+            requireType(playbackSpeed, "number", "playbackSpeed");
+            if (AVPLAY_SPEEDS.indexOf(playbackSpeed) < 0) {
+                fail("InvalidValuesError", "playbackSpeed must be one of " + AVPLAY_SPEEDS.join(", "));
+            }
+            requireState("setSpeed", PREPARED);
+            setClock(currentTime());
+            speed = playbackSpeed;
+            if (media && playbackSpeed > 0) {
+                media.playbackRate = playbackSpeed;
+            }
+        },
+        setTimeoutForBuffering: setting("setTimeoutForBuffering", OPENED, "number"),
+        setBufferingParam: function (option, unit, amount) {
+            requireOneOf(option, ["PLAYER_BUFFER_FOR_PLAY", "PLAYER_BUFFER_FOR_RESUME"], "option");
+            requireOneOf(unit, ["PLAYER_BUFFER_SIZE_IN_SECOND", "PLAYER_BUFFER_SIZE_IN_BYTE"], "unit");
+            requireType(amount, "number", "amount");
+            if (unit === "PLAYER_BUFFER_SIZE_IN_SECOND" && amount < 4) {
+                fail("InvalidValuesError", "a time buffer must be at least 4 seconds");
+            }
+            requireState("setBufferingParam", ["IDLE"]);
+        },
+        setStreamingProperty: function (type, value) {
+            requireOneOf(type, STREAMING_PROPERTIES, "propertyType");
+            requireState("setStreamingProperty", ["IDLE"]);
+            streamingProperties[type] = String(value);
+        },
+        getStreamingProperty: function (type) {
+            requireOneOf(type, STREAMING_PROPERTIES, "propertyType");
+            requireState("getStreamingProperty", PREPARED);
+            return streamingProperties.hasOwnProperty(type) ? streamingProperties[type] : "";
+        },
+        getVersion: pluginVersion,
+        getCurrentStreamInfo: function () {
+            requireState("getCurrentStreamInfo", PREPARED);
+            return streamInfo();
+        },
+        getTotalTrackInfo: function () {
+            requireState("getTotalTrackInfo", PREPARED);
+            return streamInfo();
+        },
+        setSelectTrack: function (type, index) {
+            requireOneOf(type, STREAM_TYPES, "type");
+            requireType(index, "number", "index");
+            requireState("setSelectTrack", PREPARED);
+        },
+        setSilentSubtitle: setting("setSilentSubtitle", OPENED, "boolean"),
+        setExternalSubtitlePath: setting("setExternalSubtitlePath", OPENED, "string"),
+        setSubtitlePosition: setting("setSubtitlePosition", ["PLAYING", "PAUSED"], "number"),
+        setDrm: function (drmType, operation, jsonParam) {
+            requireWebapisPrivilege(DRMPLAY_PRIVILEGE, "webapis.avplay.setDrm");
+            requireOneOf(drmType, DRM_TYPES, "drmType");
+            requireType(operation, "string", "drmOperation");
+            requireType(jsonParam, "string", "jsonParam");
+            requireState("setDrm", ["IDLE"]);
+            raiseDiagnostic("avplay-drm-not-simulated", "webapis.avplay.setDrm(" + drmType + ") was accepted, but tizen-sim doesn't play DRM content: the stream shows the test pattern.");
+            return "";
+        },
+        getUID: function (drmType) {
+            requireWebapisPrivilege(DRMPLAY_PRIVILEGE, "webapis.avplay.getUID");
+            requireOneOf(drmType, DRM_TYPES, "drmType");
+            return config.profile.device.duid;
+        },
+    };
+    if (available("webapis.avplay.setLooping")) {
+        avplay.setLooping = function (loop) {
+            requireType(loop, "boolean", "looping");
+            requireState("setLooping", OPENED);
+            looping = loop;
+            if (media) {
+                media.loop = loop;
+            }
+        };
+    }
+    if (available("webapis.avplay.enableAudioStream")) {
+        avplay.enableAudioStream = function () {
+            requireState("enableAudioStream", OPENED);
+            if (media) {
+                media.muted = false;
+            }
+        };
+        avplay.disableAudioStream = function () {
+            requireState("disableAudioStream", OPENED);
+            if (media) {
+                media.muted = true;
+            }
+        };
+    }
+    if (available("webapis.avplay.getSubState")) {
+        avplay.getSubState = function () {
+            return state;
+        };
+    }
+    if (available("webapis.avplay.getVideoSize")) {
+        avplay.getVideoSize = function () {
+            requireState("getVideoSize", OPENED);
+            return media ? { width: media.videoWidth, height: media.videoHeight } : { width: 1920, height: 1080 };
+        };
+    }
+    return avplay;
+}
+function formatTime(ms) {
+    var seconds = Math.floor(ms / 1000);
+    var rest = seconds % 60;
+    return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
 }
 (function () {
     var size = {

@@ -1,5 +1,5 @@
 // The Samsung Product API (`webapis.*`): productinfo, tvinfo and network,
-// answered from the Version Profile's device values with the Session's
+// plus avplay (see avplay.ts), answered from the Version Profile's device values with the Session's
 // overrides applied.
 //
 // A TV gives a page `webapis` only once it loads `$WEBAPIS/webapis/webapis.js`
@@ -483,6 +483,7 @@ function installWebapis() {
     productinfo: createProductInfo(device),
     tvinfo: createTvInfo(device),
     network: createNetwork(device),
+    avplay: createAVPlay(),
   };
   warnOnDeprecated("webapis");
 }

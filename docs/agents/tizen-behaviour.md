@@ -196,12 +196,17 @@ Sources: `filesystem.html` in the 4.0 TV reference (before the 5.0 rework), the 
 - **Resolution.** The App is 1920×1080 CSS px on all models, or 1280×720 on FHD TVs per the resolution guide. Larger content is scaled down. A custom width comes from the viewport meta. The guide names `screen.width`/`height` and the system info `DISPLAY` property as how an App reads the resolution. (TV: `guides/fundamentals/managing-screen-resolution.html`, `specifications/general-specifications.html`)
   - What `DISPLAY.resolutionWidth`/`Height` and `devicePixelRatio` report on an FHD TV is **unverified**.
 - **Transparent page areas** show black on a TV. That comes from the product spec (#23); no guide fetched so far states it. **Unverified.**
-- **AVPlay:**
-  - States go NONE → IDLE (`open`) → READY (`prepare`) → PLAYING/PAUSED. `stop()` returns to IDLE; `close()` returns to NONE.
-  - `setDisplayRect` always uses 1920×1080 coordinates.
-  - `setDrm` and `getUID` need the `drmplay` privilege.
-  - (TV: `guides/multimedia/media-playback/using-avplay.html`)
-- **Video plane.** The rule that the AVPlay video sits behind the page comes from the user's specification (ADR-0004). The guides fetched so far don't state it explicitly.
+- **AVPlay** (TV: `guides/multimedia/media-playback/using-avplay.html`; `api-references/samsung-product-api-references/avplay-api.html`):
+  - States go NONE → IDLE (`open`) → READY (`prepare`) → PLAYING/PAUSED. `stop()` returns to IDLE and keeps the settings, so `prepare()` and `play()` replay; `close()` returns to NONE.
+  - Each method lists the states it "can be called in"; outside them it throws `InvalidStateError`. `seekTo`, `jumpForward`/`jumpBackward` and `prepareAsync` report errors to their error callback, and the App must wait for a seek's callback before calling anything else. `pause()` during a seek throws `InvalidAccessError`.
+  - `prepare()`/`prepareAsync()` invoke `onbufferingstart` and the player enters READY; `play()` invokes `oncurrentplaytime` (milliseconds). The order of `onbufferingprogress`/`onbufferingcomplete`, how often `oncurrentplaytime` fires, and the state after `onstreamcompleted` are **unverified**.
+  - `setDisplayRect` always uses 1920×1080 coordinates, whatever the App's resolution. Negative values throw `InvalidValuesError`. That no video shows before the first `setDisplayRect` is **unverified**.
+  - By default video fills the display area; `PLAYER_DISPLAY_MODE_LETTER_BOX` fits it.
+  - `setSpeed` takes -16, -8, -4, -2, 1, 2, 4, 8 or 16. A time buffer in `setBufferingParam` is at least 4 seconds.
+  - `setDrm` and `getUID` need the `drmplay` privilege; `getUID` is deprecated since 7.0. No other method names a privilege, and the `avplay` privilege is "not used in TV Web applications".
+  - Whether the Access Policy applies to AVPlay's streams is **unverified**. tizen-sim plays them in a `<video>`, so it does.
+  - `getDuration` and `getCurrentTime` are in milliseconds.
+- **Video plane.** The rule that the AVPlay video sits behind the page comes from the user's specification (ADR-0004). The guides fetched so far don't state it explicitly. The guide's only related rule: the `<object type="application/avplayer">` element's `style` must follow `setDisplayRect` changes.
 
 ## Engine features
 

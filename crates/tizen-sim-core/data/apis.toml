@@ -10,8 +10,9 @@
 #   releases, the deprecation notice included (TD
 #   reference/deprecation-policy.md); the reference says which ones.
 #
-# Of the Shimmed members, only tizen.filesystem's pre-5.0 ones are
-# deprecated, and no Version Profile falls in their deprecation window.
+# Of the Shimmed members, tizen.filesystem's pre-5.0 ones and
+# webapis.avplay.getUID are deprecated. No Version Profile falls in the
+# former's deprecation window.
 #
 # "Since" versions come from each member's API reference ("Since: x.y"); the
 # references are cited per module.
@@ -155,3 +156,29 @@ since = "5.0"
 [[api]]
 name = "tizen.filesystem.maxNameLength"
 since = "5.0"
+
+# samsung-product-api-references/avplay-api.html. getUID is "Deprecated
+# since 7.0", and still in the reference.
+[[api]]
+name = "webapis.avplay.setLooping"
+since = "4.0"
+
+[[api]]
+name = "webapis.avplay.enableAudioStream"
+since = "6.5"
+
+[[api]]
+name = "webapis.avplay.disableAudioStream"
+since = "6.5"
+
+[[api]]
+name = "webapis.avplay.getSubState"
+since = "9.0"
+
+[[api]]
+name = "webapis.avplay.getVideoSize"
+since = "10.0"
+
+[[api]]
+name = "webapis.avplay.getUID"
+deprecated = "7.0"

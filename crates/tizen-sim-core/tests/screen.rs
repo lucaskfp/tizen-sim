@@ -6,7 +6,7 @@ mod support;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::time::Duration;
-use support::{expect_event, start, start_with};
+use support::{expect_event, pixel, start, start_with};
 use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{Lifecycle, Session, SessionEvent};
 use tokio_tungstenite::tungstenite::Message;
@@ -65,17 +65,6 @@ async fn try_cdp_call(
         }
     }
     Err("no reply".into())
-}
-
-/// The RGB colour of a pixel of a PNG screenshot.
-fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
-    let decoder = png::Decoder::new(std::io::Cursor::new(png));
-    let mut reader = decoder.read_info().unwrap();
-    let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
-    let frame = reader.next_frame(&mut buffer).unwrap();
-    let channels = frame.color_type.samples();
-    let at = (y * frame.width + x) as usize * channels;
-    [buffer[at], buffer[at + 1], buffer[at + 2]]
 }
 
 fn png_size(png: &[u8]) -> (u32, u32) {
