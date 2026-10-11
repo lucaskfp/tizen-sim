@@ -40,6 +40,10 @@ pub struct SessionConfig {
     /// A Chromium executable to run instead of the Version Profile's Engine
     /// from the Engine Manifest, which is then not downloaded.
     pub engine_path: Option<PathBuf>,
+    /// Whether the Engine has a headless mode, in place of what the Engine
+    /// Manifest says (an `engine_path` Engine is taken to have one). Without
+    /// one, a headless Session runs the Engine in a window off the screen.
+    pub engine_has_headless: Option<bool>,
     /// Run the Engine without a window (CI, automated tests).
     pub headless: bool,
     /// Lenient Mode: allow calls a TV would refuse (undeclared privileges),
@@ -882,6 +886,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             (installed.executable, spec.headless)
         }
     };
+    let has_headless = config.engine_has_headless.unwrap_or(has_headless);
     let window = match (config.headless, has_headless) {
         (false, _) => EngineWindow::Shown,
         (true, true) => EngineWindow::Headless,

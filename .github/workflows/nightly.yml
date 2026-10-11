@@ -1,0 +1,57 @@
+name: Nightly
+
+# The in-page Shim suite on every Version Profile with an Engine, so a Shim
+# change can't silently break older TVs. The jobs come from the Engine
+# Manifest: adding an Engine adds its job.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        run: echo "matrix=$(python3 .github/scripts/shim-suite-matrix.py)" >> "$GITHUB_OUTPUT"
+
+  shims:
+    name: Shim suite (${{ matrix.label }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TIZEN_SIM_TEST_NO_HEADLESS: ${{ matrix.no_headless }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.tizen-sim/engines
+          key: engines-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('crates/tizen-sim-core/data/engines.toml') }}
+      - if: runner.os == 'Linux'
+        run: |
+          # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # The virtual display an Engine without a headless mode draws on.
+          sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Shim suite on Tizen ${{ matrix.profile }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" .github/scripts/run-shim-suite.sh "${{ matrix.profile }}"
+          else
+            .github/scripts/run-shim-suite.sh "${{ matrix.profile }}"
+          fi

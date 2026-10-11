@@ -115,6 +115,11 @@ fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
         source,
         profile: test_profile(),
         engine_path: None,
+        // Runs the suite the way an Engine without a headless mode runs,
+        // e.g. to try the virtual display such Engines need on Linux.
+        engine_has_headless: std::env::var_os("TIZEN_SIM_TEST_NO_HEADLESS")
+            .filter(|value| !value.is_empty())
+            .map(|_| false),
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,
         key_map: tizen_sim_core::remote_keys::KeyMap::default(),

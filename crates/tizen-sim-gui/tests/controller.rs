@@ -101,6 +101,7 @@ async fn start_elsewhere(gui: &TestGui, name: &str) -> (Session, RegistryEntry) 
         source: fixture(name),
         profile: None,
         engine_path: None,
+        engine_has_headless: None,
         headless: headless(),
         lenient: false,
         key_map: Default::default(),

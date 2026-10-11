@@ -219,6 +219,7 @@ impl RunArgs {
             source,
             profile: self.profile,
             engine_path: self.engine_path,
+            engine_has_headless: None,
             headless: self.headless,
             lenient: self.lenient,
             key_map,

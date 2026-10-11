@@ -232,6 +232,7 @@ impl Controller {
             source: source.clone(),
             profile: profile.clone(),
             engine_path: self.options.engine_path.clone(),
+            engine_has_headless: None,
             headless: self.options.headless,
             lenient: false,
             key_map: KeyMap::default(),

@@ -216,6 +216,32 @@ async fn an_engine_path_is_launched_instead_of_a_cached_engine() {
     );
 }
 
+/// An Engine without a headless mode runs a headless Session in a window
+/// off the screen (ADR-0001), which still draws the App.
+#[tokio::test]
+async fn an_engine_without_headless_mode_runs_headless_sessions_off_screen() {
+    // The window needs a display; the nightly Shim suite covers Linux under a
+    // virtual one.
+    if cfg!(unix) && std::env::var_os("DISPLAY").is_none() {
+        eprintln!("skipped: no display");
+        return;
+    }
+    let t = support::start_with("hello", |config| {
+        config.headless = true;
+        config.engine_has_headless = Some(false);
+    });
+    t.session.wait_until_loaded().await.unwrap();
+
+    // The Engine puts it at x = -20000 (`OFF_SCREEN` in engine.rs).
+    let left = t.session.evaluate("window.screenX").await.unwrap();
+    assert!(
+        left.as_i64().unwrap() < -10000,
+        "the Engine window is on the screen, at x = {left}"
+    );
+    assert!(!t.session.screenshot().await.unwrap().is_empty());
+    t.session.stop().await;
+}
+
 #[tokio::test]
 async fn a_session_remembers_its_profile_for_the_app() {
     let t = start("hello");
