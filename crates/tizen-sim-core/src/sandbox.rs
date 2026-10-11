@@ -363,9 +363,12 @@ fn delete(at: &Resolved, params: &Value) -> Result<Value, SandboxError> {
 /// Copies (or moves) the file or directory at `from` to exactly `to`. A
 /// directory merges into one already at `to`, and what is in the way is
 /// replaced only when `overwrite` is set (#FileSystemManager::copyDirectory,
-/// moveDirectory; copyFile and File.copyTo for files). That a refused merge
-/// leaves everything unchanged, and that a virtual root can't be copied or
-/// moved, are unverified. `kind`, if given, is what `from` must be.
+/// moveDirectory; copyFile and File.copyTo for files). Without it the copy
+/// stops at the first conflict, keeping what it copied so far; a missing
+/// destination directory is IOError for a copy (both measured on a Tizen 5.0
+/// TV) and NotFoundError for a move (#FileSystemManager::moveFile). That a
+/// virtual root can't be copied or moved is unverified. `kind`, if given, is
+/// what `from` must be.
 fn transfer(
     from: &Resolved,
     to: &Resolved,
@@ -398,76 +401,65 @@ fn transfer(
     }
     if !to.disk.parent().is_some_and(Path::is_dir) {
         return Err(error(
-            "NotFoundError",
+            if remove_source {
+                "NotFoundError"
+            } else {
+                "IOError"
+            },
             format!("the directory of {} does not exist", to.virtual_path),
         ));
     }
     let overwrite = params["overwrite"].as_bool().unwrap_or(false);
-    if !overwrite && let Some(conflict) = first_conflict(&from.disk, &to.disk) {
-        return Err(error(
+    copy_over(&from.disk, &to.disk, overwrite).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => error(
             "IOError",
-            format!(
-                "{} already exists",
-                to.virtual_path.clone() + &virtual_suffix(&to.disk, &conflict)
-            ),
-        ));
-    }
-    let io = |e| io_error(&from.virtual_path, e);
-    copy_over(&from.disk, &to.disk).map_err(io)?;
+            format!("{} would overwrite what is already there", to.virtual_path),
+        ),
+        _ => io_error(&from.virtual_path, e),
+    })?;
     if remove_source {
-        if from.disk.is_dir() {
-            std::fs::remove_dir_all(&from.disk).map_err(io)?;
+        let removed = if from.disk.is_dir() {
+            std::fs::remove_dir_all(&from.disk)
         } else {
-            std::fs::remove_file(&from.disk).map_err(io)?;
-        }
+            std::fs::remove_file(&from.disk)
+        };
+        removed.map_err(|e| io_error(&from.virtual_path, e))?;
     }
     Ok(json!(to.virtual_path))
 }
 
-/// The first place where copying `from` onto `to` would replace something.
-fn first_conflict(from: &Path, to: &Path) -> Option<PathBuf> {
-    if !to.exists() {
-        return None;
-    }
-    if !(from.is_dir() && to.is_dir()) {
-        return Some(to.to_path_buf());
-    }
-    std::fs::read_dir(from)
-        .ok()?
-        .flatten()
-        .find_map(|entry| first_conflict(&entry.path(), &to.join(entry.file_name())))
-}
-
-/// Copies `from` onto `to`, merging directories and replacing the rest.
-fn copy_over(from: &Path, to: &Path) -> std::io::Result<()> {
+/// Copies `from` onto `to`, merging directories, in name order. What is in
+/// the way is replaced when `overwrite` is set; otherwise the copy stops
+/// there with `AlreadyExists`.
+fn copy_over(from: &Path, to: &Path, overwrite: bool) -> std::io::Result<()> {
+    let in_the_way = || {
+        if overwrite {
+            Ok(())
+        } else {
+            Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+        }
+    };
     if from.is_dir() {
         if to.is_file() {
+            in_the_way()?;
             std::fs::remove_file(to)?;
         }
         std::fs::create_dir_all(to)?;
-        for entry in std::fs::read_dir(from)? {
-            let entry = entry?;
-            copy_over(&entry.path(), &to.join(entry.file_name()))?;
+        let mut entries: Vec<_> = std::fs::read_dir(from)?.collect::<Result<_, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            copy_over(&entry.path(), &to.join(entry.file_name()), overwrite)?;
         }
         Ok(())
     } else {
-        if to.is_dir() {
-            std::fs::remove_dir_all(to)?;
+        if to.exists() {
+            in_the_way()?;
+            if to.is_dir() {
+                std::fs::remove_dir_all(to)?;
+            }
         }
         std::fs::copy(from, to).map(|_| ())
     }
-}
-
-/// `inner`'s path below `outer`, `/`-separated with a leading `/`.
-fn virtual_suffix(outer: &Path, inner: &Path) -> String {
-    inner
-        .strip_prefix(outer)
-        .map(|rest| {
-            rest.components()
-                .map(|c| format!("/{}", c.as_os_str().to_string_lossy()))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn is_root(at: &Resolved) -> bool {
@@ -805,7 +797,8 @@ mod tests {
                 &json!({ "from": "documents/b.txt", "to": "documents/no/x" }),
             )
             .unwrap_err();
-        assert_eq!(no_directory.name, "NotFoundError");
+        // Measured on a Tizen 5.0 TV: copyFile gives IOError here.
+        assert_eq!(no_directory.name, "IOError");
         let wrong_kind = sandbox
             .call(
                 "copy",
@@ -818,11 +811,14 @@ mod tests {
     #[test]
     fn directories_merge_into_an_existing_destination() {
         let (_dir, sandbox) = sandbox();
+        put(&sandbox, "documents/src/a.txt", "a");
         put(&sandbox, "documents/src/one.txt", "new one");
         put(&sandbox, "documents/src/sub/two.txt", "two");
         put(&sandbox, "documents/dst/one.txt", "old one");
         put(&sandbox, "documents/dst/keep.txt", "keep");
 
+        // Without overwrite the copy stops at the first conflict, keeping
+        // what it copied before it, as a Tizen 5.0 TV does.
         let conflict = sandbox
             .call(
                 "copy",
@@ -830,6 +826,8 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(conflict.name, "IOError");
+        assert_eq!(text(&sandbox, "documents/dst/a.txt"), "a");
+        assert_eq!(text(&sandbox, "documents/dst/one.txt"), "old one");
         sandbox
             .call(
                 "move",

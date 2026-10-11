@@ -103,6 +103,11 @@ function requireVirtualPath(path: any, api: string, errorName: string): VirtualP
   throw new WebAPIException(errorName, text + " is not a valid path");
 }
 
+/** Whether a path has `.` or `..` components, which no Tizen path may. */
+function hasDotSegments(path: any): boolean {
+  return typeof path === "string" && /(^|\/)\.\.?(\/|$)/.test(path);
+}
+
 /** The path one level up, or null for a virtual root. */
 function parentPath(path: VirtualPath): VirtualPath | null {
   if (!path.parts.length) {
@@ -364,16 +369,29 @@ function listDirectoryEntries(path: VirtualPath, filter: any): Stat[] {
   return matching;
 }
 
-// Storages: the Sandbox's virtual roots, all internal and mounted. Which
-// labels a TV lists is unverified: listStorages says only that labels "can
-// differ depending on platform implementation".
+// Storages: internal0 and the virtual roots, all internal and mounted, in
+// the order a Tizen 5.0 TV lists them (measured; listStorages says only that
+// labels "can differ depending on platform implementation").
+
+var STORAGE_LABELS = [
+  "internal0",
+  "images",
+  "videos",
+  "camera",
+  "downloads",
+  "music",
+  "documents",
+  "wgt-package",
+  "wgt-private",
+  "wgt-private-tmp",
+];
 
 var nextStorageListenerId = 1;
 
 function storages() {
   var list: any[] = [];
-  for (var i = 0; i < VIRTUAL_ROOTS.length; i++) {
-    list.push({ label: VIRTUAL_ROOTS[i], type: "INTERNAL", state: "MOUNTED" });
+  for (var i = 0; i < STORAGE_LABELS.length; i++) {
+    list.push({ label: STORAGE_LABELS[i], type: "INTERNAL", state: "MOUNTED" });
   }
   return list;
 }

@@ -407,8 +407,9 @@ async fn files_are_handled_through_file_objects_before_tizen_6() {
             3,
             [108, 108, 111, 33],
             "IT8=",
-            true,
-            -1,
+            // A read that ends exactly at the end doesn't set eof (measured).
+            false,
+            0,
             "documents/music/ramones/",
             "song.txt",
             "documents/music/ramones/song.txt",
@@ -514,5 +515,121 @@ async fn paths_outside_the_virtual_roots_fail_with_a_diagnostic() {
             if d.code == "filesystem-outside-sandbox" && d.message.contains("file:///tmp"))
     })
     .await;
+    t.session.stop().await;
+}
+
+/// Details of the 5.0 API the reference leaves open, as measured on a Tizen
+/// 5.0 TV (UN50RU7100).
+#[tokio::test]
+async fn the_path_api_behaves_as_measured_on_a_tv() {
+    if !has_path_api() {
+        return;
+    }
+    let t = start("filesystem");
+    t.session.wait_until_loaded().await.unwrap();
+    let measured = eval_callback(
+        &t.session,
+        "var fs = tizen.filesystem; var out = []; \
+         function name(f) { try { return f(); } catch (e) { return e.name; } } \
+         out.push(fs.getDirName('abc'), fs.getDirName('/'), fs.getDirName('/a/b/'), fs.getDirName('a//b')); \
+         out.push(fs.pathExists('wgt-private/../wgt-private')); \
+         out.push(name(function () { return fs.openFile('foo/bar.txt', 'w'); })); \
+         var w = fs.openFile('wgt-private/m/a.txt', 'w'); w.writeString('abc'); w.close(); \
+         var d = fs.openFile('wgt-private/m', 'r'); \
+         out.push(name(function () { return d.readString(); })); \
+         var a = fs.openFile('wgt-private/m/a.txt', 'a'); out.push(a.seek(1), a.seek(0, 'CURRENT')); \
+         a.writeString('Z'); a.close(); \
+         out.push(fs.openFile('wgt-private/m/a.txt', 'r').readString()); \
+         fs.listStorages(function (s) { out.push(s[0].label + ' ' + s.length); \
+           fs.copyFile('wgt-private/m/a.txt', 'wgt-private/none/a.txt', false, null, function (e) { \
+             out.push(e.name); \
+             fs.listDirectory('wgt-private/m/a.txt', function () { done('listed'); }, function (e) { \
+               out.push(e.name); done(out); }); }); });",
+    )
+    .await;
+    assert_eq!(
+        measured,
+        json!([
+            "abc",
+            "/",
+            "/a",
+            "a",
+            false,
+            "NotFoundError",
+            "IOError",
+            1,
+            1,
+            "abcZ",
+            "internal0 10",
+            "IOError",
+            "IOError"
+        ])
+    );
+    t.session.stop().await;
+}
+
+/// Details of the pre-5.0 API the reference leaves open, as measured on a
+/// Tizen 5.0 TV (UN50RU7100), which has both shapes.
+#[tokio::test]
+async fn file_objects_behave_as_measured_on_a_tv() {
+    if !has_file_api() {
+        return;
+    }
+    let t = start("filesystem");
+    t.session.wait_until_loaded().await.unwrap();
+    let measured = eval_callback(
+        &t.session,
+        "var fs = tizen.filesystem; var out = []; \
+         function name(f) { try { return f(); } catch (e) { return e.name; } } \
+         function fail(e) { done('error ' + e.name + ': ' + e.message); } \
+         fs.resolve('documents', function (docs) { \
+           docs.createDirectory('m'); \
+           out.push(name(function () { return docs.createDirectory('m'); })); \
+           out.push(name(function () { return docs.createFile('nodir/x.txt'); })); \
+           var m = docs.resolve('m'); out.push(m.parent.fullPath, m.parent.path, m.path); \
+           var f = m.createFile('e.txt'); \
+           f.openStream('w', function (s) { s.write('XY'); s.close(); \
+             var closed = name(function () { return s.read(1); }); \
+             f.openStream('r', function (r) { \
+               out.push(closed, r.eof, r.bytesAvailable, r.read(2), r.eof, r.bytesAvailable, \
+                 r.read(1), r.eof, r.bytesAvailable); \
+               r.close(); \
+               fs.resolve('documents/m', function (ro) { \
+                 out.push(name(function () { return ro.createFile('n.txt'); })); \
+                 ro.copyTo('documents/m/e.txt', 'documents/m/c.txt', true, function () { \
+                   out.push('copied'); \
+                   ro.deleteFile('documents/m/c.txt', function () { done('deleted'); }, function (e) { \
+                     out.push(e.name); \
+                     ro.resolve('e.txt').openStream('w', function () { done('opened'); }, function (e) { \
+                       out.push(e.name); done(out); }); }); \
+                 }, fail); \
+               }, fail, 'r'); \
+             }, fail); }, fail); \
+         }, fail, 'rw');",
+    )
+    .await;
+    assert_eq!(
+        measured,
+        json!([
+            "InvalidValuesError",
+            "UnknownError",
+            "documents/",
+            "documents/",
+            "documents/",
+            "IOError",
+            false,
+            2,
+            "XY",
+            false,
+            0,
+            "",
+            true,
+            -1,
+            "InvalidValuesError",
+            "copied",
+            "InvalidValuesError",
+            "InvalidValuesError"
+        ])
+    );
     t.session.stop().await;
 }

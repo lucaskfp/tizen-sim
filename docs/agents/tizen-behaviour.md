@@ -152,17 +152,44 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
 
 ## File system
 
-Sources: `filesystem.html` in the 4.0 TV reference (before the 5.0 rework), the 5.0 one (deprecations) and the 9.0 one (after it); TD `guides/data/file-system.md`.
+Sources: `filesystem.html` in the 4.0 TV reference (before the 5.0 rework), the 5.0 one (deprecations) and the 9.0 one (after it); TD `guides/data/file-system.md`. **Measured** below means checked with a probe App on a Tizen 5.0 TV (UN50RU7100, 2019), which has both shapes.
 
 - **Two shapes.** Up to 4.0, `tizen.filesystem.resolve()` hands out `File` objects, and `File.openStream()` hands out `FileStream`s. 5.0 adds `openFile()`/`FileHandle` and path-based methods (`createDirectory`, `copyFile`, `listDirectory`, `pathExists`, ...), and deprecates `resolve`, `File` and `FileStream`. The 6.0 reference no longer has them. `getStorage`, `listStorages` and the storage listeners exist throughout.
-- **Virtual roots.** Paths are `<root>/<path>`. The roots are `documents`, `downloads`, `images`, `music`, `videos`, `camera`, `wgt-package` (the App's files, read-only), `wgt-private` and `wgt-private-tmp`. `ringtones` isn't supported on TV (file-system guide). File URIs and absolute paths are also accepted on a TV.
-  - tizen-sim keeps each App in its Sandbox, so paths outside the roots fail and raise the `filesystem-outside-sandbox` Diagnostic.
-- **`wgt-private-tmp`** holds data "available during a widget execution cycle" and "can be removed" when the App closes (4.0 `resolve`). tizen-sim empties it when a Session starts.
-- **Privileges.** Each method names `filesystem.read` and/or `filesystem.write`. `openFile` needs write for modes `a`, `rw`, `rwo`, `w` and read for `r`, `rw`, `rwo`. From 5.0, the reference adds that internal storage needs `mediastorage` (external storage needs `externalstorage`). tizen-sim applies that to the media roots, not to `wgt-*`. That this is where the line falls is **unverified**.
-- **`resolve(location, ..., mode)`:** `mode` defaults to `rw`. A writable mode on a read-only root goes to the error callback as `InvalidValuesError`, and an unknown location as `NotFoundError`.
-- **`openFile` modes.** `r` and `rw` throw `NotFoundError` for a missing file. `w` and `rwo` create or empty it, and `a` creates it and always writes at the end. `makeParents` defaults to true.
-- **Unverified:** whether a legacy `openStream('w')` empties the file; what reading a write-only stream throws (tizen-sim throws `IOError`); which labels `listStorages` reports (tizen-sim reports the virtual roots); `maxNameLength` 255 and `maxPathLength` 4096 come from the reference's examples.
-- **`toURI`** returns a `file://` URI on a TV. A page served over HTTP can't load one, so tizen-sim returns its dev server's URL for the file.
+  - Measured: calling `resolve` on 5.0 logs no deprecation warning.
+- **Virtual roots.** Paths are `<root>/<path>`. The roots are `documents`, `downloads`, `images`, `music`, `videos`, `camera`, `wgt-package` (the App's files, read-only), `wgt-private` and `wgt-private-tmp`. `ringtones` isn't supported on TV (file-system guide). Measured:
+  - `ringtones` gives `InvalidValuesError` (`NotFoundError` from `resolve`).
+  - File URIs and absolute paths (`file:///tmp`, `/tmp`) work. tizen-sim keeps each App in its Sandbox, so these fail and raise the `filesystem-outside-sandbox` Diagnostic.
+  - `wgt-private` also holds the Engine's own files (`.appdb.db`, `.cookie`, `chromium-efl`). tizen-sim doesn't put them there.
+- **Persistence.** Measured: `wgt-private` survives the App closing and relaunching, and `wgt-private-tmp` comes back empty. The 4.0 `resolve` doc says it holds data "available during a widget execution cycle". tizen-sim empties it when a Session starts.
+- **Privileges.** Each method names `filesystem.read` and/or `filesystem.write`. `openFile` needs write for modes `a`, `rw`, `rwo`, `w` and read for `r`, `rw`, `rwo`.
+  - Measured: both are enforced. Without them, every method throws `SecurityError` except `toURI` and `getDirName`.
+  - From 5.0, the reference adds that internal storage needs `mediastorage`. Measured: the TV **doesn't enforce it**; an App without it reads and writes `documents`. tizen-sim follows the reference and requires it for the media roots, as it does for the `internet` privilege the same TV also doesn't enforce (ADR-0003).
+- **`resolve(location, ..., mode)`:** `mode` defaults to `rw`. A writable mode on a read-only root goes to the error callback as `InvalidValuesError`, and an unknown location as `NotFoundError`. Measured:
+  - `.` or `..` in the location gives `InvalidValuesError`.
+  - The mode is enforced on the `File`s it hands out, including children it resolves. With `r`, `createFile`, `createDirectory`, `deleteFile` and `openStream` in a writable mode fail with `InvalidValuesError`, but `copyTo` works. That `moveTo` and `deleteDirectory` are refused too is **unverified**.
+- **`File`** (measured):
+  - A root resolved by name has `path` and `fullPath` equal to its name and `parent` null. A root reached as a child's `parent` has both ending in `/` (`documents/`).
+  - `createDirectory` on an existing directory gives `InvalidValuesError`, though the reference says `IOError`.
+  - `createFile` gives `IOError` for an existing file and `UnknownError` for a missing parent directory.
+- **`FileStream`** (measured):
+  - `openStream('w')` empties the file.
+  - Reading a `w` or `a` stream, or writing an `r` one, throws `IOError`, and so does any use after `close()`.
+  - `eof` turns true only when a read starts at the end. Reading exactly up to the end leaves it false, with `bytesAvailable` 0; after that, `bytesAvailable` is -1.
+  - An unsupported encoding called neither callback within 4s; tizen-sim reports `InvalidValuesError` to the error callback (**unverified**).
+- **`openFile` modes.** `r` and `rw` throw `NotFoundError` for a missing file. `w` and `rwo` create or empty it, and `a` creates it. `makeParents` defaults to true. Measured:
+  - An invalid path gives `NotFoundError`.
+  - A directory opens in `r`; reading it then fails with `IOError`.
+  - In `a`, `seek` moves the position, but writes still go to the end.
+  - Reading a `w` handle or writing an `r` one throws `IOError`, as do seeking before the start and closing twice.
+- **Path methods** (measured):
+  - `pathExists` with `.` or `..` gives `false`.
+  - `listDirectory` on a file gives `IOError`.
+  - `copyFile` into a missing directory gives `IOError`.
+  - `copyDirectory` without `overwrite` stops at the first conflict, keeping what it already copied.
+  - Deleting a virtual root gives `IOError`.
+  - `getDirName` returns a path without `/` unchanged, keeps `/` as `/`, and drops trailing and doubled slashes (`/a/b/` gives `/a`).
+- **Storages.** Measured: `listStorages` reports `internal0` and then the virtual roots, all `INTERNAL` and `MOUNTED`. `maxNameLength` is 255 and `maxPathLength` 4096.
+- **`toURI`** returns a `file://` URI on a TV: `file:///opt/usr/home/owner/content/Documents/...` for `documents`, and `.../apps_rw/<package>/data/...` for `wgt-private` (measured). A page served over HTTP can't load one, so tizen-sim returns its dev server's URL for the file.
 
 ## Screen and media
 

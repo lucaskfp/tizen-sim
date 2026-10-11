@@ -636,6 +636,9 @@ function requireVirtualPath(path, api, errorName) {
     }
     throw new WebAPIException(errorName, text + " is not a valid path");
 }
+function hasDotSegments(path) {
+    return typeof path === "string" && /(^|\/)\.\.?(\/|$)/.test(path);
+}
 function parentPath(path) {
     if (!path.parts.length) {
         return null;
@@ -858,11 +861,23 @@ function listDirectoryEntries(path, filter) {
     }
     return matching;
 }
+var STORAGE_LABELS = [
+    "internal0",
+    "images",
+    "videos",
+    "camera",
+    "downloads",
+    "music",
+    "documents",
+    "wgt-package",
+    "wgt-private",
+    "wgt-private-tmp",
+];
 var nextStorageListenerId = 1;
 function storages() {
     var list = [];
-    for (var i = 0; i < VIRTUAL_ROOTS.length; i++) {
-        list.push({ label: VIRTUAL_ROOTS[i], type: "INTERNAL", state: "MOUNTED" });
+    for (var i = 0; i < STORAGE_LABELS.length; i++) {
+        list.push({ label: STORAGE_LABELS[i], type: "INTERNAL", state: "MOUNTED" });
     }
     return list;
 }
@@ -929,7 +944,11 @@ function fileObject(path, mode, stat) {
             if (!parent) {
                 return null;
             }
-            return fileObject(parent, mode, sandboxCall("stat", { path: parent.full }));
+            var up = fileObject(parent, mode, sandboxCall("stat", { path: parent.full }));
+            if (!parent.parts.length) {
+                up.path = up.fullPath = parent.root + "/";
+            }
+            return up;
         },
         readOnly: stat.readOnly,
         isFile: !isDirectory,
@@ -972,6 +991,9 @@ function fileObject(path, mode, stat) {
             requireFunction(onsuccess, "onsuccess");
             requireOptionalFunction(onerror, "onerror");
             runLater(function () {
+                if (streamMode !== "r") {
+                    requireWritable();
+                }
                 var name = encodingName(encoding);
                 if (!name) {
                     throw new WebAPIException("InvalidValuesError", "Unsupported encoding: " + encoding);
@@ -1009,13 +1031,18 @@ function fileObject(path, mode, stat) {
         },
         createDirectory: function (dirPath) {
             requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem File.createDirectory");
+            requireWritable();
             requireDirectory();
             var child = childPath(path, dirPath, "InvalidValuesError");
+            if (statOrNull(child)) {
+                throw new WebAPIException("InvalidValuesError", child.full + " already exists");
+            }
             sandboxCall("createDirectory", { path: child.full, makeParents: true });
             return fileObject(child, mode, sandboxCall("stat", { path: child.full }));
         },
         createFile: function (relativeFilePath) {
             requirePrivilege(FS_WRITE_PRIVILEGE, "tizen.filesystem File.createFile");
+            requireWritable();
             requireDirectory();
             var child = childPath(path, relativeFilePath, "InvalidValuesError");
             try {
@@ -1023,7 +1050,7 @@ function fileObject(path, mode, stat) {
             }
             catch (e) {
                 if (e instanceof WebAPIException && e.name === "NotFoundError") {
-                    throw new WebAPIException("IOError", e.message);
+                    throw new WebAPIException("UnknownError", e.message);
                 }
                 throw e;
             }
@@ -1042,6 +1069,11 @@ function fileObject(path, mode, stat) {
             deleteBelow("file", "File.deleteFile", filePath, false, onsuccess, onerror);
         },
     };
+    function requireWritable() {
+        if (mode === "r") {
+            throw new WebAPIException("InvalidValuesError", path.full + " was resolved read-only");
+        }
+    }
     function requireDirectory() {
         if (!isDirectory) {
             throw new WebAPIException("IOError", path.full + " is not a directory");
@@ -1059,6 +1091,9 @@ function fileObject(path, mode, stat) {
         requireOptionalFunction(onsuccess, "onsuccess");
         requireOptionalFunction(onerror, "onerror");
         runLater(function () {
+            if (call === "move") {
+                requireWritable();
+            }
             requireDirectory();
             var from = requireBelow(origin, "InvalidValuesError");
             var to = requireVirtualPath(destination, "tizen.filesystem " + api, "InvalidValuesError");
@@ -1073,6 +1108,7 @@ function fileObject(path, mode, stat) {
         requireOptionalFunction(onsuccess, "onsuccess");
         requireOptionalFunction(onerror, "onerror");
         runLater(function () {
+            requireWritable();
             requireDirectory();
             var below = requireBelow(target, "InvalidValuesError");
             sandboxCall("delete", { path: below.full, kind: kind, recursive: recursive });
@@ -1086,9 +1122,10 @@ function fileStream(path, mode, encoding) {
     var size = sandboxCall("stat", { path: path.full }).size;
     var position = mode === "a" ? size : 0;
     var closed = false;
+    var eof = false;
     function use(write, api) {
         if (closed) {
-            throw new Error("The FileStream is closed");
+            throw new WebAPIException("IOError", "The FileStream is closed");
         }
         requirePrivilege(write ? FS_WRITE_PRIVILEGE : FS_READ_PRIVILEGE, "tizen.filesystem FileStream." + api);
         if (write ? mode === "r" : mode === "w" || mode === "a") {
@@ -1108,19 +1145,27 @@ function fileStream(path, mode, encoding) {
     function write(bytes) {
         size = writeBytes(path, position, bytes);
         position += bytes.length;
+        eof = false;
+    }
+    function read(length) {
+        eof = position >= size;
+        var bytes = readBytes(path, position, length);
+        position += bytes.length;
+        return bytes;
     }
     return {
         get eof() {
-            return position >= size;
+            return eof;
         },
         get position() {
             return position;
         },
         set position(value) {
             position = Math.max(0, Math.floor(Number(value)) || 0);
+            eof = false;
         },
         get bytesAvailable() {
-            return position >= size ? -1 : size - position;
+            return eof ? -1 : Math.max(0, size - position);
         },
         close: function () {
             closed = true;
@@ -1128,15 +1173,15 @@ function fileStream(path, mode, encoding) {
         read: function (charCount) {
             use(false, "read");
             var count = requireCount(charCount);
-            var bytes = readBytes(path, position, encoding === "UTF-8" ? count * 4 : count);
+            var start = position;
+            var bytes = read(encoding === "UTF-8" ? count * 4 : count);
             var decoded = decodeText(bytes, encoding, count);
-            position += decoded.bytes;
+            position = start + decoded.bytes;
             return decoded.text;
         },
         readBytes: function (byteCount) {
             use(false, "readBytes");
-            var bytes = readBytes(path, position, requireCount(byteCount));
-            position += bytes.length;
+            var bytes = read(requireCount(byteCount));
             var octets = [];
             for (var i = 0; i < bytes.length; i++) {
                 octets.push(bytes[i]);
@@ -1145,8 +1190,7 @@ function fileStream(path, mode, encoding) {
         },
         readBase64: function (byteCount) {
             use(false, "readBase64");
-            var bytes = readBytes(path, position, requireCount(byteCount));
-            position += bytes.length;
+            var bytes = read(requireCount(byteCount));
             return bytesToBase64(bytes);
         },
         write: function (stringData) {
@@ -1184,6 +1228,9 @@ var fileApiMethods = {
             requireStorageAccess(path, "tizen.filesystem.resolve");
         }
         runLater(function () {
+            if (hasDotSegments(location)) {
+                throw new WebAPIException("InvalidValuesError", location + " contains . or ..");
+            }
             var resolved = path || requireVirtualPath(location, "tizen.filesystem.resolve", "NotFoundError");
             if (resolved.root === PACKAGE_ROOT && access !== "r") {
                 throw new WebAPIException("InvalidValuesError", PACKAGE_ROOT + " is read-only; resolve it with mode r");
@@ -1256,10 +1303,6 @@ function fileHandle(givenPath, path, mode) {
             throw new WebAPIException("TypeMismatchError", "seek takes an offset and BEGIN, CURRENT or END");
         }
         requireOpen();
-        if (mode === "a") {
-            position = size();
-            return position;
-        }
         var base = from === "BEGIN" ? 0 : from === "CURRENT" ? position : size();
         var target = base + Math.floor(Number(offset));
         if (target < 0) {
@@ -1464,13 +1507,10 @@ var pathApiMethods = {
         if (openMode === "r" || openMode === "rw" || openMode === "rwo") {
             requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.openFile");
         }
-        var parsed = requireVirtualPath(path, "tizen.filesystem.openFile", "IOError");
+        var parsed = requireVirtualPath(path, "tizen.filesystem.openFile", "NotFoundError");
         requireStorageAccess(parsed, "tizen.filesystem.openFile");
         if (openMode === "r" || openMode === "rw") {
-            var stat = sandboxCall("stat", { path: parsed.full });
-            if (stat.kind !== "file") {
-                throw new WebAPIException("IOError", parsed.full + " is a directory");
-            }
+            sandboxCall("stat", { path: parsed.full });
         }
         else {
             sandboxCall("createFile", {
@@ -1535,7 +1575,7 @@ var pathApiMethods = {
         runLater(function () {
             var stat = sandboxCall("stat", { path: parsed.full });
             if (stat.kind !== "directory") {
-                throw new WebAPIException("NotFoundError", parsed.full + " is not a directory");
+                throw new WebAPIException("IOError", parsed.full + " is not a directory");
             }
             var entries = listDirectoryEntries(parsed, filter);
             var names = [];
@@ -1560,12 +1600,22 @@ var pathApiMethods = {
     },
     pathExists: function (path) {
         requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.pathExists");
+        if (hasDotSegments(path)) {
+            return false;
+        }
         return statOrNull(requirePathArgument(path, "pathExists")) !== null;
     },
     getDirName: function (path) {
-        var text = String(path).replace(/\/+$/, "");
+        var given = String(path);
+        var text = given.replace(/\/+$/, "");
+        if (!text) {
+            return given ? "/" : "";
+        }
         var slash = text.lastIndexOf("/");
-        return slash < 0 ? "" : text.slice(0, slash);
+        if (slash < 0) {
+            return text;
+        }
+        return text.slice(0, slash).replace(/\/+$/, "") || "/";
     },
 };
 var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {

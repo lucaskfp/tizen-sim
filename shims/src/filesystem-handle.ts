@@ -87,11 +87,8 @@ function fileHandle(givenPath: string, path: VirtualPath, mode: string): any {
       throw new WebAPIException("TypeMismatchError", "seek takes an offset and BEGIN, CURRENT or END");
     }
     requireOpen();
-    // In mode a the position stays after the last byte (#FileSystemManager::openFile).
-    if (mode === "a") {
-      position = size();
-      return position;
-    }
+    // In mode a writes still go to the end (see `write`), though seek moves
+    // the position (measured on a Tizen 5.0 TV).
     var base = from === "BEGIN" ? 0 : from === "CURRENT" ? position : size();
     var target = base + Math.floor(Number(offset));
     if (target < 0) {
@@ -347,14 +344,13 @@ var pathApiMethods = {
     if (openMode === "r" || openMode === "rw" || openMode === "rwo") {
       requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.openFile");
     }
-    // The reference lists no InvalidValuesError: an unusable path is IOError.
-    var parsed = requireVirtualPath(path, "tizen.filesystem.openFile", "IOError");
+    // The reference lists no InvalidValuesError: an unusable path is
+    // NotFoundError, as on a Tizen 5.0 TV (measured).
+    var parsed = requireVirtualPath(path, "tizen.filesystem.openFile", "NotFoundError");
     requireStorageAccess(parsed, "tizen.filesystem.openFile");
     if (openMode === "r" || openMode === "rw") {
-      var stat = sandboxCall("stat", { path: parsed.full });
-      if (stat.kind !== "file") {
-        throw new WebAPIException("IOError", parsed.full + " is a directory");
-      }
+      // A directory opens too; reading it then fails (measured).
+      sandboxCall("stat", { path: parsed.full });
     } else {
       sandboxCall("createFile", {
         path: parsed.full,
@@ -427,9 +423,10 @@ var pathApiMethods = {
     var parsed = requirePathArgument(path, "listDirectory");
     runLater(
       function () {
+        // A file gives IOError (measured on a Tizen 5.0 TV).
         var stat = sandboxCall("stat", { path: parsed.full });
         if (stat.kind !== "directory") {
-          throw new WebAPIException("NotFoundError", parsed.full + " is not a directory");
+          throw new WebAPIException("IOError", parsed.full + " is not a directory");
         }
         var entries = listDirectoryEntries(parsed, filter);
         var names: string[] = [];
@@ -462,15 +459,26 @@ var pathApiMethods = {
 
   pathExists: function (path: any) {
     requirePrivilege(FS_READ_PRIVILEGE, "tizen.filesystem.pathExists");
+    // A path with `.` or `..` exists nowhere (measured on a Tizen 5.0 TV).
+    if (hasDotSegments(path)) {
+      return false;
+    }
     return statOrNull(requirePathArgument(path, "pathExists")) !== null;
   },
 
   // Strips trailing slashes, then drops the last component
-  // (#FileSystemManager::getDirName). What a path without "/" gives is
-  // unverified; this gives "".
+  // (#FileSystemManager::getDirName). A path without "/" comes back as it
+  // is, and "/" stays "/" (measured on a Tizen 5.0 TV).
   getDirName: function (path: any) {
-    var text = String(path).replace(/\/+$/, "");
+    var given = String(path);
+    var text = given.replace(/\/+$/, "");
+    if (!text) {
+      return given ? "/" : "";
+    }
     var slash = text.lastIndexOf("/");
-    return slash < 0 ? "" : text.slice(0, slash);
+    if (slash < 0) {
+      return text;
+    }
+    return text.slice(0, slash).replace(/\/+$/, "") || "/";
   },
 };
