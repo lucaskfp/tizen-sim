@@ -4,6 +4,7 @@
 use crate::app::App;
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, RemoteKey};
+use crate::screen::AppResolution;
 use serde_json::{Value, json};
 
 /// The compiled Shims (`npm run build` in `shims/`), ES5 so they run on M47.
@@ -34,13 +35,17 @@ pub fn is_webapis_script(uri_path: &str) -> bool {
 /// The Session data the Shims need, minus the Bridge address, which only the
 /// dev server knows. `device` is the profile's device values with the
 /// Session's overrides applied (`VersionProfile::device_values`).
+/// `resolution` is the App's screen: the Shims report it as `screen.width`
+/// and `height` on Engines whose metrics override can't (see `screen`).
 pub fn session_data(
     app: &App,
     profile: &VersionProfile,
     device: &Value,
     lenient: bool,
     key_map: &KeyMap,
+    resolution: AppResolution,
 ) -> Value {
+    let (width, height) = resolution.size();
     let remote_keys: Vec<Value> = RemoteKey::all()
         .iter()
         .filter(|key| profile.supports_key(key))
@@ -49,6 +54,7 @@ pub fn session_data(
     json!({
         "lenient": lenient,
         "keyMap": key_map.to_json(),
+        "screen": { "width": width, "height": height },
         "app": {
             "id": app.id(),
             "packageId": app.package(),
@@ -63,6 +69,7 @@ pub fn session_data(
             "capabilities": profile.capabilities,
             "device": device,
             "remoteKeys": remote_keys,
+            "apis": crate::apis::ApiCatalog::bundled().for_version(&profile.version),
         },
     })
 }

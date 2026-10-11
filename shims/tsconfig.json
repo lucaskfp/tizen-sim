@@ -16,12 +16,14 @@
     "src/config.ts",
     "src/bridge.ts",
     "src/errors.ts",
+    "src/availability.ts",
     "src/privileges.ts",
     "src/systeminfo.ts",
     "src/application.ts",
     "src/tvinputdevice.ts",
     "src/keyboard.ts",
     "src/webapis.ts",
+    "src/screen.ts",
     "src/install.ts"
   ]
 }

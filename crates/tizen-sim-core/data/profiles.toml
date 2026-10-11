@@ -1,5 +1,7 @@
 # Version Profiles: one entry per Tizen TV release.
 # Engine milestones: https://developer.samsung.com/smarttv/develop/specifications/web-engine-specifications.html
+# User agents: https://developer.samsung.com/smarttv/develop/guides/fundamentals/retrieving-platform-information.html
+# (Table 2), sent by the Engine in place of its own.
 #
 # `capabilities` answers tizen.systeminfo.getCapability; `device` holds the
 # values the system info and Samsung Product API Shims report, which a Session
@@ -10,6 +12,7 @@
 [[profile]]
 version = "10.0"
 milestone = 130
+user_agent = "Mozilla/5.0 (SMART-TV; LINUX; Tizen 10.0) AppleWebKit/537.36 (KHTML, like Gecko) 130.0.6723.116/10.0 TV Safari/537.36"
 # Registrable Keys these TVs support; Mandatory Keys are always available.
 registrable_keys = [
   "Exit", "ColorF0Red", "ColorF1Green", "ColorF2Yellow", "ColorF3Blue",
@@ -60,6 +63,108 @@ localSet = "US_ATSC"
 # ProductInfoSiServerType: 0 operating, 1 development, 2 developing.
 smartTVServerType = 0
 smartTVServerVersion = "T-INFOLINK2024-1000"
+# getLicensedBrand throws NotSupportedError on Samsung products; empty means
+# this is one.
+licensedBrand = ""
+licensedVendor = "tizen-sim"
+udPanel = true
+panel8K = false
+wallModel = false
+uhdaModel = true
+displayRotator = false
+oledPanel = false
+# ProductInfoConfigKey values; CONFIG_KEY_SERVICE_COUNTRY is read-only.
+dataService = "0"
+serviceCountry = "USA"
+# webapis.tvinfo (tvinfo-api.html).
+smartRcBattery = 80
+boardTemperature = 40
+tvsPicSizeResized = false
+# webapis.network (network-api.html), on the connection `networkType` names.
+# Addresses use the reference's examples; the MAC is from the documentation
+# range (RFC 7042).
+ip = "192.168.0.11"
+subnetMask = "255.255.255.0"
+gateway = "192.168.0.1"
+dns = "192.168.0.1"
+secondaryDns = "192.168.0.100"
+mac = "00:00:5E:00:53:01"
+# A NetworkIpMode name: NONE, STATIC, DYNAMIC, AUTO, FIXED or UNKNOWN.
+ipMode = "DYNAMIC"
+tvName = "[TV] tizen-sim"
+# Reported only when networkType is WIFI.
+wifiSsid = "tizen-sim"
+wifiSignalStrength = 5
+wifiFrequency = 5180
+# NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
+wifiSecurityMode = "WPA2_PSK"
+wifiEncryptionType = "AES"
+
+# TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
+# (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
+# DEFAULT or OFF.
+[profile.device.tvMenu]
+PRIMARY_AUDIO_LANGUAGE_KEY = "ENG"
+SECONDARY_AUDIO_LANGUAGE_KEY = "ENG"
+ACCESSIBILITY_VOICE_GUIDE_SPEED = "NORMAL"
+SMARTHUB_CHANNEL_BOUND_APPS_TICKER = "OFF"
+
+[[profile]]
+version = "3.0"
+milestone = 47
+user_agent = "Mozilla/5.0 (SMART-TV; LINUX; Tizen 3.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/3.0 TV Safari/538.1"
+# Registrable Keys these TVs support; Mandatory Keys are always available.
+# The remote-control guide's key table has no per-year columns, so 2017 TVs
+# get the same keys; whether all of them exist there is unverified.
+registrable_keys = [
+  "Exit", "ColorF0Red", "ColorF1Green", "ColorF2Yellow", "ColorF3Blue",
+  "MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "MediaRewind",
+  "MediaFastForward", "MediaRecord", "MediaTrackPrevious", "MediaTrackNext",
+  "ChannelUp", "ChannelDown", "VolumeUp", "VolumeDown", "VolumeMute",
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "Minus",
+  "ChannelList", "PreviousChannel", "Menu", "Tools", "Info", "Source",
+  "Caption", "E-Manual", "3D", "Extra", "PictureSize", "Soccer", "Teletext",
+  "MTS", "Search", "Guide",
+]
+
+[profile.capabilities]
+# Major.Minor.Patch (systeminfo_capability_keys.html).
+"http://tizen.org/feature/platform.version" = "3.0.0"
+"http://tizen.org/feature/profile" = "TV"
+"http://tizen.org/feature/screen.width" = 1920
+"http://tizen.org/feature/screen.height" = 1080
+"http://tizen.org/feature/web.service" = true
+
+[profile.device]
+model = "TIZEN-SIM-TV"
+manufacturer = "tizen-sim"
+buildVersion = "T-SIM-3.0"
+resolutionWidth = 1920
+resolutionHeight = 1080
+dotsPerInch = 40
+physicalWidth = 1210
+physicalHeight = 680
+language = "en_US"
+# Both LANGUAGE_REGION (systeminfo.html#SystemInfoLocale).
+country = "en_US"
+networkType = "ETHERNET"
+cpuLoad = 0.1
+panelWidth = 3840
+panelHeight = 2160
+totalMemory = 3221225472
+availableMemory = 1610612736
+# webapis.productinfo (productinfo-api.html); examples there: model code
+# "15_HAWKP", model "UJS9500", real model "UN65JS9500", server version
+# "T-INFOLINK2014-1002". The firmware, DUID and LocalSet formats are unverified.
+firmware = "T-SIMAKUC-1000.0"
+duid = "TIZENSIMDUID00001"
+modelCode = "17_TIZENSIM_UHD"
+productModel = "TS3UHD"
+realModel = "TS65TS3UHD"
+localSet = "US_ATSC"
+# ProductInfoSiServerType: 0 operating, 1 development, 2 developing.
+smartTVServerType = 0
+smartTVServerVersion = "T-INFOLINK2017-1000"
 # getLicensedBrand throws NotSupportedError on Samsung products; empty means
 # this is one.
 licensedBrand = ""

@@ -44,7 +44,7 @@ async fn systeminfo_reports_version_profile_values() {
         .await
         .unwrap();
     // Major.Minor.Patch (systeminfo_capability_keys.html).
-    assert_eq!(version, "10.0.0");
+    assert_eq!(version, format!("{}.0", support::profile().version));
 
     let display = eval_callback(
         &t.session,
@@ -125,15 +125,27 @@ async fn systeminfo_reports_memory_network_and_panel_and_more() {
         "var s = tizen.systeminfo, out = {}; \
          s.getPropertyValue('MEMORY', function (m) { out.memory = m.status; \
            s.getPropertyValue('NETWORK', function (n) { out.network = n.networkType; \
-             s.getPropertyValue('PANEL', function (p) { out.panel = [p.panelWidth > 0, p.panelHeight > 0]; \
-               s.getPropertyValueArray('DISPLAY', function (d) { out.displays = d.length; \
-                 done(out); }); }); }); });",
+             s.getPropertyValueArray('DISPLAY', function (d) { out.displays = d.length; \
+               done(out); }); }); });",
     )
     .await;
     assert_eq!(
         values,
-        json!({ "memory": "NORMAL", "network": "ETHERNET", "panel": [true, true], "displays": 1 })
+        json!({ "memory": "NORMAL", "network": "ETHERNET", "displays": 1 })
     );
+    // PANEL is a property since Tizen 5.5 (systeminfo.html#SystemInfoPanel);
+    // before, the string isn't a SystemInfoPropertyId.
+    let panel = eval_callback(
+        &t.session,
+        "try { tizen.systeminfo.getPropertyValue('PANEL', function (p) { \
+           done([p.panelWidth > 0, p.panelHeight > 0]); }); } catch (e) { done(e.name); }",
+    )
+    .await;
+    if support::has_api("SystemInfoPropertyId.PANEL") {
+        assert_eq!(panel, json!([true, true]));
+    } else {
+        assert_eq!(panel, json!("TypeMismatchError"));
+    }
 
     // Listeners return ids and may never fire; removing an unknown id is a
     // no-op. PANEL can't be watched (systeminfo.html#SystemInfoPanel).
@@ -143,19 +155,29 @@ async fn systeminfo_reports_memory_network_and_panel_and_more() {
          var a = s.addPropertyValueChangeListener('BUILD', function () {}); \
          var b = s.addPropertyValueChangeListener('MEMORY', function () {}); \
          s.removePropertyValueChangeListener(a); s.removePropertyValueChangeListener(12345); \
-         s.addPropertyValueChangeListener('PANEL', function () {}, null, function (e) { \
-           done([typeof a, a !== b, e.name]); });",
+         done([typeof a, a !== b]);",
     )
     .await;
-    assert_eq!(listeners, json!(["number", true, "NotSupportedError"]));
+    assert_eq!(listeners, json!(["number", true]));
+    if support::has_api("SystemInfoPropertyId.PANEL") {
+        let panel = eval_callback(
+            &t.session,
+            "tizen.systeminfo.addPropertyValueChangeListener('PANEL', function () {}, null, \
+               function (e) { done(e.name); });",
+        )
+        .await;
+        assert_eq!(panel, json!("NotSupportedError"));
+    }
 
     // Since Tizen 8.0 (systeminfo.html#SystemInfo::getDeviceUptime).
-    let uptime = t
-        .session
-        .evaluate("tizen.systeminfo.getDeviceUptime()")
-        .await
-        .unwrap();
-    assert!(uptime.as_u64().is_some(), "{uptime}");
+    if support::has_api("tizen.systeminfo.getDeviceUptime") {
+        let uptime = t
+            .session
+            .evaluate("tizen.systeminfo.getDeviceUptime()")
+            .await
+            .unwrap();
+        assert!(uptime.as_u64().is_some(), "{uptime}");
+    }
     t.session.stop().await;
 }
 

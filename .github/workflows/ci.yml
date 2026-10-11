@@ -51,6 +51,12 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo test --workspace
+      # The Session suite again on the oldest Version Profile's Engine (M47),
+      # which only has a Windows build in the Engine Manifest.
+      - if: runner.os == 'Windows'
+        run: cargo test -p tizen-sim-core
+        env:
+          TIZEN_SIM_TEST_PROFILE: "3.0"
 
   shims:
     runs-on: ubuntu-latest

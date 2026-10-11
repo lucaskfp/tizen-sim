@@ -128,7 +128,8 @@ async fn runs_an_app_from_a_bundler_with_the_shims_first() {
             .unwrap(),
         "Fixture010.DevServer"
     );
-    // The module script ran: this Engine has ES modules, so no Diagnostic.
+    // The module script ran, or its `nomodule` fallback on an Engine without
+    // ES modules: either way, no Diagnostic.
     eventually_equals(&t.session, "window.hmrVersion", json!(1)).await;
     t.session.stop().await;
     // Everything the Session reported, up to its exit.

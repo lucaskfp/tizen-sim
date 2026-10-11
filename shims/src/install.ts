@@ -7,6 +7,7 @@
   systeminfo: systeminfo,
   tvinputdevice: tvinputdevice,
 };
+warnOnDeprecated("tizen");
 
 // The virtual $WEBAPIS script calls this (see webapis.ts).
 config.installWebapis = installWebapis;

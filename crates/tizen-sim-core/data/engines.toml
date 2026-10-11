@@ -1,6 +1,26 @@
 # Engine Manifest: where to get the Engine for each Version Profile on each
 # platform. `sha256` is of the downloaded archive; `executable` is relative to
-# the archive root.
+# the archive root. `headless = false` marks an Engine that has no headless
+# mode on that platform; a headless Session then runs it in a window kept off
+# the screen.
+#
+# Chrome for Testing starts at M113, so older Engines come from the Chromium
+# snapshot archive (chromium-browser-snapshots/<platform>/<revision>/), which
+# keeps one archive per trunk revision. The revision is the one whose
+# milestone the Version Profile's TVs ship.
+
+# Chromium 47.0.2526.0 (trunk revision 352221). Windows snapshots of that age
+# are 32-bit builds (the `Win` folder); they run on 64-bit Windows 11, as do
+# their sandboxed processes (#24 prototype). Headless mode came to Windows
+# later: this build ignores `--headless` and opens a window.
+[[engine]]
+profile = "3.0"
+milestone = 47
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win/352221/chrome-win32.zip"
+sha256 = "eb72cabb06e4b3b906dd6cc1a3a98e351fdd8c7b1648acb197a2a6c305046d85"
+executable = "chrome-win32/chrome.exe"
+headless = false
 
 [[engine]]
 profile = "10.0"

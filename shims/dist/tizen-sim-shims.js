@@ -106,6 +106,38 @@ function requireFunction(value, argument) {
         throw new WebAPIException("TypeMismatchError", argument + " must be a function");
     }
 }
+function available(name) {
+    var absent = config.profile.apis.absent;
+    for (var i = 0; i < absent.length; i++) {
+        if (absent[i] === name) {
+            return false;
+        }
+    }
+    return true;
+}
+function warnOnDeprecated(root) {
+    var deprecated = config.profile.apis.deprecated;
+    for (var i = 0; i < deprecated.length; i++) {
+        var path = deprecated[i].split(".");
+        if (path[0] !== root) {
+            continue;
+        }
+        var owner = window;
+        for (var j = 0; j < path.length - 1 && owner; j++) {
+            owner = owner[path[j]];
+        }
+        var member = path[path.length - 1];
+        if (owner && typeof owner[member] === "function") {
+            owner[member] = deprecatedMethod(deprecated[i], owner[member]);
+        }
+    }
+}
+function deprecatedMethod(name, method) {
+    return function () {
+        console.warn("DEPRECATION WARNING: " + name + "() is deprecated and will be removed from a future release.");
+        return method.apply(this, arguments);
+    };
+}
 function requirePrivilege(privilege, api, exceptionType) {
     var declared = config.app.privileges;
     for (var i = 0; i < declared.length; i++) {
@@ -127,7 +159,7 @@ var SYSTEM_INFO_PROPERTY_IDS = [
 ];
 function requirePropertyId(property) {
     for (var i = 0; i < SYSTEM_INFO_PROPERTY_IDS.length; i++) {
-        if (SYSTEM_INFO_PROPERTY_IDS[i] === property) {
+        if (SYSTEM_INFO_PROPERTY_IDS[i] === property && available("SystemInfoPropertyId." + property)) {
             return;
         }
     }
@@ -228,7 +260,7 @@ var systeminfo = {
         return config.profile.device.availableMemory;
     },
 };
-if (parseFloat(config.profile.version) >= 8) {
+if (available("tizen.systeminfo.getDeviceUptime")) {
     systeminfo.getDeviceUptime = function () {
         return Math.floor((new Date().getTime() - config.app.installedAt) / 1000);
     };
@@ -553,9 +585,6 @@ function extend(base, extra) {
     }
     return out;
 }
-function since(version) {
-    return parseFloat(config.profile.version) >= version;
-}
 function webapisFail(name, message) {
     throw new WebapisException(name, message);
 }
@@ -679,19 +708,19 @@ function createProductInfo(device) {
         },
         isUHDAModel: value("isUHDAModel", "uhdaModel"),
     };
-    if (since(4.0)) {
+    if (available("webapis.productinfo.is8KPanelSupported")) {
         productinfo.is8KPanelSupported = value("is8KPanelSupported", "panel8K");
     }
-    if (since(5.0)) {
+    if (available("webapis.productinfo.isWallModel")) {
         productinfo.isWallModel = value("isWallModel", "wallModel");
     }
-    if (since(5.5)) {
+    if (available("webapis.productinfo.isDisplayRotatorSupported")) {
         productinfo.isDisplayRotatorSupported = value("isDisplayRotatorSupported", "displayRotator", false);
     }
-    if (since(6.0)) {
+    if (available("webapis.productinfo.getLicensedVendor")) {
         productinfo.getLicensedVendor = value("getLicensedVendor", "licensedVendor");
     }
-    if (since(7.0)) {
+    if (available("webapis.productinfo.getLicensedBrand")) {
         productinfo.getLicensedBrand = function () {
             requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.getLicensedBrand");
             if (!device.licensedBrand) {
@@ -700,7 +729,7 @@ function createProductInfo(device) {
             return device.licensedBrand;
         };
     }
-    if (since(8.0)) {
+    if (available("webapis.productinfo.isOledPanelSupported")) {
         productinfo.isOledPanelSupported = value("isOledPanelSupported", "oledPanel");
     }
     return productinfo;
@@ -734,13 +763,17 @@ function createTvInfo(device) {
         UI_TIMEOUT: "UI_TIMEOUT",
         MOVING_TEXT_AND_IMAGE: "MOVING_TEXT_AND_IMAGE",
     };
-    if (since(10.0)) {
+    if (available("TvInfoMenuKey.CAPTION_LANGUAGE_INDEX_KEY")) {
         MENU_KEYS.CAPTION_LANGUAGE_INDEX_KEY = 22;
+    }
+    if (available("TvInfoMenuKey.CAPTION_LANGUAGE_KEY")) {
         MENU_KEYS.CAPTION_LANGUAGE_KEY = "CAPTION_LANGUAGE_KEY";
     }
     var INFO_KEYS = {};
-    if (since(6.5)) {
+    if (available("TvInfoKey.SMART_RC_BATTERY")) {
         INFO_KEYS.SMART_RC_BATTERY = "SMART_RC_BATTERY";
+    }
+    if (available("TvInfoKey.BOARD_TEMPERATURE")) {
         INFO_KEYS.BOARD_TEMPERATURE = "BOARD_TEMPERATURE";
     }
     var INFO_VALUES = {
@@ -889,10 +922,10 @@ function createNetwork(device) {
             removeListener(stateListeners, listenerId);
         },
     };
-    if (since(4.0)) {
+    if (available("webapis.network.getTVName")) {
         network.getTVName = getter("getTVName", "connection", setting("tvName"));
     }
-    if (since(6.0)) {
+    if (available("webapis.network.getWiFiFrequency")) {
         network.getWiFiFrequency = getter("getWiFiFrequency", "wifi", setting("wifiFrequency"));
     }
     return network;
@@ -907,7 +940,26 @@ function installWebapis() {
         tvinfo: createTvInfo(device),
         network: createNetwork(device),
     };
+    warnOnDeprecated("webapis");
 }
+(function () {
+    var size = {
+        width: config.screen.width,
+        height: config.screen.height,
+        availWidth: config.screen.width,
+        availHeight: config.screen.height,
+    };
+    for (var property in size) {
+        try {
+            Object.defineProperty(window.screen, property, {
+                value: size[property],
+                configurable: true,
+            });
+        }
+        catch (e) {
+        }
+    }
+})();
 window.tizen = {
     WebAPIException: WebAPIException,
     WebAPIError: WebAPIError,
@@ -915,5 +967,6 @@ window.tizen = {
     systeminfo: systeminfo,
     tvinputdevice: tvinputdevice,
 };
+warnOnDeprecated("tizen");
 config.installWebapis = installWebapis;
 })();

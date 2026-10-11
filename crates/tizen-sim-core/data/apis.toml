@@ -1,0 +1,83 @@
+# API availability: the members of the Shimmed platform APIs that not every
+# Version Profile has. A member without an entry exists on every profile.
+#
+# - `name`: a member's path as the App reaches it (`tizen.systeminfo.getDeviceUptime`),
+#   or `<Enum>.<VALUE>` for a value of one of the references' enum types.
+# - `since`: the first Tizen version that has it; older profiles lack it.
+# - `deprecated`: the first version on which calling it logs a deprecation
+#   warning.
+# - `removed`: the first version without it. Deprecated APIs stay for two
+#   releases, the deprecation notice included (TD
+#   reference/deprecation-policy.md); the reference says which ones.
+#
+# No Shimmed member is deprecated in the 9.0/10.0 references at present.
+#
+# "Since" versions come from each member's API reference ("Since: x.y"); the
+# references are cited per module.
+
+# systeminfo.html (9.0 TV reference).
+[[api]]
+name = "tizen.systeminfo.getDeviceUptime"
+since = "8.0"
+
+# The PANEL and SERVICE_COUNTRY properties (SystemInfoPanel,
+# SystemInfoServiceCountry). Before them the strings aren't
+# SystemInfoPropertyIds, so asking for them throws TypeMismatchError.
+[[api]]
+name = "SystemInfoPropertyId.PANEL"
+since = "5.5"
+
+[[api]]
+name = "SystemInfoPropertyId.SERVICE_COUNTRY"
+since = "5.5"
+
+# samsung-product-api-references/productinfo-api.html.
+[[api]]
+name = "webapis.productinfo.is8KPanelSupported"
+since = "4.0"
+
+[[api]]
+name = "webapis.productinfo.isWallModel"
+since = "5.0"
+
+[[api]]
+name = "webapis.productinfo.isDisplayRotatorSupported"
+since = "5.5"
+
+[[api]]
+name = "webapis.productinfo.getLicensedVendor"
+since = "6.0"
+
+[[api]]
+name = "webapis.productinfo.getLicensedBrand"
+since = "7.0"
+
+[[api]]
+name = "webapis.productinfo.isOledPanelSupported"
+since = "8.0"
+
+# samsung-product-api-references/tvinfo-api.html.
+[[api]]
+name = "TvInfoKey.SMART_RC_BATTERY"
+since = "6.5"
+
+[[api]]
+name = "TvInfoKey.BOARD_TEMPERATURE"
+since = "6.5"
+
+[[api]]
+name = "TvInfoMenuKey.CAPTION_LANGUAGE_INDEX_KEY"
+since = "10.0"
+
+[[api]]
+name = "TvInfoMenuKey.CAPTION_LANGUAGE_KEY"
+since = "10.0"
+
+# samsung-product-api-references/network-api.html.
+[[api]]
+name = "webapis.network.getTVName"
+since = "4.0"
+
+[[api]]
+name = "webapis.network.getWiFiFrequency"
+since = "6.0"

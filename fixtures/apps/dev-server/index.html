@@ -5,6 +5,8 @@
     <title>Dev server fixture</title>
     <script>window.firstScriptSawTizen = typeof tizen;</script>
     <script type="module" src="/app.js"></script>
+    <!-- The legacy build bundlers emit for Engines without ES modules. -->
+    <script nomodule src="/app.js"></script>
 </head>
 <body>
     <h1>Dev server fixture</h1>

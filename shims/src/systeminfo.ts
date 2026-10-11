@@ -14,7 +14,7 @@ var SYSTEM_INFO_PROPERTY_IDS = [
 
 function requirePropertyId(property: any) {
   for (var i = 0; i < SYSTEM_INFO_PROPERTY_IDS.length; i++) {
-    if (SYSTEM_INFO_PROPERTY_IDS[i] === property) {
+    if (SYSTEM_INFO_PROPERTY_IDS[i] === property && available("SystemInfoPropertyId." + property)) {
       return;
     }
   }
@@ -165,9 +165,8 @@ var systeminfo: any = {
   },
 };
 
-// Since Tizen 8.0 (#SystemInfo::getDeviceUptime). The TV booted when the
-// Session started.
-if (parseFloat(config.profile.version) >= 8) {
+// The TV booted when the Session started (#SystemInfo::getDeviceUptime).
+if (available("tizen.systeminfo.getDeviceUptime")) {
   systeminfo.getDeviceUptime = function () {
     return Math.floor((new Date().getTime() - config.app.installedAt) / 1000);
   };

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::home::Home;
-use tizen_sim_core::session::{Events, Session, SessionConfig, SessionEvent};
+use tizen_sim_core::session::{Events, Lifecycle, Session, SessionConfig, SessionEvent};
 
 pub fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -113,7 +113,7 @@ pub fn copy_fixture(fixture_name: &str) -> tempfile::TempDir {
 fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
     SessionConfig {
         source,
-        profile: None,
+        profile: test_profile(),
         engine_path: None,
         headless: std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none(),
         lenient: false,
@@ -123,6 +123,37 @@ fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
         checkerboard: false,
         home: Home::from_env().with_state_dir(state.to_path_buf()),
     }
+}
+
+/// The Version Profile the Session tests run on: `TIZEN_SIM_TEST_PROFILE`,
+/// or the latest. Run the suite once per Engine to cover each.
+pub fn test_profile() -> Option<String> {
+    std::env::var("TIZEN_SIM_TEST_PROFILE")
+        .ok()
+        .filter(|version| !version.is_empty())
+}
+
+/// The Version Profile the Session tests run on.
+pub fn profile() -> &'static tizen_sim_core::profile::VersionProfile {
+    match test_profile() {
+        Some(version) => tizen_sim_core::profile::VersionProfile::find(&version).unwrap(),
+        None => tizen_sim_core::profile::VersionProfile::latest(),
+    }
+}
+
+/// A device value of the test Version Profile, as the Shims report it.
+pub fn device_value(name: &str) -> Value {
+    profile().device_values(&serde_json::Map::new()).unwrap()[name].clone()
+}
+
+/// Whether the test Version Profile has an API member listed in the API
+/// availability table (`data/apis.toml`); unlisted members exist everywhere.
+pub fn has_api(name: &str) -> bool {
+    !tizen_sim_core::apis::ApiCatalog::bundled()
+        .for_version(&profile().version)
+        .absent
+        .iter()
+        .any(|absent| absent == name)
 }
 
 /// Waits for the first event matching `pred`, failing the test after `secs`.
@@ -135,6 +166,10 @@ pub async fn expect_event(
         while let Some(event) = events.next().await {
             if pred(&event) {
                 return event;
+            }
+            // Fail fast instead of waiting out the timeout.
+            if let SessionEvent::Lifecycle(Lifecycle::Failed { error }) = &event {
+                panic!("the Session failed while waiting for an event: {error}");
             }
         }
         panic!("event stream ended before the expected event");

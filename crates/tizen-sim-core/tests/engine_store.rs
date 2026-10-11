@@ -34,6 +34,7 @@ fn spec(url: String, sha256: String) -> EngineSpec {
         url,
         sha256,
         executable: "stand-in-engine/chrome.exe".into(),
+        headless: true,
     }
 }
 

@@ -29,7 +29,7 @@ async fn a_running_session_is_in_the_registry_until_it_stops() {
 
     let entry = only_entry(t.state.path());
     assert_eq!(entry.app_id, "Fixture006.RemoteKeys");
-    assert_eq!(entry.profile, "10.0");
+    assert_eq!(entry.profile, support::profile().version);
     assert_eq!(entry.pid, std::process::id());
     // Where the App comes from, so the GUI can start it again.
     assert!(

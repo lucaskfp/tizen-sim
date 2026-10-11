@@ -9,6 +9,10 @@ use std::sync::OnceLock;
 pub struct VersionProfile {
     pub version: String,
     pub milestone: u32,
+    /// The user agent these TVs' browser engine sends; `None` keeps the
+    /// Engine's own.
+    #[serde(default)]
+    pub user_agent: Option<String>,
     /// Answers for `tizen.systeminfo.getCapability`.
     #[serde(default)]
     pub(crate) capabilities: toml::Table,

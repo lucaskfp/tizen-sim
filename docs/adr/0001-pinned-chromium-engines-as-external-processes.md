@@ -9,6 +9,8 @@ Apps run on the Chromium milestone their Tizen TV actually ships (Tizen 3.0 = M4
 
 ## Consequences
 
-- Old Engines get no security fixes, and the M47 Windows build is 32-bit only. Whether it runs on Windows 11 must be proven by the prototype before the MVP.
-- CDP usage must stay within what M47 supports. See ADR-0002.
+- Old Engines get no security fixes, and the M47 Windows build is 32-bit only. It runs on Windows 11 (#24 prototype, then #38).
+- A portable Engine needs read access granted to the AppContainer SIDs after unpacking, or its sandboxed processes can't start (#24).
+- Snapshot Engines are older than Chromium's headless mode on Windows: a headless Session runs M47 in a window placed off the screen (`headless = false` in the Engine Manifest).
+- CDP usage must stay within what M47 supports, or degrade where it can't. See ADR-0002. Measured on M47 (#38): no `Browser` domain (the window is measured from the page and minimized through the OS), no `Log` domain or `Runtime.consoleAPICalled` (console comes from `Console.messageAdded`), no page lifecycle states (a hidden App is paused in the debugger), screenshots of the window rather than the emulated screen (cut out and scaled), and only one debugging client per page (DevTools goes through a relay on the Session's connection).
 - The GUI never hosts the App itself. See ADR-0006 for how the screen gets into the GUI.

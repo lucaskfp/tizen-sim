@@ -24,11 +24,15 @@ interface ProfileConfig {
   device: { [key: string]: any };
   // Every Remote Key these TVs have, Mandatory and Registrable.
   remoteKeys: RemoteKeyConfig[];
+  // API members these TVs lack or deprecate (see availability.ts).
+  apis: { absent: string[]; deprecated: string[] };
 }
 
 interface SimConfig {
   bridgeUrl: string;
   lenient: boolean;
+  // The App's screen size in CSS px.
+  screen: { width: number; height: number };
   app: AppConfig;
   profile: ProfileConfig;
   // Keyboard keyCode -> Remote Key name, for keys with no meaning on a TV.

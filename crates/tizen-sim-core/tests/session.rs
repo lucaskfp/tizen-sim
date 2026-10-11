@@ -1,4 +1,5 @@
-//! Primary seam: a Session on a real Engine (Chrome for Testing M130).
+//! Primary seam: a Session on a real Engine, the latest Version Profile's
+//! or `TIZEN_SIM_TEST_PROFILE`'s.
 
 mod support;
 
@@ -12,18 +13,20 @@ fn is_lifecycle(event: &SessionEvent, f: impl Fn(&Lifecycle) -> bool) -> bool {
 #[tokio::test]
 async fn runs_a_project_folder_and_streams_lifecycle_and_console() {
     let mut t = start("hello");
+    let expected = support::profile();
+    let milestone = format!("/{}.", expected.milestone);
 
     expect_event(&mut t.events, 5, |e| {
         is_lifecycle(e, |l| {
             matches!(l, Lifecycle::Starting { app_id, profile }
-                if app_id == "Fixture001.Hello" && profile == "10.0")
+                if app_id == "Fixture001.Hello" && *profile == expected.version)
         })
     })
     .await;
     expect_event(&mut t.events, STARTUP_SECS, |e| {
         is_lifecycle(
             e,
-            |l| matches!(l, Lifecycle::EngineReady { engine_version, .. } if engine_version.contains("/130.")),
+            |l| matches!(l, Lifecycle::EngineReady { engine_version, .. } if engine_version.contains(&milestone)),
         )
     })
     .await;
@@ -175,7 +178,7 @@ async fn an_app_requiring_a_newer_tizen_fails_to_start() {
     let t = start("required-version-too-high");
     let err = t.session.wait_until_loaded().await.unwrap_err();
     let msg = err.to_string();
-    for word in ["required_version", "99.0", "10.0"] {
+    for word in ["required_version", "99.0", &support::profile().version] {
         assert!(msg.contains(word), "`{word}` missing from: {msg}");
     }
 }
@@ -185,7 +188,9 @@ async fn an_engine_path_is_launched_instead_of_a_cached_engine() {
     // The pinned Engine's binary, used as if it were the developer's own.
     let home = tizen_sim_core::home::Home::from_env();
     let platform = tizen_sim_core::engine::current_platform().unwrap();
-    let spec = tizen_sim_core::engine::EngineSpec::for_profile("10.0", platform).unwrap();
+    let spec =
+        tizen_sim_core::engine::EngineSpec::for_profile(&support::profile().version, platform)
+            .unwrap();
     let own = home.engine_store().ensure(spec, |_| {}).await.unwrap();
     let empty_home = tempfile::tempdir().unwrap();
 
@@ -218,8 +223,8 @@ async fn a_session_remembers_its_profile_for_the_app() {
     t.session.stop().await;
 
     let remembered = tizen_sim_core::profile::RememberedProfiles::new(t.state.path());
-    let latest = &tizen_sim_core::profile::VersionProfile::latest().version;
-    assert_eq!(remembered.get("Fixture001.Hello").as_ref(), Some(latest));
+    let used = &support::profile().version;
+    assert_eq!(remembered.get("Fixture001.Hello").as_ref(), Some(used));
 }
 
 #[tokio::test]

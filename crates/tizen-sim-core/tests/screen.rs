@@ -30,25 +30,41 @@ async fn debugger_url(session: &Session) -> String {
 /// One CDP call on a connection of the test's own, with an optional
 /// `Origin` header.
 async fn cdp_call(ws_url: &str, origin: Option<&str>, method: &str, params: Value) -> Value {
+    try_cdp_call(ws_url, origin, method, params)
+        .await
+        .unwrap_or_else(|error| panic!("{method}: {error}"))
+}
+
+/// Like `cdp_call`, failing with why the connection or the call failed.
+async fn try_cdp_call(
+    ws_url: &str,
+    origin: Option<&str>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     let mut request = ws_url.into_client_request().unwrap();
     if let Some(origin) = origin {
         request
             .headers_mut()
             .insert("Origin", origin.parse().unwrap());
     }
-    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| e.to_string())?;
     let call = json!({ "id": 1, "method": method, "params": params });
     socket.send(Message::text(call.to_string())).await.unwrap();
     while let Some(message) = socket.next().await {
         if let Message::Text(text) = message.unwrap() {
             let reply: Value = serde_json::from_str(&text).unwrap();
             if reply["id"] == 1 {
-                assert!(reply.get("error").is_none(), "{method}: {reply}");
-                return reply["result"].clone();
+                return match reply.get("error") {
+                    Some(error) => Err(error.to_string()),
+                    None => Ok(reply["result"].clone()),
+                };
             }
         }
     }
-    panic!("no reply to {method}");
+    Err("no reply".into())
 }
 
 /// The RGB colour of a pixel of a PNG screenshot.
@@ -82,14 +98,20 @@ async fn the_app_is_laid_out_at_1920x1080_whatever_the_window_size() {
     );
 
     let ws = debugger_url(&t.session).await;
-    let window = cdp_call(&ws, None, "Browser.getWindowForTarget", json!({})).await;
-    cdp_call(
-        &ws,
-        None,
-        "Browser.setWindowBounds",
-        json!({ "windowId": window["windowId"], "bounds": { "width": 800, "height": 600 } }),
-    )
-    .await;
+    // M47 takes one debugging client per page, the Session's.
+    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", json!({})).await;
+    if let Ok(window) = window {
+        cdp_call(
+            &ws,
+            None,
+            "Browser.setWindowBounds",
+            json!({ "windowId": window["windowId"], "bounds": { "width": 800, "height": 600 } }),
+        )
+        .await;
+    } else {
+        // Engines without the Browser domain (M47) let an app window resize itself.
+        t.session.evaluate("resizeTo(800, 600); 0").await.unwrap();
+    }
     // Give the Session time to notice and rescale.
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
@@ -160,10 +182,14 @@ async fn transparent_areas_are_black_or_a_checkerboard_with_the_toggle() {
     assert!(a[2] > a[0] && b[2] > b[0], "{a:?} {b:?} aren't tinted blue");
 
     // It stays on across a reload, and off means black again.
-    t.session.evaluate("location.reload(); 0").await.unwrap();
+    t.session
+        .evaluate("window.beforeReload = true; location.reload(); 0")
+        .await
+        .unwrap();
+    // The new document, with the checkerboard back.
     support::eventually_equals(
         &t.session,
-        "!!document.querySelector('[data-tizen-sim=checkerboard]')",
+        "!window.beforeReload && !!document.querySelector('[data-tizen-sim=checkerboard]')",
         json!(true),
     )
     .await;

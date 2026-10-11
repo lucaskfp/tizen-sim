@@ -9,7 +9,7 @@
 // Sources: developer.samsung.com/smarttv/develop/api-references/
 // samsung-product-api-references/{webapi,productinfo,tvinfo,network}-api.html.
 // "Since" versions there are Tizen versions; members newer than the Version
-// Profile are absent.
+// Profile are absent (see availability.ts).
 //
 // Not shimmed: methods for B2B products only (tvinfo.setMenuValue, network's
 // setters and proxy methods), the TvInfoMenuValue constants, and network's
@@ -45,10 +45,6 @@ function extend<T>(base: { [key: string]: T }, extra: { [key: string]: T }): { [
     out[key] = extra[key];
   }
   return out;
-}
-
-function since(version: number): boolean {
-  return parseFloat(config.profile.version) >= version;
 }
 
 function webapisFail(name: string, message: string): never {
@@ -208,20 +204,20 @@ function createProductInfo(device: { [key: string]: any }): any {
 
     isUHDAModel: value("isUHDAModel", "uhdaModel"),
   };
-  if (since(4.0)) {
+  if (available("webapis.productinfo.is8KPanelSupported")) {
     productinfo.is8KPanelSupported = value("is8KPanelSupported", "panel8K");
   }
-  if (since(5.0)) {
+  if (available("webapis.productinfo.isWallModel")) {
     productinfo.isWallModel = value("isWallModel", "wallModel");
   }
-  if (since(5.5)) {
+  if (available("webapis.productinfo.isDisplayRotatorSupported")) {
     // The one productinfo method that needs no privilege.
     productinfo.isDisplayRotatorSupported = value("isDisplayRotatorSupported", "displayRotator", false);
   }
-  if (since(6.0)) {
+  if (available("webapis.productinfo.getLicensedVendor")) {
     productinfo.getLicensedVendor = value("getLicensedVendor", "licensedVendor");
   }
-  if (since(7.0)) {
+  if (available("webapis.productinfo.getLicensedBrand")) {
     // NotSupportedError on Samsung products, which have no licensed brand.
     productinfo.getLicensedBrand = function () {
       requireWebapisPrivilege(PRODUCTINFO_PRIVILEGE, "webapis.productinfo.getLicensedBrand");
@@ -231,7 +227,7 @@ function createProductInfo(device: { [key: string]: any }): any {
       return device.licensedBrand;
     };
   }
-  if (since(8.0)) {
+  if (available("webapis.productinfo.isOledPanelSupported")) {
     productinfo.isOledPanelSupported = value("isOledPanelSupported", "oledPanel");
   }
   return productinfo;
@@ -269,13 +265,17 @@ function createTvInfo(device: { [key: string]: any }): any {
     UI_TIMEOUT: "UI_TIMEOUT",
     MOVING_TEXT_AND_IMAGE: "MOVING_TEXT_AND_IMAGE",
   };
-  if (since(10.0)) {
+  if (available("TvInfoMenuKey.CAPTION_LANGUAGE_INDEX_KEY")) {
     MENU_KEYS.CAPTION_LANGUAGE_INDEX_KEY = 22;
+  }
+  if (available("TvInfoMenuKey.CAPTION_LANGUAGE_KEY")) {
     MENU_KEYS.CAPTION_LANGUAGE_KEY = "CAPTION_LANGUAGE_KEY";
   }
   var INFO_KEYS: { [name: string]: string } = {};
-  if (since(6.5)) {
+  if (available("TvInfoKey.SMART_RC_BATTERY")) {
     INFO_KEYS.SMART_RC_BATTERY = "SMART_RC_BATTERY";
+  }
+  if (available("TvInfoKey.BOARD_TEMPERATURE")) {
     INFO_KEYS.BOARD_TEMPERATURE = "BOARD_TEMPERATURE";
   }
   var INFO_VALUES: { [key: string]: string } = {
@@ -464,10 +464,10 @@ function createNetwork(device: { [key: string]: any }): any {
       removeListener(stateListeners, listenerId);
     },
   };
-  if (since(4.0)) {
+  if (available("webapis.network.getTVName")) {
     network.getTVName = getter("getTVName", "connection", setting("tvName"));
   }
-  if (since(6.0)) {
+  if (available("webapis.network.getWiFiFrequency")) {
     network.getWiFiFrequency = getter("getWiFiFrequency", "wifi", setting("wifiFrequency"));
   }
   return network;
@@ -484,4 +484,5 @@ function installWebapis() {
     tvinfo: createTvInfo(device),
     network: createNetwork(device),
   };
+  warnOnDeprecated("webapis");
 }

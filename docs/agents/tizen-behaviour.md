@@ -16,6 +16,7 @@ What the **platform** does, distilled from the platform docs (see `tizen-docs.md
 - **`registerKey`/`unregisterKey`:** a Mandatory or unsupported key throws `InvalidValuesError`.
 - **Batch methods:** a non-array or non-function argument throws `TypeMismatchError` synchronously. Invalid names go to the error callback. (`#TVInputDeviceManager::registerKeyBatch`)
 - **Key codes.** The full table is in the remote-control guide, Table 3, and is mirrored in `crates/tizen-sim-core/data/remote_keys.toml`.
+- **Keys per release.** The guide's key table has no per-year columns, so every Version Profile gets the same Registrable Keys. That 2017 (Tizen 3.0) TVs have all of them is **unverified**.
 - **Long presses:**
   - Rewind gives MediaTrackPrevious and FastForward gives MediaTrackNext. (remote-control guide, Table 1)
   - Holding Return/Exit makes the **platform terminate the App**; the App gets no key. (TV: `guides/fundamentals/terminating-applications.html`)
@@ -164,6 +165,8 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
 ## Engine features
 
 - **Milestones.** Each Tizen TV release ships a fixed Chromium milestone (TV: `specifications/web-engine-specifications.html`), mirrored in `crates/tizen-sim-core/data/profiles.toml`. Which web features an App can use follows from that milestone.
+- **User agent.** Each TV release sends its own user agent string, listed per year in TV `guides/fundamentals/retrieving-platform-information.html` (Table 2), e.g. Tizen 3.0: `Mozilla/5.0 (SMART-TV; LINUX; Tizen 3.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/3.0 TV Safari/538.1`. Mirrored per Version Profile in `profiles.toml`.
+- **API availability.** Each member of the API references has a "Since" version; members newer than the Version Profile are absent. Those of Shimmed APIs that some profile lacks are listed in `crates/tizen-sim-core/data/apis.toml`. Deprecated APIs keep working for two releases, the notice included, then are removed (TD `reference/deprecation-policy.md`), logging "DEPRECATION WARNING" messages in the meantime; the exact console wording for web APIs is **unverified**.
 - **ES modules** arrived in Chromium 61 (chromestatus.com/feature/5365692190687232). Older Engines ignore `<script type="module">` and run `<script nomodule>`. A document with module scripts and no `nomodule` fallback, such as a bundler's dev output, runs none of its App code on those TVs. tizen-sim raises the `es-modules-unsupported` Diagnostic for it. That Tizen TVs before M61 behave exactly like upstream Chromium here is **unverified**.
 
 ## Text input (IME)

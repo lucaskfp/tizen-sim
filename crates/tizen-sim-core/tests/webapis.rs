@@ -84,15 +84,15 @@ async fn productinfo_reports_version_profile_values() {
     assert_eq!(
         values,
         json!({
-            "firmware": "T-SIMAKUC-1000.0",
-            "duid": "TIZENSIMDUID00001",
-            "model": "TS10UHD",
-            "modelCode": "24_TIZENSIM_UHD",
-            "realModel": "TS65TS10UHD",
+            "firmware": support::device_value("firmware"),
+            "duid": support::device_value("duid"),
+            "model": support::device_value("productModel"),
+            "modelCode": support::device_value("modelCode"),
+            "realModel": support::device_value("realModel"),
             "udPanel": true,
             "serverType": 0,
             "operating": 0,
-            "country": "USA",
+            "country": support::device_value("serviceCountry"),
         })
     );
 
@@ -134,14 +134,23 @@ async fn tvinfo_reports_version_profile_values() {
             "(function () { var t = webapis.tvinfo; return [ \
                t.getMenuValue(t.TvInfoMenuKey.CAPTION_ONOFF_KEY), \
                t.getMenuValue(t.TvInfoMenuKey.PRIMARY_AUDIO_LANGUAGE_KEY), \
-               t.getTvInfoValue('SMART_RC_BATTERY'), \
                t.isTvsPicSizeResized(), \
                typeof t.addCaptionChangeListener(t.TvInfoMenuKey.CAPTION_ONOFF_KEY, function () {}) \
              ]; })()",
         )
         .await
         .unwrap();
-    assert_eq!(values, json!([0, "ENG", 80, false, "number"]));
+    assert_eq!(values, json!([0, "ENG", false, "number"]));
+    // A TvInfoKey since Tizen 6.5.
+    if support::has_api("TvInfoKey.SMART_RC_BATTERY") {
+        assert_eq!(
+            t.session
+                .evaluate("webapis.tvinfo.getTvInfoValue('SMART_RC_BATTERY')")
+                .await
+                .unwrap(),
+            json!(80)
+        );
+    }
 
     let errors = t
         .session
@@ -267,17 +276,25 @@ async fn undeclared_samsung_privileges_throw_security_error() {
                function code(f) { try { f(); return 'no error'; } catch (e) { return [e.name, e.code]; } } \
                return [ \
                  code(function () { webapis.productinfo.getDuid(); }), \
-                 code(function () { webapis.network.getIp(); }), \
-                 typeof webapis.productinfo.isDisplayRotatorSupported() \
+                 code(function () { webapis.network.getIp(); }) \
                ]; })()",
         )
         .await
         .unwrap();
-    // isDisplayRotatorSupported needs no privilege (productinfo-api.html).
     assert_eq!(
         thrown,
-        json!([["SecurityError", 18], ["SecurityError", 18], "boolean"])
+        json!([["SecurityError", 18], ["SecurityError", 18]])
     );
+    // isDisplayRotatorSupported (since 5.5) needs no privilege (productinfo-api.html).
+    if support::has_api("webapis.productinfo.isDisplayRotatorSupported") {
+        assert_eq!(
+            t.session
+                .evaluate("typeof webapis.productinfo.isDisplayRotatorSupported()")
+                .await
+                .unwrap(),
+            "boolean"
+        );
+    }
     for privilege in [PRODUCTINFO_PRIVILEGE, NETWORK_PRIVILEGE] {
         expect_event(&mut t.events, 10, |e| {
             matches!(e, SessionEvent::Diagnostic(d)
@@ -306,5 +323,39 @@ async fn lenient_mode_logs_undeclared_samsung_privileges() {
             if d.code == "privilege-not-declared" && d.message.contains(PRODUCTINFO_PRIVILEGE))
     })
     .await;
+    t.session.stop().await;
+}
+
+/// Members of `tizen` and `webapis` newer than the Version Profile, or
+/// removed before it, are absent from the page; the others are there
+/// (`data/apis.toml`, from each member's "Since" in its API reference).
+#[tokio::test]
+async fn api_members_follow_the_version_profile() {
+    let t = start("webapis");
+    t.session.wait_until_loaded().await.unwrap();
+    for name in tizen_sim_core::apis::ApiCatalog::bundled().names() {
+        let (owner, member) = name.rsplit_once('.').unwrap();
+        // Whether the page has the member.
+        let probe = match owner {
+            // A string that isn't a SystemInfoPropertyId throws TypeMismatchError.
+            "SystemInfoPropertyId" => format!(
+                "(function () {{ try {{ tizen.systeminfo.getPropertyValue('{member}', \
+                   function () {{}}, function () {{}}); return true; }} \
+                 catch (e) {{ return e.name !== 'TypeMismatchError'; }} }})()"
+            ),
+            "TvInfoKey" => format!(
+                "(function () {{ try {{ webapis.tvinfo.getTvInfoValue('{member}'); \
+                   return true; }} catch (e) {{ return false; }} }})()"
+            ),
+            "TvInfoMenuKey" => format!("'{member}' in webapis.tvinfo.TvInfoMenuKey"),
+            path => format!("'{member}' in {path}"),
+        };
+        assert_eq!(
+            t.session.evaluate(&probe).await.unwrap(),
+            json!(support::has_api(name)),
+            "{name} on Tizen {}",
+            support::profile().version
+        );
+    }
     t.session.stop().await;
 }

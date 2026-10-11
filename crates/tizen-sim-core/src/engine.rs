@@ -22,6 +22,13 @@ pub struct EngineSpec {
     pub sha256: String,
     /// Path of the browser executable inside the archive.
     pub executable: String,
+    /// Whether the Engine can run headless on this platform.
+    #[serde(default = "has_headless_by_default")]
+    pub headless: bool,
+}
+
+fn has_headless_by_default() -> bool {
+    true
 }
 
 /// Progress of an Engine download, in bytes.
@@ -384,10 +391,24 @@ async fn grant_sandbox_access(_dir: &Path) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// Where an Engine draws the App.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineWindow {
+    /// An app window on the desktop.
+    Shown,
+    /// No window at all.
+    Headless,
+    /// A window placed off the screen, for an Engine without a headless mode
+    /// (see `EngineSpec::headless`). It still draws, so screenshots work.
+    OffScreen,
+}
+
 /// How to start an Engine.
 pub struct LaunchOptions {
     pub user_data_dir: PathBuf,
-    pub headless: bool,
+    pub window: EngineWindow,
+    /// Sent in place of the Engine's own user agent.
+    pub user_agent: Option<String>,
     /// The Session's network proxy, which all of the Engine's traffic goes
     /// through, loopback included (ADR-0003).
     pub network_proxy: Option<std::net::SocketAddr>,
@@ -407,6 +428,10 @@ pub struct RunningEngine {
     /// Served by the Engine, so it speaks its protocol whatever its age.
     pub devtools_url: String,
 }
+
+/// Where an off-screen Engine window goes: far beyond any monitor, but not
+/// at Windows' minimized-window position (-32000), which would hide the page.
+const OFF_SCREEN: (i32, i32) = (-20000, -20000);
 
 /// First launches of a freshly unpacked Engine can be slow (antivirus scans),
 /// so startup gets a generous budget.
@@ -471,12 +496,24 @@ pub async fn launch(
     if options.disable_web_security {
         command.arg("--disable-web-security");
     }
-    if options.headless {
-        command.args(["--headless=new", "about:blank"]);
-    } else {
-        // An app window: no tabs or address bar. `--app=about:blank` gets
-        // an ordinary browser window instead.
-        command.arg("--app=data:text/html,");
+    if let Some(user_agent) = &options.user_agent {
+        command.arg(format!("--user-agent={user_agent}"));
+    }
+    match options.window {
+        EngineWindow::Headless => {
+            command.args(["--headless=new", "about:blank"]);
+        }
+        EngineWindow::Shown | EngineWindow::OffScreen => {
+            if options.window == EngineWindow::OffScreen {
+                command.arg(format!(
+                    "--window-position={},{}",
+                    OFF_SCREEN.0, OFF_SCREEN.1
+                ));
+            }
+            // An app window: no tabs or address bar. `--app=about:blank`
+            // gets an ordinary browser window instead.
+            command.arg("--app=data:text/html,");
+        }
     }
     command
         .stdin(Stdio::null())
@@ -646,6 +683,30 @@ pub fn window_handle(pid: u32) -> Option<u64> {
 #[cfg(not(windows))]
 pub fn window_handle(_pid: u32) -> Option<u64> {
     None
+}
+
+/// Minimizes or restores an Engine window through the OS, for Engines whose
+/// protocol can't (no `Browser` domain, e.g. M47). Neither
+/// takes focus from the developer's window. False if it couldn't.
+#[cfg(windows)]
+pub fn set_window_minimized(window: u64, minimized: bool) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, ShowWindow,
+    };
+    let command = if minimized {
+        SW_SHOWMINNOACTIVE
+    } else {
+        SW_SHOWNOACTIVATE
+    };
+    // The return value is the previous visibility, not success.
+    let _ = unsafe { ShowWindow(HWND(window as *mut _), command) };
+    true
+}
+
+#[cfg(not(windows))]
+pub fn set_window_minimized(_window: u64, _minimized: bool) -> bool {
+    false
 }
 
 /// Makes an Engine die with the process that started it, even when that

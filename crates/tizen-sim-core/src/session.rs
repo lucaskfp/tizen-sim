@@ -8,7 +8,10 @@ use crate::app::{App, AppError, AppFiles, AppSource};
 use crate::cdp::{Cdp, CdpError, CdpEvent};
 use crate::control::ControlEndpoint;
 use crate::dev_server::{BridgeMessage, DevServer, ServerSetup};
-use crate::engine::{self, DownloadProgress, EngineSpec, LaunchOptions, RunningEngine};
+use crate::devtools_relay::{self, DevtoolsRelay};
+use crate::engine::{
+    self, DownloadProgress, EngineSpec, EngineWindow, LaunchOptions, RunningEngine,
+};
 use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::{ProfileCatalog, RememberedProfiles, VersionProfile};
@@ -218,6 +221,8 @@ struct Inner {
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     /// Whether the transparency checkerboard is on.
     checkerboard: AtomicBool,
+    /// The TV screen, once the Engine is up.
+    screen: OnceLock<Arc<screen::Screen>>,
     /// The DevTools window, closed when the Session ends.
     devtools: tokio::sync::Mutex<Option<tokio::process::Child>>,
     /// Asks the running Session to reload the App, with where to send the
@@ -231,6 +236,14 @@ struct Inner {
 struct EngineProcess {
     pid: u32,
     window: Option<u64>,
+}
+
+impl EngineProcess {
+    /// The Engine's native window. Embedded in the GUI it's no longer a
+    /// top-level window, so the recorded handle comes first.
+    fn native_window(self) -> Option<u64> {
+        self.window.or_else(|| engine::window_handle(self.pid))
+    }
 }
 
 /// What a Session can act on once its App has loaded.
@@ -248,6 +261,8 @@ struct Loaded {
     devtools_url: String,
     /// The DevTools window's own Engine data.
     devtools_data_dir: PathBuf,
+    /// The Engine's process and window, for what the protocol can't do.
+    engine: Option<EngineProcess>,
 }
 
 impl Session {
@@ -262,6 +277,7 @@ impl Session {
             stop: Mutex::new(Some(stop_tx)),
             task: tokio::sync::Mutex::new(None),
             checkerboard: AtomicBool::new(config.checkerboard),
+            screen: OnceLock::new(),
             devtools: tokio::sync::Mutex::new(None),
             reloads,
             engine: Mutex::new(None),
@@ -355,14 +371,19 @@ impl Session {
             .cdp
             .call("Page.captureScreenshot", json!({ "format": "png" }))
             .await?;
-        base64::engine::general_purpose::STANDARD
-            .decode(shot["data"].as_str().unwrap_or_default())
-            .map_err(|e| {
-                SessionError::Cdp(CdpError::Protocol {
-                    method: "Page.captureScreenshot".into(),
-                    message: format!("the screenshot is not valid base64: {e}"),
-                })
+        let failed = |message: String| {
+            SessionError::Cdp(CdpError::Protocol {
+                method: "Page.captureScreenshot".into(),
+                message,
             })
+        };
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(shot["data"].as_str().unwrap_or_default())
+            .map_err(|e| failed(format!("the screenshot is not valid base64: {e}")))?;
+        match self.inner.screen.get() {
+            Some(screen) => screen.fit_screenshot(png).map_err(failed),
+            None => Ok(png),
+        }
     }
 
     /// Turns the transparency checkerboard on or off. A TV shows transparent
@@ -371,7 +392,9 @@ impl Session {
     pub async fn set_checkerboard(&self, on: bool) -> Result<(), SessionError> {
         let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
         self.inner.checkerboard.store(on, Ordering::SeqCst);
-        screen::show_checkerboard(&loaded.cdp, on).await?;
+        if let Some(screen) = self.inner.screen.get() {
+            screen::show_backdrop(&loaded.cdp, screen.backdrop(on)).await?;
+        }
         Ok(())
     }
 
@@ -458,6 +481,8 @@ struct Running {
     /// Lets other clients control the Session; its Registry entry is in the
     /// Session directory.
     _control: ControlEndpoint,
+    /// Lets DevTools in on Engines that take one debugging client per page.
+    _devtools_relay: Option<DevtoolsRelay>,
     /// Where the Package is unpacked. Declared last, so it is removed after
     /// everything using its files.
     session_dir: SessionDir,
@@ -602,15 +627,10 @@ impl Inner {
         if !loaded.go_to_background().await {
             return Ok(());
         }
-        if !loaded.runs_in_background.load(Ordering::SeqCst) {
-            // Old Engines lack the call; there the App only looks hidden.
-            if let Err(error) = loaded
-                .cdp
-                .call("Page.setWebLifecycleState", json!({ "state": "frozen" }))
-                .await
-            {
-                tracing::warn!(%error, "could not pause the hidden App");
-            }
+        if !loaded.runs_in_background.load(Ordering::SeqCst)
+            && let Err(error) = freeze(&loaded.cdp).await
+        {
+            tracing::warn!(%error, "could not pause the hidden App");
         }
         self.log.publish(SessionEvent::Lifecycle(Lifecycle::Hidden));
         Ok(())
@@ -622,12 +642,9 @@ impl Inner {
             return Ok(());
         }
         if !loaded.runs_in_background.load(Ordering::SeqCst) {
-            let _ = loaded
-                .cdp
-                .call("Page.setWebLifecycleState", json!({ "state": "active" }))
-                .await;
+            thaw(&loaded.cdp).await;
         }
-        set_window_state(&loaded.cdp, "normal").await;
+        set_window_state(&loaded.cdp, loaded.engine, "normal").await;
         self.log.publish(SessionEvent::Lifecycle(Lifecycle::Shown));
         Ok(())
     }
@@ -749,6 +766,7 @@ impl Inner {
             &device,
             loaded.lenient,
             &config.key_map,
+            config.resolution,
         ));
         loaded
             .runs_in_background
@@ -765,13 +783,18 @@ impl Inner {
         Ok(())
     }
 
-    /// Shows the checkerboard in a new document, if it is on.
-    async fn restore_checkerboard(&self, cdp: &Cdp) {
-        if !self.checkerboard.load(Ordering::SeqCst) {
+    /// Shows the backdrop in a new document: the checkerboard if it is on,
+    /// or a black layer if the Engine can't make transparent areas black.
+    async fn restore_backdrop(&self, cdp: &Cdp) {
+        let Some(screen) = self.screen.get() else {
+            return;
+        };
+        let backdrop = screen.backdrop(self.checkerboard.load(Ordering::SeqCst));
+        if backdrop == screen::Backdrop::Engine {
             return;
         }
-        if let Err(error) = screen::show_checkerboard(cdp, true).await {
-            tracing::warn!(%error, "could not show the checkerboard");
+        if let Err(error) = screen::show_backdrop(cdp, backdrop).await {
+            tracing::warn!(%error, "could not show the backdrop");
         }
     }
 
@@ -843,20 +866,26 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             profile: profile.version.clone(),
         }));
 
-    let executable = match &config.engine_path {
-        Some(path) => path.clone(),
+    // An Engine given by path is taken to have a headless mode.
+    let (executable, has_headless) = match &config.engine_path {
+        Some(path) => (path.clone(), true),
         None => {
             let platform = engine::current_platform().map_err(|e| e.to_string())?;
             let spec =
                 EngineSpec::for_profile(&profile.version, platform).map_err(|e| e.to_string())?;
-            config
+            let installed = config
                 .home
                 .engine_store()
                 .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
                 .await
-                .map_err(|e| e.to_string())?
-                .executable
+                .map_err(|e| e.to_string())?;
+            (installed.executable, spec.headless)
         }
+    };
+    let window = match (config.headless, has_headless) {
+        (false, _) => EngineWindow::Shown,
+        (true, true) => EngineWindow::Headless,
+        (true, false) => EngineWindow::OffScreen,
     };
     if let AppFiles::Bundler(bundler) = app.files() {
         check_reachable(bundler).await?;
@@ -867,7 +896,14 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let _ = inner.app_exit.set(app_exit_tx);
     tokio::spawn(handle_bridge(bridge_rx, inner.clone()));
     let setup = ServerSetup {
-        data: shim::session_data(&app, profile, &device, config.lenient, &config.key_map),
+        data: shim::session_data(
+            &app,
+            profile,
+            &device,
+            config.lenient,
+            &config.key_map,
+            config.resolution,
+        ),
         token: fresh_token()?,
         profile,
         access_policy: app.access_policy().clone(),
@@ -891,7 +927,8 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         &executable,
         &LaunchOptions {
             user_data_dir,
-            headless: config.headless,
+            window,
+            user_agent: profile.user_agent.clone(),
             network_proxy: Some(network.addr()),
             // Packaged Apps aren't held to browser CORS on a TV (measured on
             // a Tizen 5.0 TV, ADR-0003).
@@ -907,6 +944,10 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     let (cdp, events) = Cdp::connect(&engine.page_ws_url)
         .await
         .map_err(|e| e.to_string())?;
+    // Asked while the Session is connected but before anything is set up: a
+    // client leaving undoes some of the page's emulation (M130 drops the
+    // black background override).
+    let shares_page = devtools_relay::takes_another_client(&engine.page_ws_url).await;
     let cdp = Arc::new(cdp);
     let (page_loads_tx, page_loads) = mpsc::unbounded_channel();
     tokio::spawn(forward_events(events, inner.clone(), page_loads_tx));
@@ -917,19 +958,34 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     cdp.call("Page.enable", json!({}))
         .await
         .map_err(|e| e.to_string())?;
-    // The Engine's own console messages, such as CSP violations.
-    cdp.call("Log.enable", json!({}))
-        .await
-        .map_err(|e| e.to_string())?;
-    screen::set_up(&cdp, config.resolution, !config.headless)
+    // The Engine's own console messages, such as CSP violations. Engines
+    // older than the Log domain (M47, protocol 1.1) report the App's console
+    // and their own messages together as Console.messageAdded instead, and
+    // have no Runtime.consoleAPICalled to duplicate them (#24 prototype).
+    if cdp.call("Log.enable", json!({})).await.is_err() {
+        cdp.call("Console.enable", json!({}))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let screen = screen::set_up(&cdp, config.resolution, !config.headless)
         .await
         .map_err(|e| format!("could not set up the TV screen: {e}"))?;
+    let _ = inner.screen.set(screen);
+    let (devtools_relay, devtools_url) = if shares_page {
+        (None, engine.devtools_url.clone())
+    } else {
+        let relay = DevtoolsRelay::start(cdp.clone())
+            .await
+            .map_err(|e| format!("could not start the DevTools relay: {e}"))?;
+        let url = relay.inspector_url(engine.debug_port, &engine.page_ws_url);
+        (Some(relay), url)
+    };
     inner
         .log
         .publish(SessionEvent::Lifecycle(Lifecycle::EngineReady {
             engine_version: engine.engine_version.clone(),
             debugger_url: engine.page_ws_url.clone(),
-            devtools_url: engine.devtools_url.clone(),
+            devtools_url: devtools_url.clone(),
         }));
 
     // Watch before the first load, so no edit made once the App is up is missed.
@@ -945,7 +1001,6 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     let url = server.url(&app.entry_path());
     let runs_in_background = app.runs_in_background();
-    let devtools_url = engine.devtools_url.clone();
     let mut running = Running {
         engine,
         server,
@@ -956,6 +1011,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         app,
         watcher,
         _control: control,
+        _devtools_relay: devtools_relay,
         session_dir,
     };
     running.network.set_logging(true);
@@ -963,7 +1019,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .await
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
-    inner.restore_checkerboard(&cdp).await;
+    inner.restore_backdrop(&cdp).await;
     entry.engine_pid = running.engine.child.id();
     if !config.headless {
         entry.window = engine_window(&running.engine).await;
@@ -984,6 +1040,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         executable,
         devtools_url,
         devtools_data_dir,
+        engine: *inner.engine.lock().unwrap(),
     });
     inner
         .log
@@ -1209,11 +1266,18 @@ async fn forward_events(
                     text: entry["text"].as_str().unwrap_or_default().to_string(),
                 }));
             }
+            "Console.messageAdded" => {
+                let message = &params["message"];
+                inner.log.publish(SessionEvent::Console(ConsoleMessage {
+                    level: message["level"].as_str().unwrap_or("log").to_string(),
+                    text: message["text"].as_str().unwrap_or_default().to_string(),
+                }));
+            }
             "Page.loadEventFired" => {
                 let _ = loaded.send(());
                 if let Some(session) = inner.loaded.get() {
                     let (inner, cdp) = (inner.clone(), session.cdp.clone());
-                    tokio::spawn(async move { inner.restore_checkerboard(&cdp).await });
+                    tokio::spawn(async move { inner.restore_backdrop(&cdp).await });
                 }
             }
             _ => {}
@@ -1249,18 +1313,52 @@ impl Loaded {
         if self.hidden.swap(true, Ordering::SeqCst) {
             return false;
         }
-        set_window_state(&self.cdp, "minimized").await;
+        set_window_state(&self.cdp, self.engine, "minimized").await;
         true
     }
 }
 
+/// Pauses the page's JavaScript. Engines without page lifecycle states
+/// (e.g. M47) are paused in the debugger instead, where
+/// timers stop but `Runtime.evaluate` still answers.
+async fn freeze(cdp: &Cdp) -> Result<(), CdpError> {
+    let lifecycle = cdp
+        .call("Page.setWebLifecycleState", json!({ "state": "frozen" }))
+        .await;
+    if lifecycle.is_ok() {
+        return Ok(());
+    }
+    cdp.call("Debugger.enable", json!({})).await?;
+    cdp.call("Debugger.pause", json!({})).await?;
+    // Breaks at once, in this expression, rather than whenever the App next
+    // runs a script; the reply only comes on resuming, so it isn't awaited.
+    cdp.send("Runtime.evaluate", json!({ "expression": "void 0" }))
+}
+
+/// Resumes the JavaScript `freeze` paused.
+async fn thaw(cdp: &Cdp) {
+    let lifecycle = cdp
+        .call("Page.setWebLifecycleState", json!({ "state": "active" }))
+        .await;
+    if lifecycle.is_err() {
+        // Disabling the debugger resumes the page.
+        let _ = cdp.call("Debugger.disable", json!({})).await;
+    }
+}
+
 /// Minimizes or restores the Engine window. Engines without the Browser
-/// domain keep their window as it is.
-async fn set_window_state(cdp: &Cdp, state: &str) {
+/// domain have it done through the OS where it can; elsewhere their window
+/// stays as it is.
+async fn set_window_state(cdp: &Cdp, engine: Option<EngineProcess>, state: &str) {
     let window = match cdp.call("Browser.getWindowForTarget", json!({})).await {
         Ok(window) => window["windowId"].clone(),
         Err(error) => {
-            tracing::warn!(%error, "could not find the Engine window");
+            let native = engine.and_then(EngineProcess::native_window);
+            let done = native
+                .is_some_and(|window| engine::set_window_minimized(window, state == "minimized"));
+            if !done {
+                tracing::warn!(%error, "could not find the Engine window");
+            }
             return;
         }
     };
