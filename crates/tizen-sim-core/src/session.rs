@@ -246,10 +246,26 @@ struct EngineProcess {
 }
 
 impl EngineProcess {
-    /// The Engine's native window. Embedded in the GUI it's no longer a
-    /// top-level window, so the recorded handle comes first.
-    fn native_window(self) -> Option<u64> {
-        self.window.or_else(|| engine::window_handle(self.pid))
+    /// Minimizes or restores the Engine window through the OS. False if it
+    /// couldn't.
+    async fn set_minimized(self, minimized: bool) -> bool {
+        // Embedded in the GUI the window is no longer a top-level window, so
+        // the recorded handle comes first.
+        #[cfg(windows)]
+        return self
+            .window
+            .or_else(|| engine::window_handle(self.pid))
+            .is_some_and(|window| engine::set_window_minimized(window, minimized));
+        // It waits on the X server and the window manager, which may hang.
+        #[cfg(unix)]
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || {
+                engine::set_x11_window_minimized(self.display, self.pid, minimized)
+            }),
+        )
+        .await
+        .is_ok_and(|done| done.unwrap_or(false))
     }
 }
 
@@ -1399,9 +1415,10 @@ async fn set_window_state(cdp: &Cdp, engine: Option<EngineProcess>, state: &str)
     let window = match cdp.call("Browser.getWindowForTarget", json!({})).await {
         Ok(window) => window["windowId"].clone(),
         Err(error) => {
-            let native = engine.and_then(EngineProcess::native_window);
-            let done = native
-                .is_some_and(|window| engine::set_window_minimized(window, state == "minimized"));
+            let done = match engine {
+                Some(engine) => engine.set_minimized(state == "minimized").await,
+                None => false,
+            };
             if !done {
                 tracing::warn!(%error, "could not find the Engine window");
             }

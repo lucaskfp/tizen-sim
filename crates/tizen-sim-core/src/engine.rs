@@ -804,9 +804,272 @@ pub fn set_window_minimized(window: u64, minimized: bool) -> bool {
     true
 }
 
-#[cfg(not(windows))]
-pub fn set_window_minimized(_window: u64, _minimized: bool) -> bool {
-    false
+/// Minimizes or restores the X11 window of the Engine with process id `pid`
+/// on X display `display` (the one this process uses when `None`), for
+/// Engines whose protocol can't (M47 on Linux is X11-only, under XWayland on
+/// Wayland desktops). Neither takes focus from the developer's window. Blocks
+/// while the window manager restores the window. False if it couldn't.
+#[cfg(unix)]
+pub fn set_x11_window_minimized(display: Option<u32>, pid: u32, minimized: bool) -> bool {
+    match x11_window::set_minimized(display, pid, minimized) {
+        Ok(done) => done,
+        Err(error) => {
+            tracing::warn!(%error, "could not minimize or restore the Engine's X11 window");
+            false
+        }
+    }
+}
+
+/// An Engine window on X11. Chromium of M47's age reports its page hidden
+/// only when `_NET_WM_STATE` gains `_NET_WM_STATE_HIDDEN`, which a window
+/// manager may set when it iconifies the window; tizen-sim sets it itself,
+/// and without a window manager (Xvfb) unmaps the window in its place.
+#[cfg(unix)]
+mod x11_window {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        Atom, AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, MapState, PropMode, Window,
+    };
+    use x11rb::rust_connection::RustConnection;
+    use x11rb::wrapper::ConnectionExt as _;
+
+    type Error = Box<dyn std::error::Error>;
+
+    /// ICCCM's `IconicState`.
+    const ICONIC_STATE: u32 = 3;
+    /// EWMH's source indication for a request from a pager.
+    const FROM_PAGER: u32 = 2;
+
+    struct Atoms {
+        net_wm_pid: Atom,
+        net_wm_state: Atom,
+        net_wm_state_hidden: Atom,
+        net_wm_user_time: Atom,
+        net_active_window: Atom,
+        net_supporting_wm_check: Atom,
+        wm_change_state: Atom,
+    }
+
+    impl Atoms {
+        fn intern(conn: &RustConnection) -> Result<Atoms, Error> {
+            let atom = |name: &str| -> Result<Atom, Error> {
+                Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
+            };
+            Ok(Atoms {
+                net_wm_pid: atom("_NET_WM_PID")?,
+                net_wm_state: atom("_NET_WM_STATE")?,
+                net_wm_state_hidden: atom("_NET_WM_STATE_HIDDEN")?,
+                net_wm_user_time: atom("_NET_WM_USER_TIME")?,
+                net_active_window: atom("_NET_ACTIVE_WINDOW")?,
+                net_supporting_wm_check: atom("_NET_SUPPORTING_WM_CHECK")?,
+                wm_change_state: atom("WM_CHANGE_STATE")?,
+            })
+        }
+    }
+
+    pub fn set_minimized(display: Option<u32>, pid: u32, minimized: bool) -> Result<bool, Error> {
+        let name = display.map(|number| format!(":{number}"));
+        let (conn, screen) = x11rb::connect(name.as_deref())?;
+        let root = conn.setup().roots[screen].root;
+        let atoms = Atoms::intern(&conn)?;
+        let Some(window) = find_window(&conn, &atoms, root, pid)? else {
+            return Ok(false);
+        };
+        let window_manager = window_manager_running(&conn, &atoms, root)?;
+        // Not every window manager marks an iconified window hidden (Weston's,
+        // under WSLg, doesn't), so tizen-sim marks it either way.
+        if minimized {
+            set_hidden_state(&conn, &atoms, window, true)?;
+            if window_manager {
+                // ICCCM 4.1.4: ask the window manager to iconify it.
+                send_to_window_manager(&conn, root, window, atoms.wm_change_state, ICONIC_STATE)?;
+            } else {
+                conn.unmap_window(window)?;
+            }
+        } else {
+            let focused = if window_manager {
+                // A user time of 0 asks not to focus it (EWMH
+                // _NET_WM_USER_TIME).
+                conn.change_property32(
+                    PropMode::REPLACE,
+                    window,
+                    atoms.net_wm_user_time,
+                    AtomEnum::CARDINAL,
+                    &[0],
+                )?;
+                active_window(&conn, &atoms, root)?
+            } else {
+                None
+            };
+            // Mapping an iconic window restores it (ICCCM 4.1.4).
+            conn.map_window(window)?;
+            set_hidden_state(&conn, &atoms, window, false)?;
+            conn.sync()?;
+            give_focus_back(&conn, &atoms, root, window, focused)?;
+        }
+        conn.sync()?;
+        Ok(true)
+    }
+
+    /// Some window managers (Openbox) focus a window they restore; if
+    /// this one does, focus goes back to the window that had it, as
+    /// a pager would ask (EWMH _NET_ACTIVE_WINDOW).
+    fn give_focus_back(
+        conn: &RustConnection,
+        atoms: &Atoms,
+        root: Window,
+        window: Window,
+        focused: Option<Window>,
+    ) -> Result<(), Error> {
+        let Some(focused) = focused.filter(|&focused| focused != window) else {
+            return Ok(());
+        };
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if active_window(conn, atoms, root)? == Some(window) {
+                send_to_window_manager(conn, root, focused, atoms.net_active_window, FROM_PAGER)?;
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether an EWMH window manager runs: its check window names itself
+    /// in `_NET_SUPPORTING_WM_CHECK`, so a dead one's leftover doesn't count.
+    fn window_manager_running(
+        conn: &RustConnection,
+        atoms: &Atoms,
+        root: Window,
+    ) -> Result<bool, Error> {
+        let check = |window| {
+            property32(
+                conn,
+                window,
+                atoms.net_supporting_wm_check,
+                AtomEnum::WINDOW.into(),
+            )
+            .map(|value| value.first().copied())
+        };
+        Ok(match check(root)? {
+            Some(window) => check(window)? == Some(window),
+            None => false,
+        })
+    }
+
+    /// The window the window manager has focused, if any.
+    fn active_window(
+        conn: &RustConnection,
+        atoms: &Atoms,
+        root: Window,
+    ) -> Result<Option<Window>, Error> {
+        let active = property32(conn, root, atoms.net_active_window, AtomEnum::WINDOW.into())?;
+        Ok(active.first().copied().filter(|&window| window != 0))
+    }
+
+    /// Sends a client message about `window` to the window manager.
+    fn send_to_window_manager(
+        conn: &RustConnection,
+        root: Window,
+        window: Window,
+        message: Atom,
+        data: u32,
+    ) -> Result<(), Error> {
+        let event = ClientMessageEvent::new(32, window, message, [data, 0, 0, 0, 0]);
+        conn.send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )?;
+        Ok(())
+    }
+
+    /// Adds `_NET_WM_STATE_HIDDEN` to the window's `_NET_WM_STATE`, or
+    /// removes it, as a window manager would.
+    fn set_hidden_state(
+        conn: &RustConnection,
+        atoms: &Atoms,
+        window: Window,
+        hidden: bool,
+    ) -> Result<(), Error> {
+        // The window manager writes it too; none of its writes may land
+        // between this read and write.
+        conn.grab_server()?;
+        let result = (|| {
+            let mut state = property32(conn, window, atoms.net_wm_state, AtomEnum::ATOM.into())?;
+            state.retain(|&atom| atom != atoms.net_wm_state_hidden);
+            if hidden {
+                state.push(atoms.net_wm_state_hidden);
+            }
+            conn.change_property32(
+                PropMode::REPLACE,
+                window,
+                atoms.net_wm_state,
+                AtomEnum::ATOM,
+                &state,
+            )?;
+            Ok(())
+        })();
+        conn.ungrab_server()?;
+        result
+    }
+
+    /// The Engine's top-level window: the one it marks with its process id
+    /// that is shown or minimized. A window manager may have reparented it
+    /// into a frame, so the whole tree is searched.
+    fn find_window(
+        conn: &RustConnection,
+        atoms: &Atoms,
+        root: Window,
+        pid: u32,
+    ) -> Result<Option<Window>, Error> {
+        let mut level = vec![root];
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            for window in level {
+                let Ok(tree) = conn.query_tree(window)?.reply() else {
+                    // Gone since its parent was listed.
+                    continue;
+                };
+                next.extend(tree.children);
+            }
+            for &window in &next {
+                if property32(conn, window, atoms.net_wm_pid, AtomEnum::CARDINAL.into())?.first()
+                    != Some(&pid)
+                {
+                    continue;
+                }
+                let Ok(attributes) = conn.get_window_attributes(window)?.reply() else {
+                    continue;
+                };
+                let hidden = property32(conn, window, atoms.net_wm_state, AtomEnum::ATOM.into())?
+                    .contains(&atoms.net_wm_state_hidden);
+                if !attributes.override_redirect
+                    && (attributes.map_state == MapState::VIEWABLE || hidden)
+                {
+                    return Ok(Some(window));
+                }
+            }
+            level = next;
+        }
+        Ok(None)
+    }
+
+    /// A window's 32-bit property, empty when it has none (or is gone).
+    fn property32(
+        conn: &RustConnection,
+        window: Window,
+        property: Atom,
+        kind: Atom,
+    ) -> Result<Vec<u32>, Error> {
+        let Ok(reply) = conn
+            .get_property(false, window, property, kind, 0, 1024)?
+            .reply()
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(reply.value32().map(Iterator::collect).unwrap_or_default())
+    }
 }
 
 /// Makes an Engine die with the process that started it, even when that
