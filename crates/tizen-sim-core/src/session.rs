@@ -240,6 +240,8 @@ struct Inner {
 struct EngineProcess {
     pid: u32,
     window: Option<u64>,
+    /// The private X display it draws on, if any.
+    display: Option<u32>,
 }
 
 impl EngineProcess {
@@ -262,6 +264,8 @@ struct Loaded {
     hidden: AtomicBool,
     /// The Engine's executable, which also runs the DevTools window.
     executable: PathBuf,
+    /// Whether the Engine runs with Chromium's sandbox.
+    sandbox: bool,
     devtools_url: String,
     /// The DevTools window's own Engine data.
     devtools_data_dir: PathBuf,
@@ -423,6 +427,7 @@ impl Session {
         if !open {
             let child = engine::open_window(
                 &loaded.executable,
+                loaded.sandbox,
                 &loaded.devtools_data_dir,
                 &loaded.devtools_url,
             )
@@ -444,6 +449,12 @@ impl Session {
     /// Session exits.
     pub fn engine_pid(&self) -> Option<u32> {
         self.inner.engine.lock().unwrap().map(|e| e.pid)
+    }
+
+    /// The number of the private X display the Engine draws on: a headless
+    /// Session's off-screen Engine on Linux, with Xvfb installed.
+    pub fn engine_display(&self) -> Option<u32> {
+        self.inner.engine.lock().unwrap().and_then(|e| e.display)
     }
 
     /// The Engine's native window (an `HWND` on Windows) for the GUI to
@@ -871,8 +882,12 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         }));
 
     // An Engine given by path is taken to have a headless mode.
-    let (executable, has_headless) = match &config.engine_path {
-        Some(path) => (path.clone(), true),
+    let (executable, has_headless, sandbox) = match &config.engine_path {
+        Some(path) => (
+            path.clone(),
+            true,
+            EngineSpec::sandbox_for(&profile.version),
+        ),
         None => {
             let platform = engine::current_platform().map_err(|e| e.to_string())?;
             let spec =
@@ -883,7 +898,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
                 .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
                 .await
                 .map_err(|e| e.to_string())?;
-            (installed.executable, spec.headless)
+            (installed.executable, spec.headless, spec.sandbox)
         }
     };
     let has_headless = config.engine_has_headless.unwrap_or(has_headless);
@@ -939,6 +954,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             // Packaged Apps aren't held to browser CORS on a TV (measured on
             // a Tizen 5.0 TV, ADR-0003).
             disable_web_security: true,
+            sandbox,
         },
     )
     .await
@@ -1036,6 +1052,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
     *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
         pid,
         window: entry.window,
+        display: running.engine.display(),
     });
     let _ = inner.loaded.set(Loaded {
         cdp,
@@ -1044,6 +1061,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         runs_in_background: AtomicBool::new(runs_in_background),
         hidden: AtomicBool::new(false),
         executable,
+        sandbox,
         devtools_url,
         devtools_data_dir,
         engine: *inner.engine.lock().unwrap(),

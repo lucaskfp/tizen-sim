@@ -2,7 +2,7 @@
 # platform. `sha256` is of the downloaded archive; `executable` is relative to
 # the archive root. `headless = false` marks an Engine that has no headless
 # mode on that platform; a headless Session then runs it in a window kept off
-# the screen.
+# the screen. `sandbox = false` runs an Engine without Chromium's sandbox.
 #
 # Chrome for Testing starts at M113, so older Engines come from the Chromium
 # snapshot archive (chromium-browser-snapshots/<platform>/<revision>/), which
@@ -21,6 +21,21 @@ url = "https://storage.googleapis.com/chromium-browser-snapshots/Win/352221/chro
 sha256 = "eb72cabb06e4b3b906dd6cc1a3a98e351fdd8c7b1648acb197a2a6c305046d85"
 executable = "chrome-win32/chrome.exe"
 headless = false
+
+# The same revision for Linux (the `Linux_x64` folder). It needs GTK 2,
+# GConf and dbus-glib from the system; GConf is gone from Debian 13 and
+# Ubuntu 24.04 (docs/linux.md). Its sandbox needs a setuid-root helper
+# (`chrome_sandbox`), which a per-user download can't set up, so it runs
+# without one. It has no headless mode either.
+[[engine]]
+profile = "3.0"
+milestone = 47
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/352221/chrome-linux.zip"
+sha256 = "1afa29e6d3632ac2ffc9e2c168001d9f4868375a3986887fdaf253d94284fd5a"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
 
 [[engine]]
 profile = "10.0"

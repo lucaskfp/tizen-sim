@@ -35,6 +35,7 @@ fn spec(url: String, sha256: String) -> EngineSpec {
         sha256,
         executable: "stand-in-engine/chrome.exe".into(),
         headless: true,
+        sandbox: true,
     }
 }
 
@@ -64,6 +65,76 @@ async fn downloads_once_then_reuses_the_cache() {
         .unwrap();
     assert!(!second.freshly_downloaded);
     assert_eq!(second.executable, first.executable);
+}
+
+#[tokio::test]
+async fn another_process_installing_the_same_engine_first_is_not_an_error() {
+    // An Engine installed elsewhere, to copy in as the other process's work.
+    let zip = stand_in_engine_zip();
+    let sha = hex::encode(Sha256::digest(&zip));
+    let elsewhere = tempfile::tempdir().unwrap();
+    let url = serve(zip.clone()).await;
+    let theirs = EngineStore::new(elsewhere.path().to_path_buf())
+        .ensure(&spec(url, sha.clone()), |_| {})
+        .await
+        .unwrap();
+    let install_dir = theirs
+        .executable
+        .strip_prefix(elsewhere.path())
+        .unwrap()
+        .components()
+        .next()
+        .unwrap()
+        .as_os_str()
+        .to_owned();
+
+    // While this process downloads, another one (a parallel test, or the CLI
+    // and the GUI starting at once) finishes installing the same Engine.
+    let dir = tempfile::tempdir().unwrap();
+    let (from, to) = (
+        elsewhere.path().join(&install_dir),
+        dir.path().join(&install_dir),
+    );
+    let app = axum::Router::new().route(
+        "/engine.zip",
+        axum::routing::get(move || {
+            let (zip, from, to) = (zip.clone(), from.clone(), to.clone());
+            async move {
+                copy_dir(&from, &to);
+                zip
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let ours = EngineStore::new(dir.path().to_path_buf())
+        .ensure(&spec(format!("http://{addr}/engine.zip"), sha), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(&ours.executable).unwrap(),
+        b"not really chrome"
+    );
+    let entries: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(entries, vec![install_dir], "left behind: {entries:?}");
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }
 
 #[tokio::test]

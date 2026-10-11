@@ -239,6 +239,16 @@ pub fn kill_process(pid: u32) {
     assert!(status.unwrap().success(), "could not kill process {pid}");
 }
 
+/// Whether Xvfb is installed, for an off-screen Engine on Linux.
+pub fn has_xvfb() -> bool {
+    std::process::Command::new("Xvfb")
+        .arg("-help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 /// The RGB colour of a pixel of a PNG screenshot.
 pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));

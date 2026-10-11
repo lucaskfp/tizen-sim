@@ -3,6 +3,7 @@
 
 mod support;
 
+use std::time::{Duration, Instant};
 use support::{STARTUP_SECS, expect_event, start};
 use tizen_sim_core::session::{ExitReason, Lifecycle, SessionEvent};
 
@@ -216,14 +217,45 @@ async fn an_engine_path_is_launched_instead_of_a_cached_engine() {
     );
 }
 
+/// An Engine that can't start says why, e.g. a shared library an old Linux
+/// Engine needs and the system lacks.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_engine_that_cannot_start_reports_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = dir.path().join("chrome");
+    std::fs::write(
+        &engine,
+        concat!(
+            "#!/bin/sh\n",
+            "echo 'chrome: error while loading shared libraries: libgconf-2.so.4: ",
+            "cannot open shared object file: No such file or directory' >&2\n",
+            "exit 127\n",
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let t = support::start_with("hello", |config| {
+        config.engine_path = Some(engine.clone());
+    });
+    let error = t.session.wait_until_loaded().await.unwrap_err().to_string();
+
+    assert!(
+        error.contains("libgconf-2.so.4: cannot open shared object file"),
+        "{error}"
+    );
+}
+
 /// An Engine without a headless mode runs a headless Session in a window
 /// off the screen (ADR-0001), which still draws the App.
 #[tokio::test]
 async fn an_engine_without_headless_mode_runs_headless_sessions_off_screen() {
-    // The window needs a display; the nightly Shim suite covers Linux under a
-    // virtual one.
-    if cfg!(unix) && std::env::var_os("DISPLAY").is_none() {
-        eprintln!("skipped: no display");
+    // On Linux the Engine draws on a private Xvfb display; without Xvfb it
+    // needs an X11 desktop, where windows go where they're asked.
+    if cfg!(unix) && !support::has_xvfb() && std::env::var_os("DISPLAY").is_none() {
+        eprintln!("skipped: no Xvfb and no display");
         return;
     }
     let t = support::start_with("hello", |config| {
@@ -232,14 +264,43 @@ async fn an_engine_without_headless_mode_runs_headless_sessions_off_screen() {
     });
     t.session.wait_until_loaded().await.unwrap();
 
-    // The Engine puts it at x = -20000 (`OFF_SCREEN` in engine.rs).
-    let left = t.session.evaluate("window.screenX").await.unwrap();
-    assert!(
-        left.as_i64().unwrap() < -10000,
-        "the Engine window is on the screen, at x = {left}"
-    );
+    let private_display = cfg!(target_os = "linux") && support::has_xvfb();
+    let display = if private_display {
+        // On a virtual display of its own, away from the developer's desktop.
+        let display = t.session.engine_display().expect("no private display");
+        assert!(serves(display), "nothing serves display :{display}");
+        Some(display)
+    } else {
+        // The Engine puts it at x = -20000 (`OFF_SCREEN` in engine.rs).
+        let left = t.session.evaluate("window.screenX").await.unwrap();
+        assert!(
+            left.as_i64().unwrap() < -10000,
+            "the Engine window is on the screen, at x = {left}"
+        );
+        None
+    };
     assert!(!t.session.screenshot().await.unwrap().is_empty());
     t.session.stop().await;
+    if let Some(display) = display {
+        // It is killed as the Engine goes, which takes a moment.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while serves(display) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!serves(display), "the virtual display outlived the Session");
+    }
+}
+
+/// Whether an X server answers on display `:<display>`. Its socket file
+/// outlives a killed server, but no longer accepts connections.
+#[cfg(unix)]
+fn serves(display: u32) -> bool {
+    std::os::unix::net::UnixStream::connect(format!("/tmp/.X11-unix/X{display}")).is_ok()
+}
+
+#[cfg(not(unix))]
+fn serves(_display: u32) -> bool {
+    unreachable!("private displays are Linux-only")
 }
 
 #[tokio::test]

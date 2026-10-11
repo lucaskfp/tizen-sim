@@ -23,11 +23,16 @@ pub struct EngineSpec {
     /// Path of the browser executable inside the archive.
     pub executable: String,
     /// Whether the Engine can run headless on this platform.
-    #[serde(default = "has_headless_by_default")]
+    #[serde(default = "default_true")]
     pub headless: bool,
+    /// Whether the Engine runs with Chromium's sandbox. Old Linux builds
+    /// need a setuid-root helper for it, which a per-user download can't
+    /// have, so they run without (`--no-sandbox`).
+    #[serde(default = "default_true")]
+    pub sandbox: bool,
 }
 
-fn has_headless_by_default() -> bool {
+fn default_true() -> bool {
     true
 }
 
@@ -137,6 +142,15 @@ impl EngineSpec {
     /// platform.
     pub fn for_profile(profile: &str, platform: &str) -> Result<&'static EngineSpec, EngineError> {
         EngineManifest::bundled().for_profile(profile, platform)
+    }
+
+    /// Whether the Version Profile's pinned Engine on this platform runs
+    /// with Chromium's sandbox, which a developer's own build of the same
+    /// milestone (`--engine-path`) needs too; true where there is none.
+    pub fn sandbox_for(profile: &str) -> bool {
+        current_platform()
+            .and_then(|platform| EngineSpec::for_profile(profile, platform))
+            .map_or(true, |spec| spec.sandbox)
     }
 
     fn install_dir_name(&self) -> String {
@@ -308,8 +322,13 @@ impl EngineStore {
         tokio::fs::write(staging.join(INSTALLED_MARKER), &spec.sha256)
             .await
             .map_err(io_err(staging))?;
-        tokio::fs::rename(staging, dir).await.map_err(io_err(dir))?;
-        Ok(())
+        match tokio::fs::rename(staging, dir).await {
+            Ok(()) => Ok(()),
+            // Another process installed the same Engine meanwhile; theirs is
+            // as good as ours, which is cleaned up with the staging directory.
+            Err(_) if dir.join(INSTALLED_MARKER).is_file() => Ok(()),
+            Err(error) => Err(io_err(dir)(error)),
+        }
     }
 }
 
@@ -415,6 +434,8 @@ pub struct LaunchOptions {
     /// Turns off the same-origin policy, so CORS doesn't block requests
     /// (ADR-0003).
     pub disable_web_security: bool,
+    /// Whether to keep Chromium's sandbox on (see `EngineSpec::sandbox`).
+    pub sandbox: bool,
 }
 
 /// A started Engine with its debugging endpoint.
@@ -427,6 +448,19 @@ pub struct RunningEngine {
     /// The Engine's own bundled inspector (DevTools), attached to that page.
     /// Served by the Engine, so it speaks its protocol whatever its age.
     pub devtools_url: String,
+    /// The private display an off-screen Engine draws on, if it has one;
+    /// it stops with the Engine.
+    display: Option<virtual_display::VirtualDisplay>,
+}
+
+impl RunningEngine {
+    /// The number of the private X display the Engine draws on, if it has
+    /// one (an off-screen Engine on Linux with Xvfb installed).
+    pub fn display(&self) -> Option<u32> {
+        self.display
+            .as_ref()
+            .map(virtual_display::VirtualDisplay::number)
+    }
 }
 
 /// Where an off-screen Engine window goes: far beyond any monitor, but not
@@ -500,9 +534,13 @@ pub async fn launch(
     if options.disable_web_security {
         command.arg("--disable-web-security");
     }
+    if !options.sandbox {
+        command.arg("--no-sandbox");
+    }
     if let Some(user_agent) = &options.user_agent {
         command.arg(format!("--user-agent={user_agent}"));
     }
+    let mut display = None;
     match options.window {
         EngineWindow::Headless => {
             command.args(["--headless=new", "about:blank"]);
@@ -513,6 +551,10 @@ pub async fn launch(
                     "--window-position={},{}",
                     OFF_SCREEN.0, OFF_SCREEN.1
                 ));
+                display = virtual_display::start().await;
+                if let Some(display) = &display {
+                    display.use_for(&mut command);
+                }
             }
             // An app window: no tabs or address bar. `--app=about:blank`
             // gets an ordinary browser window instead.
@@ -522,7 +564,7 @@ pub async fn launch(
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     containment::die_with_parent(&mut command);
     let mut child = command.spawn().map_err(|source| EngineError::Spawn {
@@ -530,6 +572,7 @@ pub async fn launch(
         source,
     })?;
     containment::tie_to_this_process(&child);
+    let stderr_tail = child.stderr.take().map(last_line_of);
 
     let http = reqwest::Client::new();
     let base = format!("http://127.0.0.1:{debug_port}");
@@ -541,7 +584,20 @@ pub async fn launch(
             if engine_data_in_use(&options.user_data_dir) {
                 return Err(EngineError::EngineDataInUse(options.user_data_dir.clone()));
             }
-            return Err(EngineError::ExitedDuringStartup(status.to_string()));
+            // What it said last, e.g. the dynamic loader naming a missing
+            // shared library.
+            let tail = match stderr_tail {
+                Some(reader) => tokio::time::timeout(Duration::from_secs(1), reader)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten(),
+                None => None,
+            };
+            return Err(EngineError::ExitedDuringStartup(match tail {
+                Some(line) => format!("{status}: {line}"),
+                None => status.to_string(),
+            }));
         }
         if started.elapsed() > STARTUP_TIMEOUT {
             let _ = child.kill().await;
@@ -555,10 +611,34 @@ pub async fn launch(
                 debug_port,
                 page_ws_url,
                 devtools_url,
+                display,
             });
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Reads the Engine's error output to its end, so Chromium never blocks on
+/// a full pipe, and returns its last non-empty line.
+fn last_line_of(stderr: tokio::process::ChildStderr) -> tokio::task::JoinHandle<Option<String>> {
+    use tokio::io::AsyncBufReadExt;
+    tokio::spawn(async move {
+        let mut stderr = tokio::io::BufReader::new(stderr);
+        let (mut line, mut last) = (Vec::new(), None);
+        // Bytes, not text: output that isn't UTF-8 must not stop the reading.
+        while stderr
+            .read_until(b'\n', &mut line)
+            .await
+            .is_ok_and(|n| n > 0)
+        {
+            let text = String::from_utf8_lossy(&line);
+            if !text.trim().is_empty() {
+                last = Some(text.trim().to_string());
+            }
+            line.clear();
+        }
+        last
+    })
 }
 
 async fn discover(http: &reqwest::Client, base: &str) -> Option<(String, String)> {
@@ -600,6 +680,7 @@ fn devtools_url(debug_port: u16, page_ws_url: &str) -> String {
 /// window closes when the returned process is dropped.
 pub async fn open_window(
     executable: &Path,
+    sandbox: bool,
     user_data_dir: &Path,
     url: &str,
 ) -> Result<tokio::process::Child, EngineError> {
@@ -611,6 +692,7 @@ pub async fn open_window(
         .arg(format!("--user-data-dir={}", user_data_dir.display()))
         .args(QUIET_START)
         .arg(format!("--app={url}"))
+        .args((!sandbox).then_some("--no-sandbox"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -785,6 +867,105 @@ mod containment {
 
     #[cfg(unix)]
     pub fn tie_to_this_process(_child: &tokio::process::Child) {}
+}
+
+/// A private X display for an off-screen Engine on Linux. Wayland
+/// compositors (and XWayland under them) ignore the position a window asks
+/// for, so an "off-screen" window would show on the developer's desktop;
+/// on its own virtual display it can't. Without Xvfb installed, the window
+/// is placed off the screen as elsewhere, which works on an X11 desktop.
+mod virtual_display {
+    #[cfg(target_os = "linux")]
+    pub struct VirtualDisplay {
+        number: u32,
+        _server: tokio::process::Child,
+        /// Kept open: Xvfb would die of SIGPIPE writing to a closed pipe.
+        _stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl VirtualDisplay {
+        pub fn use_for(&self, command: &mut tokio::process::Command) {
+            command
+                .env("DISPLAY", format!(":{}", self.number))
+                .env_remove("WAYLAND_DISPLAY");
+        }
+
+        pub fn number(&self) -> u32 {
+            self.number
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn start() -> Option<VirtualDisplay> {
+        use std::process::Stdio;
+        use tokio::io::AsyncBufReadExt;
+
+        // Xvfb picks a free display and writes its number to `-displayfd`.
+        let mut command = tokio::process::Command::new("Xvfb");
+        command
+            .args([
+                "-displayfd",
+                "1",
+                "-screen",
+                "0",
+                "1920x1080x24",
+                "-nolisten",
+                "tcp",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        super::containment::die_with_parent(&mut command);
+        let mut server = match command.spawn() {
+            Ok(server) => server,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "Xvfb is not available; the off-screen Engine window may show on the desktop"
+                );
+                return None;
+            }
+        };
+        let mut line = String::new();
+        let mut stdout = tokio::io::BufReader::new(server.stdout.take()?);
+        let read = stdout.read_line(&mut line);
+        let number = match tokio::time::timeout(std::time::Duration::from_secs(10), read).await {
+            Ok(Ok(_)) => line.trim().parse().ok(),
+            _ => None,
+        };
+        let Some(number) = number else {
+            tracing::warn!(
+                "Xvfb did not start; the off-screen Engine window may show on the desktop"
+            );
+            return None;
+        };
+        Some(VirtualDisplay {
+            number,
+            _server: server,
+            _stdout: stdout,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub enum VirtualDisplay {}
+
+    #[cfg(not(target_os = "linux"))]
+    impl VirtualDisplay {
+        pub fn use_for(&self, _command: &mut tokio::process::Command) {
+            match *self {}
+        }
+
+        pub fn number(&self) -> u32 {
+            match *self {}
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn start() -> Option<VirtualDisplay> {
+        None
+    }
 }
 
 fn free_port() -> std::io::Result<u16> {

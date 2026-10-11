@@ -44,10 +44,14 @@ jobs:
           key: engines-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('crates/tizen-sim-core/data/engines.toml') }}
       - if: runner.os == 'Linux'
         run: |
-          # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          # The virtual display an Engine without a headless mode draws on.
-          sudo apt-get update && sudo apt-get install -y xvfb
+          # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's
+          # sandbox needs; 22.04 has no such setting.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          # The virtual display an Engine without a headless mode draws on,
+          # and the system libraries an old Engine links.
+          sudo apt-get update && sudo apt-get install -y xvfb ${{ matrix.packages }}
       - name: Shim suite on Tizen ${{ matrix.profile }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
