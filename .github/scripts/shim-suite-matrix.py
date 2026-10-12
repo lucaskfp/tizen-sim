@@ -15,12 +15,13 @@ import tomllib
 
 RUNNERS = {"windows-x64": "windows-latest", "linux-x64": "ubuntu-latest"}
 
-# Old Linux Engines link GTK 2, GConf and dbus-glib (measured on M47). Ubuntu
-# dropped GConf in 24.04, so they run on 22.04, the last release with it.
-# Raise this when adding a newer Linux Engine that still needs them.
-NEWEST_GCONF_MILESTONE = 47
+# Old Linux Engines link GConf, with GTK 2 or 3 and dbus-glib (measured on
+# M47, M56 and M63; M69 no longer does). Ubuntu dropped GConf in 24.04, so
+# they run on 22.04, the last release with it. Raise this when adding a newer
+# Linux Engine that still needs it.
+NEWEST_GCONF_MILESTONE = 63
 GCONF_RUNNER = "ubuntu-22.04"
-GCONF_PACKAGES = "libgtk2.0-0 libgconf-2-4 libdbus-glib-1-2"
+GCONF_PACKAGES = "libgtk2.0-0 libgtk-3-0 libgconf-2-4 libdbus-glib-1-2"
 
 
 def has_headless(engine):

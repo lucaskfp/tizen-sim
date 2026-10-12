@@ -4,7 +4,7 @@ An open-source desktop simulator for **Samsung Tizen TV web apps**, built as a r
 
 A Tizen TV runs your App on an old, fixed version of Chromium, with its own platform APIs, remote control, network rules and video layering. tizen-sim runs your App on the **same Chromium milestone the target TV generation ships** and reproduces what that TV's platform does to it. What you see on the desktop is what you'd see on the TV, without deploying to a device for every change.
 
-- **The TV's browser engine.** Each Version Profile pins the Chromium build its TVs ship, downloaded on first use: Chromium M47 for Tizen 3.0 (2017 TVs), Chromium M130 for Tizen 10.0.
+- **The TV's browser engine.** Each Version Profile pins the Chromium build its TVs ship, downloaded on first use: Chromium M47 for Tizen 3.0 (2017 TVs) up to Chromium M130 for Tizen 10.0 (2026 TVs).
 - **Platform APIs.** `tizen.*` and `webapis.*` Shims behave as documented, including their errors and privilege checks: calling an API without the privilege your `config.xml` declares throws `SecurityError`, as on the TV.
 - **The remote control.** Remote Keys arrive the way the TV delivers them, with `tizen.tvinputdevice` registration. The platform's own key handling is included, for example holding Back terminates the App.
 - **Network rules.** Your `config.xml` Access Policy (WARP `<access>` or CSP) is enforced through a proxy, and every request is listed in a Network Log.
@@ -20,10 +20,18 @@ A Tizen TV runs your App on an old, fixed version of Chromium, with its own plat
 | Version Profile | Engine         | Windows x64 | Linux x64 |
 | --------------- | -------------- | ----------- | --------- |
 | Tizen 10.0      | Chromium M130  | yes         | yes       |
+| Tizen 9.0       | Chromium M120  | yes         | yes       |
+| Tizen 8.0       | Chromium M108  | yes         | yes       |
+| Tizen 7.0       | Chromium M94   | yes         | yes       |
+| Tizen 6.5       | Chromium M85   | yes         | yes       |
+| Tizen 6.0       | Chromium M76   | yes         | yes       |
+| Tizen 5.5       | Chromium M69   | yes         | yes       |
+| Tizen 5.0       | Chromium M63   | yes         | yes       |
+| Tizen 4.0       | Chromium M56   | yes         | yes       |
 | Tizen 3.0       | Chromium M47   | yes         | yes       |
 
-- **Version Profiles.** The goal is every release from Tizen 3.0 to 10.0. `tizen-sim profiles` lists the ones available in your build.
-- **Linux** is a tier 2 platform. [docs/linux.md](docs/linux.md) lists where it differs from Windows and what it needs from the system, such as GTK 2 and GConf for the Tizen 3.0 Engine.
+- **Version Profiles.** Every TV release from Tizen 3.0 to 10.0. `tizen-sim profiles` lists them.
+- **Linux** is a tier 2 platform. [docs/linux.md](docs/linux.md) lists where it differs from Windows and what it needs from the system, such as GConf for the Tizen 3.0 to 5.0 Engines.
 - **macOS** is not supported.
 
 ## Getting started

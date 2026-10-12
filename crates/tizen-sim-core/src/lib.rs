@@ -8,6 +8,7 @@ mod control;
 mod csp;
 mod dev_server;
 mod devtools_relay;
+mod elf_exports;
 pub mod engine;
 mod es_modules;
 pub mod home;

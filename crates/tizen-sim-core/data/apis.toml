@@ -11,11 +11,13 @@
 #   reference/deprecation-policy.md); the reference says which ones.
 #
 # Of the Shimmed members, tizen.filesystem's pre-5.0 ones and
-# webapis.avplay.getUID are deprecated. No Version Profile falls in the
+# webapis.avplay.getUID are deprecated. Tizen 5.0 and 5.5 fall in the
 # former's deprecation window.
 #
 # "Since" versions come from each member's API reference ("Since: x.y"); the
-# references are cited per module.
+# references are cited per module. Checked against every Version Profile
+# from 3.0 to 10.0 on 2026-10-11: the Samsung Product API references list no
+# other Shimmed member newer than 3.0.
 
 # systeminfo.html (9.0 TV reference).
 [[api]]

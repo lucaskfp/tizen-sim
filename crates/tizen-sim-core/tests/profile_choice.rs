@@ -28,7 +28,41 @@ fn adding_a_version_profile_is_a_data_only_change() {
         "{versions:?}"
     );
     assert_eq!(catalog.latest().version, "11.0");
-    assert_eq!(catalog.find("9.0").unwrap().milestone, 120);
+    assert_eq!(catalog.find("11.0").unwrap().milestone, 140);
+}
+
+/// Samsung's Web Engine specifications: the Chromium milestone each TV
+/// release ships.
+#[test]
+fn every_tizen_tv_release_from_3_0_to_10_0_is_a_version_profile() {
+    let releases = [
+        ("3.0", 47),
+        ("4.0", 56),
+        ("5.0", 63),
+        ("5.5", 69),
+        ("6.0", 76),
+        ("6.5", 85),
+        ("7.0", 94),
+        ("8.0", 108),
+        ("9.0", 120),
+        ("10.0", 130),
+    ];
+    let catalog = ProfileCatalog::parse(BUNDLED_PROFILES).unwrap();
+    let manifest = EngineManifest::parse(BUNDLED_ENGINES).unwrap();
+
+    let mut listed: Vec<(&str, u32)> = catalog
+        .all()
+        .iter()
+        .map(|p| (p.version.as_str(), p.milestone))
+        .collect();
+    listed.sort_by_key(|&(_, milestone)| milestone);
+    assert_eq!(listed, releases);
+    for (version, milestone) in releases {
+        for platform in ["windows-x64", "linux-x64"] {
+            let spec = manifest.for_profile(version, platform).unwrap();
+            assert_eq!(spec.milestone, milestone, "{version} on {platform}");
+        }
+    }
 }
 
 #[test]

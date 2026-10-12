@@ -821,6 +821,9 @@ impl Inner {
         let Some(screen) = self.screen.get() else {
             return;
         };
+        if let Err(error) = screen.restore_engine_black(cdp).await {
+            tracing::warn!(%error, "could not make transparent areas black");
+        }
         let backdrop = screen.backdrop(self.checkerboard.load(Ordering::SeqCst));
         if backdrop == screen::Backdrop::Engine {
             return;
@@ -1410,8 +1413,16 @@ async fn thaw(cdp: &Cdp) {
 
 /// Minimizes or restores the Engine window. Engines without the Browser
 /// domain have it done through the OS where it can; elsewhere their window
-/// stays as it is.
+/// stays as it is. An Engine on its private X display goes through the OS
+/// too: the Browser domain asks a window manager, and there is none there
+/// (measured on M76-M108 under Xvfb).
 async fn set_window_state(cdp: &Cdp, engine: Option<EngineProcess>, state: &str) {
+    if let Some(engine) = engine.filter(|engine| engine.display.is_some()) {
+        if !engine.set_minimized(state == "minimized").await {
+            tracing::warn!(state, "could not change the Engine window state");
+        }
+        return;
+    }
     let window = match cdp.call("Browser.getWindowForTarget", json!({})).await {
         Ok(window) => window["windowId"].clone(),
         Err(error) => {

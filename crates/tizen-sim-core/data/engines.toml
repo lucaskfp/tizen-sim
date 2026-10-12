@@ -52,3 +52,169 @@ platform = "linux-x64"
 url = "https://storage.googleapis.com/chrome-for-testing-public/130.0.6723.116/linux64/chrome-linux64.zip"
 sha256 = "3e71b99204dc191a8692048526a4ad41803b8b9035ea4ef14eb9b1d37331e1f1"
 executable = "chrome-linux64/chrome"
+
+# Chrome for Testing 120.0.6099.5, the build Tizen 9.0's user agent names.
+[[engine]]
+profile = "9.0"
+milestone = 120
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chrome-for-testing-public/120.0.6099.5/win64/chrome-win64.zip"
+sha256 = "19534fde81aeca691fa99a367d45861aaea0c7c821c61acc9be1ef13ac2930ca"
+executable = "chrome-win64/chrome.exe"
+
+[[engine]]
+profile = "9.0"
+milestone = 120
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chrome-for-testing-public/120.0.6099.5/linux64/chrome-linux64.zip"
+sha256 = "02254ac42397cc963f43da48a4aba0c1311adc1f2dc644ed615143e05e886bac"
+executable = "chrome-linux64/chrome"
+
+# Tizen 4.0 to 8.0: snapshots of the trunk revision where each milestone
+# branched (Chromium 108.0.5359.0 for 8.0, down to 56.0.2924.0 for 4.0), or
+# the nearest one archived below it, all 64-bit. Each platform keeps its own
+# revisions, so the two may differ by a few.
+#
+# Before M109, `--headless` is Chromium's old headless browser. Its window
+# never minimizes, so a hidden App still sees itself visible: these Engines
+# count as having no headless mode, and a headless Session runs them in a
+# window off the screen (measured on M63-M108 on Windows; M56 has no
+# headless mode at all).
+#
+# Linux: under Chromium's sandbox, M56 to M85 never open a page (no page
+# target, renderers don't start; measured on Debian 13), so they run
+# without it. From M94 on the namespace sandbox works without a setuid
+# helper. M56 and M63 link GConf (docs/linux.md), M56 GTK 2 and M63 GTK 3.
+[[engine]]
+profile = "8.0"
+milestone = 108
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/1058931/chrome-win.zip"
+sha256 = "b08b33bc955b486005c8853d83c1beeace0c5ac3c556b2c4762941ce2c5feaef"
+executable = "chrome-win/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "8.0"
+milestone = 108
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1058929/chrome-linux.zip"
+sha256 = "ee7b82ad3f4b5344ca50ecd7924438f97e13f174751ba4c45cb3e5a310244214"
+executable = "chrome-linux/chrome"
+headless = false
+
+[[engine]]
+profile = "7.0"
+milestone = 94
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/911498/chrome-win.zip"
+sha256 = "2481418299db122c9f343621ac44152306a74cb0e0ece1c0daced37acd7127f3"
+executable = "chrome-win/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "7.0"
+milestone = 94
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/911494/chrome-linux.zip"
+sha256 = "25264b328b50589ecae6ed7d87575a34cd9b92ac71b9bc843bacab9562736a02"
+executable = "chrome-linux/chrome"
+headless = false
+
+[[engine]]
+profile = "6.5"
+milestone = 85
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/782776/chrome-win.zip"
+sha256 = "c376572d2425834ef4ad700cefbee8160fe4b438ff70bf85f0adb3de3b2198fc"
+executable = "chrome-win/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "6.5"
+milestone = 85
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/782790/chrome-linux.zip"
+sha256 = "6b0526bc3ef63d2ad23129b51ffa7071beefe347e988837bc92cfb6cc1e73ab3"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
+
+[[engine]]
+profile = "6.0"
+milestone = 76
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/664998/chrome-win.zip"
+sha256 = "2856c7bbf1a0bf682c772f6d553273dc26ff46d9d8bdf7915f236cb232302da8"
+executable = "chrome-win/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "6.0"
+milestone = 76
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/664981/chrome-linux.zip"
+sha256 = "b1e30c4dec8a451f8fe10d1f2d3c71e491d0333425f32247fe5c80a0a354303d"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
+
+[[engine]]
+profile = "5.5"
+milestone = 69
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/576753/chrome-win32.zip"
+sha256 = "44bd7e142c34aefb295e83f05de31551e6bf6813e69de9f60d63d6714f9a4851"
+executable = "chrome-win32/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "5.5"
+milestone = 69
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/576753/chrome-linux.zip"
+sha256 = "d5e70bff740347cdefec5a462632e007a6dfac4c82370d44d0ed51eb13d263c0"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
+
+[[engine]]
+profile = "5.0"
+milestone = 63
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/508578/chrome-win32.zip"
+sha256 = "d81c48a6d0eb883b9df86028355e056ccdb502ead85e4245d4ed8b97720dfe5a"
+executable = "chrome-win32/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "5.0"
+milestone = 63
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/508578/chrome-linux.zip"
+sha256 = "da0bbeb0e28b4bc1a92af44f62c996deebcac7ee933d7e7c75582e4d889586b2"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
+
+[[engine]]
+profile = "4.0"
+milestone = 56
+platform = "windows-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/433031/chrome-win32.zip"
+sha256 = "956b63a11b6ff571da458ce2541811da689369ca6a62a6dfb54af3bca0c686af"
+executable = "chrome-win32/chrome.exe"
+headless = false
+
+[[engine]]
+profile = "4.0"
+milestone = 56
+platform = "linux-x64"
+url = "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/433042/chrome-linux.zip"
+sha256 = "4fcdb16eb22f59340eea65e90dc4c18d925db8504d38ecc73bcc2a906179381a"
+executable = "chrome-linux/chrome"
+headless = false
+sandbox = false
+# It exports its own HarfBuzz, which the system's Pango would bind to and
+# crash on (Debian 13, Ubuntu 22.04).
+unexport = ["hb_"]

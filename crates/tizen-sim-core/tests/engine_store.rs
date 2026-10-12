@@ -6,13 +6,41 @@ use std::io::Write;
 use tizen_sim_core::engine::{EngineError, EngineSpec, EngineStore};
 
 fn stand_in_engine_zip() -> Vec<u8> {
+    zip_with_executable(b"not really chrome")
+}
+
+fn zip_with_executable(executable: &[u8]) -> Vec<u8> {
     let mut buf = std::io::Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(&mut buf);
     let opts = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
     zip.start_file("stand-in-engine/chrome.exe", opts).unwrap();
-    zip.write_all(b"not really chrome").unwrap();
+    zip.write_all(executable).unwrap();
     zip.finish().unwrap();
     buf.into_inner()
+}
+
+/// A 64-bit ELF whose only content is a `.dynstr` holding `dynstr`.
+fn stand_in_elf(dynstr: &[u8]) -> Vec<u8> {
+    let shstrtab = b"\0.shstrtab\0.dynstr\0";
+    let headers = 64 + shstrtab.len() + dynstr.len();
+    let mut elf = b"\x7fELF\x02\x01".to_vec();
+    elf.resize(64, 0);
+    elf[0x28..0x30].copy_from_slice(&(headers as u64).to_le_bytes());
+    elf[0x3a..0x40].copy_from_slice(&[64, 0, 3, 0, 1, 0]);
+    elf.extend_from_slice(shstrtab);
+    elf.extend_from_slice(dynstr);
+    for (name, offset, size) in [
+        (0u32, 0, 0),
+        (1, 64, shstrtab.len()),
+        (11, 64 + shstrtab.len(), dynstr.len()),
+    ] {
+        let mut header = [0u8; 64];
+        header[..4].copy_from_slice(&name.to_le_bytes());
+        header[0x18..0x20].copy_from_slice(&(offset as u64).to_le_bytes());
+        header[0x20..0x28].copy_from_slice(&(size as u64).to_le_bytes());
+        elf.extend_from_slice(&header);
+    }
+    elf
 }
 
 async fn serve(bytes: Vec<u8>) -> String {
@@ -36,7 +64,51 @@ fn spec(url: String, sha256: String) -> EngineSpec {
         executable: "stand-in-engine/chrome.exe".into(),
         headless: true,
         sandbox: true,
+        unexport: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn an_engines_listed_exports_are_renamed_on_install() {
+    let zip = zip_with_executable(&stand_in_elf(b"\0hb_shape\0ChromeMain\0"));
+    let sha = hex::encode(Sha256::digest(&zip));
+    let url = serve(zip).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut spec = spec(url, sha);
+    spec.unexport = vec!["hb_".into()];
+
+    let installed = EngineStore::new(dir.path().to_path_buf())
+        .ensure(&spec, |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read(&installed.executable).unwrap(),
+        stand_in_elf(b"\0_b_shape\0ChromeMain\0")
+    );
+}
+
+#[tokio::test]
+async fn exports_listed_for_an_executable_that_is_not_elf_fail_the_install() {
+    let zip = stand_in_engine_zip();
+    let sha = hex::encode(Sha256::digest(&zip));
+    let url = serve(zip).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut spec = spec(url, sha);
+    spec.unexport = vec!["hb_".into()];
+
+    let error = EngineStore::new(dir.path().to_path_buf())
+        .ensure(&spec, |_| {})
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, EngineError::Unpack(_)), "{error}");
+    assert!(
+        EngineStore::new(dir.path().to_path_buf())
+            .list()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

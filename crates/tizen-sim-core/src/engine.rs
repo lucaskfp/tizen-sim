@@ -30,6 +30,11 @@ pub struct EngineSpec {
     /// have, so they run without (`--no-sandbox`).
     #[serde(default = "default_true")]
     pub sandbox: bool,
+    /// Prefixes of dynamic symbols the executable exports that are renamed
+    /// on install, so system libraries don't bind to them (see
+    /// `elf_exports`). Linux only.
+    #[serde(default)]
+    pub unexport: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -319,6 +324,12 @@ impl EngineStore {
         tokio::task::spawn_blocking(move || unpack(&archive_owned, &staging_owned))
             .await
             .map_err(|e| EngineError::Unpack(e.to_string()))??;
+        if !spec.unexport.is_empty() {
+            let (executable, prefixes) = (staging.join(&spec.executable), spec.unexport.clone());
+            tokio::task::spawn_blocking(move || rename_exports(&executable, &prefixes))
+                .await
+                .map_err(|e| EngineError::Unpack(e.to_string()))??;
+        }
         grant_sandbox_access(staging).await?;
         tokio::fs::write(staging.join(INSTALLED_MARKER), &spec.sha256)
             .await
@@ -376,6 +387,18 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), EngineError> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| EngineError::Unpack(e.to_string()))?;
     zip.extract(into)
         .map_err(|e| EngineError::Unpack(e.to_string()))
+}
+
+/// Applies the Engine Manifest's `unexport` to the unpacked executable.
+fn rename_exports(executable: &Path, prefixes: &[String]) -> Result<(), EngineError> {
+    let mut elf = std::fs::read(executable).map_err(io_err(executable))?;
+    crate::elf_exports::unexport(&mut elf, prefixes).map_err(|e| {
+        EngineError::Unpack(format!(
+            "could not rename the exports of {}: {e}",
+            executable.display()
+        ))
+    })?;
+    std::fs::write(executable, elf).map_err(io_err(executable))
 }
 
 /// Chromium's sandboxed child processes run in an AppContainer and must be
@@ -534,12 +557,13 @@ pub async fn launch(
             .arg("--proxy-bypass-list=<-loopback>")
             // The Engine's own requests would show up in the network log as
             // the App's: background updates, the Web Store extension, the
-            // search engine preconnect...
+            // search engine preconnect, IP Protection's token requests
+            // (phosphor-pa.googleapis.com, measured on M120)...
             .args([
                 "--disable-background-networking",
                 "--disable-component-update",
                 "--disable-extensions",
-                "--disable-features=PreconnectToSearch",
+                "--disable-features=PreconnectToSearch,EnableIpPrivacyProxy",
             ])
             // ...and Google account checks, which go to the proxy itself,
             // where they are dropped.

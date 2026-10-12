@@ -16,7 +16,7 @@ What the **platform** does, distilled from the platform docs (see `tizen-docs.md
 - **`registerKey`/`unregisterKey`:** a Mandatory or unsupported key throws `InvalidValuesError`.
 - **Batch methods:** a non-array or non-function argument throws `TypeMismatchError` synchronously. Invalid names go to the error callback. (`#TVInputDeviceManager::registerKeyBatch`)
 - **Key codes.** The full table is in the remote-control guide, Table 3, and is mirrored in `crates/tizen-sim-core/data/remote_keys.toml`.
-- **Keys per release.** The guide's key table has no per-year columns, so every Version Profile gets the same Registrable Keys. That 2017 (Tizen 3.0) TVs have all of them is **unverified**.
+- **Keys per release.** The guide's key table has no per-year columns, so every Version Profile gets the same Registrable Keys. That TVs before Tizen 10.0 have all of them is **unverified**.
 - **Long presses:**
   - Rewind gives MediaTrackPrevious and FastForward gives MediaTrackNext. (remote-control guide, Table 1)
   - Holding Return/Exit makes the **platform terminate the App**; the App gets no key. (TV: `guides/fundamentals/terminating-applications.html`)

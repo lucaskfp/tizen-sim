@@ -98,6 +98,15 @@ struct Fit {
 }
 
 impl Screen {
+    /// Has an Engine that draws transparent areas black do so again in a
+    /// new document, also under the checkerboard, for when it is turned off.
+    pub(crate) async fn restore_engine_black(&self, cdp: &Cdp) -> Result<(), CdpError> {
+        if self.engine_black {
+            paint_transparent_areas_black(cdp).await?;
+        }
+        Ok(())
+    }
+
     /// The backdrop to show: the checkerboard while it is on, else black.
     pub(crate) fn backdrop(&self, checkerboard: bool) -> Backdrop {
         match (checkerboard, self.engine_black) {
@@ -195,14 +204,8 @@ pub(crate) async fn set_up(
     resolution: AppResolution,
     headed: bool,
 ) -> Result<Arc<Screen>, CdpError> {
-    let engine_black = match cdp
-        .call(
-            "Emulation.setDefaultBackgroundColorOverride",
-            json!({ "color": { "r": 0, "g": 0, "b": 0, "a": 1 } }),
-        )
-        .await
-    {
-        Ok(_) => true,
+    let engine_black = match paint_transparent_areas_black(cdp).await {
+        Ok(()) => true,
         Err(error) => {
             tracing::debug!(%error, "transparent page areas are made black by a layer instead");
             false
@@ -291,6 +294,18 @@ async fn apply(cdp: &Cdp, resolution: AppResolution, scale: f64) -> Result<(), C
             // Required by M47 (protocol 1.1); newer Engines ignore it.
             "fitWindow": false,
         }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Has the Engine draw transparent page areas black. M63 forgets this when a
+/// navigation moves the page to another renderer process, so it is asked
+/// again in each new document (measured; M69 keeps it).
+async fn paint_transparent_areas_black(cdp: &Cdp) -> Result<(), CdpError> {
+    cdp.call(
+        "Emulation.setDefaultBackgroundColorOverride",
+        json!({ "color": { "r": 0, "g": 0, "b": 0, "a": 1 } }),
     )
     .await?;
     Ok(())
