@@ -692,15 +692,19 @@ impl Inner {
             return;
         }
         // The event has been dispatched once the page reports itself hidden.
-        for _ in 0..20 {
+        // A page still busy (or an Engine slowed by a loaded machine) answers
+        // late, and closing the Engine then would cut its handlers off.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(
                 Duration::from_millis(500),
                 loaded.cdp.evaluate("document.hidden"),
             )
             .await
             {
-                Ok(Ok(Value::Bool(true))) | Ok(Err(_)) | Err(_) => return,
+                Ok(Ok(Value::Bool(true))) | Ok(Err(_)) => return,
                 Ok(Ok(_)) => tokio::time::sleep(Duration::from_millis(50)).await,
+                Err(_) => {}
             }
         }
     }

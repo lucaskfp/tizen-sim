@@ -5,7 +5,9 @@ mod support;
 
 use serde_json::json;
 use std::time::Duration;
-use support::{copy_fixture, eventually_equals, expect_event, start, start_folder, start_with};
+use support::{
+    EXIT_SECS, copy_fixture, eventually_equals, expect_event, start, start_folder, start_with,
+};
 use tizen_sim_core::remote_keys::PhysicalKey;
 use tizen_sim_core::session::{ExitReason, KeyAction, KeyOutcome, Lifecycle, SessionEvent};
 
@@ -164,7 +166,7 @@ async fn a_long_press_of_back_terminates_the_app() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1300)).await;
-    expect_event(&mut t.events, 10, terminated_by_remote).await;
+    expect_event(&mut t.events, EXIT_SECS, terminated_by_remote).await;
 }
 
 fn terminated_by_remote(event: &SessionEvent) -> bool {
@@ -193,7 +195,7 @@ async fn the_exit_key_terminates_the_app_even_when_registered() {
         matches!(e, SessionEvent::RemoteKey { key, outcome: KeyOutcome::Dropped { .. } } if key == "Exit")
     })
     .await;
-    expect_event(&mut t.events, 10, terminated_by_remote).await;
+    expect_event(&mut t.events, EXIT_SECS, terminated_by_remote).await;
 }
 
 #[tokio::test]

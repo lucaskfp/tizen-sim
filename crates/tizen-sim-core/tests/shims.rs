@@ -4,7 +4,7 @@
 mod support;
 
 use serde_json::json;
-use support::{eval_callback, eventually_equals, expect_event, start, start_with};
+use support::{EXIT_SECS, eval_callback, eventually_equals, expect_event, start, start_with};
 use tizen_sim_core::session::{ExitReason, Lifecycle, SessionEvent};
 
 const APP_INFO_PRIVILEGE: &str = "http://tizen.org/privilege/application.info";
@@ -225,7 +225,36 @@ async fn exit_fires_visibilitychange_and_ends_the_session() {
         |e| matches!(e, SessionEvent::Console(m) if m.text == "visibilitychange hidden=true"),
     )
     .await;
-    expect_event(&mut t.events, 15, |e| {
+    expect_event(&mut t.events, EXIT_SECS, |e| {
+        matches!(
+            e,
+            SessionEvent::Lifecycle(Lifecycle::Exited {
+                reason: ExitReason::AppExited
+            })
+        )
+    })
+    .await;
+}
+
+/// An App still busy when it exits gets its `visibilitychange` too: the
+/// Session waits for the page to answer instead of closing the Engine.
+#[tokio::test]
+async fn exit_fires_visibilitychange_in_an_app_still_busy() {
+    let mut t = start("tizen-apis");
+    t.session.wait_until_loaded().await.unwrap();
+    t.session
+        .evaluate(
+            "document.addEventListener('visibilitychange', function () {                console.log('visibilitychange hidden=' + document.hidden); });              setTimeout(function () {                tizen.application.getCurrentApplication().exit();                var until = Date.now() + 2000; while (Date.now() < until) {}              }, 0); 0",
+        )
+        .await
+        .unwrap();
+    expect_event(
+        &mut t.events,
+        15,
+        |e| matches!(e, SessionEvent::Console(m) if m.text == "visibilitychange hidden=true"),
+    )
+    .await;
+    expect_event(&mut t.events, EXIT_SECS, |e| {
         matches!(
             e,
             SessionEvent::Lifecycle(Lifecycle::Exited {

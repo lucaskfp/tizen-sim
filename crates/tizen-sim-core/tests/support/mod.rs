@@ -161,12 +161,20 @@ pub fn has_api(name: &str) -> bool {
         .any(|absent| absent == name)
 }
 
+/// How long a test waits for the App's exit to end the Session: the App's
+/// `visibilitychange` (up to 10 s for a page answering late), then the
+/// Engine closing (`Browser.close`, then up to 5 s before it is killed), all
+/// slower on a loaded machine.
+pub const EXIT_SECS: u64 = 20;
+
 /// Waits for the first event matching `pred`, failing the test after `secs`.
 pub async fn expect_event(
     events: &mut Events,
     secs: u64,
     pred: impl Fn(&SessionEvent) -> bool,
 ) -> SessionEvent {
+    // The events that didn't match, named when the wait times out.
+    let mut seen = Vec::new();
     let wait = async {
         while let Some(event) = events.next().await {
             if pred(&event) {
@@ -176,12 +184,14 @@ pub async fn expect_event(
             if let SessionEvent::Lifecycle(Lifecycle::Failed { error }) = &event {
                 panic!("the Session failed while waiting for an event: {error}");
             }
+            seen.push(format!("{event:?}"));
         }
         panic!("event stream ended before the expected event");
     };
-    tokio::time::timeout(Duration::from_secs(secs), wait)
-        .await
-        .expect("timed out waiting for the expected Session event")
+    let result = tokio::time::timeout(Duration::from_secs(secs), wait).await;
+    result.unwrap_or_else(|_| {
+        panic!("timed out waiting for the expected Session event; saw instead: {seen:#?}")
+    })
 }
 
 /// Runs callback-style page code and returns the value it passes to `done`.
