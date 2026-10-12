@@ -6,7 +6,6 @@ mod support;
 
 use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::routing::get;
-use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
