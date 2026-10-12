@@ -1,11 +1,17 @@
 // The TV screen area. On Windows the Rust side lays the Engine's own window
-// over it (ADR-0006), so it reports where it is whenever that changes; what
-// it shows itself is only seen while no Engine window covers it.
+// over it (ADR-0006), so it reports the space inside its padding whenever
+// that changes; the Rust side centers the screen there at 16:9. The black
+// screen drawn here in the same place is only seen while no Engine window
+// covers it.
 import { RotateCw } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import * as commands from "@/lib/commands";
 import type { SessionView } from "@/lib/session";
+import { cn } from "@/lib/utils";
+
+/** The TV screen as drawn while no Engine window covers it. */
+const BLACK_SCREEN = "flex-col items-center justify-center gap-3 bg-black p-4 text-center text-sm text-neutral-300";
 
 export function TvScreen({
   view,
@@ -17,7 +23,7 @@ export function TvScreen({
   embeds: boolean;
   onRestart: () => void;
 }) {
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -49,13 +55,25 @@ export function TvScreen({
     };
   }, [embeds]);
 
+  const message = <ScreenMessage view={view} embeds={embeds} onRestart={onRestart} />;
+  if (!embeds) {
+    return (
+      <section
+        aria-label="TV screen"
+        className={cn("flex min-h-0 flex-1", BLACK_SCREEN)}
+      >
+        {message}
+      </section>
+    );
+  }
   return (
-    <section
-      ref={ref}
-      aria-label="TV screen"
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-black p-4 text-center text-sm text-neutral-300"
-    >
-      <ScreenMessage view={view} embeds={embeds} onRestart={onRestart} />
+    <section aria-label="TV screen" className="flex min-h-0 flex-1 flex-col bg-muted p-4">
+      {/* The space the TV screen fits in; the screen is as large as fits at 16:9. */}
+      <div ref={ref} className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
+        <div className={cn("flex aspect-video w-[min(100cqw,100cqh*16/9)]", BLACK_SCREEN)}>
+          {message}
+        </div>
+      </div>
     </section>
   );
 }

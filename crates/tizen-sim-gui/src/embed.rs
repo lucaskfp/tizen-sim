@@ -1,15 +1,16 @@
 //! The TV screen inside the GUI (ADR-0006). On Windows the Engine's native
-//! window is re-parented into a host window that sits over the GUI's screen
-//! area, follows it as the GUI resizes or changes DPI, and hands keyboard
-//! focus to the Engine when clicked. Elsewhere the Engine keeps its own
-//! window and nothing here does anything.
+//! window is re-parented into a host window that sits centered at 16:9 in
+//! the GUI's screen area, follows it as the GUI resizes or changes DPI, and
+//! hands keyboard focus to the Engine when clicked. Elsewhere the Engine
+//! keeps its own window and nothing here does anything.
 //!
 //! Every method must run on the thread that owns the GUI's window.
 
 use serde::Deserialize;
 
-/// Where the TV screen goes in the GUI's window: the screen area's box in
-/// CSS px of the GUI's webview, which fills the window's client area.
+/// The space the TV screen goes in, in the GUI's window: the screen area's
+/// box inside its padding, in CSS px of the GUI's webview, which fills the
+/// window's client area.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct ScreenArea {
     pub x: f64,
@@ -40,6 +41,27 @@ impl ScreenArea {
             y: top as i32,
             width: (right - left).max(0.0) as i32,
             height: (bottom - top).max(0.0) as i32,
+        }
+    }
+}
+
+impl PhysicalBox {
+    /// Where the TV screen goes in this box: as large as fits at 16:9, the
+    /// aspect of both App resolutions, and centered. The App is scaled to
+    /// fill the Engine window (`tizen_sim_core::screen`), so the leftover is
+    /// the letterbox.
+    pub fn fit_tv_screen(self) -> PhysicalBox {
+        let width = self
+            .width
+            .min((f64::from(self.height) * 16.0 / 9.0).round() as i32);
+        let height = self
+            .height
+            .min((f64::from(self.width) * 9.0 / 16.0).round() as i32);
+        PhysicalBox {
+            x: self.x + (self.width - width) / 2,
+            y: self.y + (self.height - height) / 2,
+            width,
+            height,
         }
     }
 }
@@ -283,11 +305,14 @@ mod windows_impl {
         }
     }
 
-    /// Shows the host over the screen area, above the GUI's webview, while
-    /// it holds an Engine window and the GUI shows a screen area.
+    /// Shows the host over the TV screen's place in the screen area, above
+    /// the GUI's webview, while it holds an Engine window and the GUI shows
+    /// a screen area.
     fn place(host: isize, state: &State) {
         let host = hwnd(host);
-        let area = state.area.map(|a| a.to_physical(state.scale));
+        let area = state
+            .area
+            .map(|a| a.to_physical(state.scale).fit_tv_screen());
         unsafe {
             match (area, &state.engine) {
                 (Some(b), Some(_)) if b.width > 0 && b.height > 0 => {
@@ -618,6 +643,27 @@ mod windows_tests {
         assert!(!engine.style().contains(WS_THICKFRAME));
     }
 
+    #[test]
+    fn the_engine_window_is_centered_at_16_9_in_a_wider_area() {
+        let gui = top_level(w!("gui"), 100);
+        let engine = top_level(w!("engine"), 300);
+        let embedder = Embedder::new(gui.parent_handle());
+        embedder.set_area(
+            Some(ScreenArea {
+                width: 1000.0,
+                ..AREA
+            }),
+            1.0,
+        );
+
+        assert!(embedder.embed(engine.handle(), None, true));
+
+        let (host, _) = placement(engine.0);
+        let (_, area) = placement(host);
+        assert_eq!(area, (200 + 260, 40, 200 + 260 + 480, 40 + 270));
+        assert_eq!(client_size(engine.0), (480, 270));
+    }
+
     fn screen_rect(window: HWND) -> RECT {
         let mut rect = RECT::default();
         unsafe { GetWindowRect(window, &mut rect).unwrap() };
@@ -833,6 +879,67 @@ mod tests {
                 y: 74,
                 width: 1440,
                 height: 810
+            }
+        );
+    }
+
+    #[test]
+    fn the_tv_screen_is_the_largest_16_9_box_centered_in_the_area() {
+        let wide = PhysicalBox {
+            x: 10,
+            y: 20,
+            width: 1000,
+            height: 360,
+        };
+        assert_eq!(
+            wide.fit_tv_screen(),
+            PhysicalBox {
+                x: 190,
+                y: 20,
+                width: 640,
+                height: 360
+            }
+        );
+        let tall = PhysicalBox {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 600,
+        };
+        assert_eq!(
+            tall.fit_tv_screen(),
+            PhysicalBox {
+                x: 0,
+                y: 120,
+                width: 640,
+                height: 360
+            }
+        );
+    }
+
+    #[test]
+    fn a_tv_screen_that_almost_fits_rounds_to_the_area() {
+        // 563 * 16 / 9 = 1000.9, so the whole width.
+        let area = PhysicalBox {
+            x: 0,
+            y: 0,
+            width: 1001,
+            height: 563,
+        };
+        assert_eq!(area.fit_tv_screen(), area);
+        let empty = PhysicalBox {
+            x: 5,
+            y: 5,
+            width: 0,
+            height: 300,
+        };
+        assert_eq!(
+            empty.fit_tv_screen(),
+            PhysicalBox {
+                x: 5,
+                y: 155,
+                width: 0,
+                height: 0
             }
         );
     }
