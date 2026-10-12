@@ -12,7 +12,7 @@ use crate::sandbox::Sandbox;
 use crate::shim::{self, BOOTSTRAP_PATH, BRIDGE_PATH, SANDBOX_PATH};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::{Value, json};
@@ -183,8 +183,9 @@ async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> R
         )
             .into_response();
     }
+    let asks_for_favicon = is_favicon(&request);
     let files = state.files.read().unwrap().clone();
-    match files {
+    let response = match files {
         AppFiles::Folder(root) => serve_app_file(&state, &root, request).await,
         AppFiles::Bundler(bundler) => {
             let mut rewritten = false;
@@ -199,7 +200,23 @@ async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> R
             }
             response
         }
+    };
+    // Every Engine asks for a favicon for its window (#53); an App without
+    // one would see the 404 logged as its own error. That a TV fetches no
+    // favicon for an App is unverified: the TV guides don't mention it.
+    if asks_for_favicon && response.status() == StatusCode::NOT_FOUND {
+        return StatusCode::NO_CONTENT.into_response();
     }
+    response
+}
+
+/// Whether this is the request an Engine makes for its window's icon. An
+/// App's own request for it can't be told apart (same headers, measured on
+/// M47, M94 and M130).
+fn is_favicon(request: &Request) -> bool {
+    request.method() == Method::GET
+        && request.uri().path() == "/favicon.ico"
+        && request.uri().query().is_none()
 }
 
 async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> Response {

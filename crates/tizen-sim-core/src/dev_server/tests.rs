@@ -59,6 +59,13 @@ async fn start_proxy(
     bundler: &Url,
     milestone: u32,
 ) -> (DevServer, mpsc::UnboundedReceiver<BridgeMessage>) {
+    start_server(&AppFiles::Bundler(bundler.clone()), milestone).await
+}
+
+async fn start_server(
+    files: &AppFiles,
+    milestone: u32,
+) -> (DevServer, mpsc::UnboundedReceiver<BridgeMessage>) {
     let (bridge, messages) = mpsc::unbounded_channel();
     let setup = ServerSetup {
         data: json!({}),
@@ -67,9 +74,7 @@ async fn start_proxy(
         access_policy: crate::app::AccessPolicy::Warp(vec![]),
         sandbox_dir: std::env::temp_dir().join("tizen-sim-test-sandbox"),
     };
-    let server = DevServer::start(&AppFiles::Bundler(bundler.clone()), setup, bridge)
-        .await
-        .unwrap();
+    let server = DevServer::start(files, setup, bridge).await.unwrap();
     (server, messages)
 }
 
@@ -196,6 +201,40 @@ async fn module_scripts_are_fine_on_an_engine_with_es_modules() {
     let (server, mut messages) = start_proxy(&start_bundler().await, ES_MODULES_MILESTONE).await;
     get_text(&server, "/").await;
     assert!(messages.try_recv().is_err());
+    server.stop().await;
+}
+
+/// The Engine's request for a favicon the App lacks gets no 404 to log as
+/// an App error (#53); other missing files keep theirs, and an App's own
+/// favicon is served.
+#[tokio::test]
+async fn a_favicon_the_folder_lacks_is_no_content() {
+    let root = tempfile::tempdir().unwrap();
+    let (server, _) = start_server(&AppFiles::Folder(root.path().to_path_buf()), 130).await;
+    let http = proxy::client();
+    let favicon = http.get(server.url("/favicon.ico")).send().await.unwrap();
+    assert_eq!(favicon.status(), StatusCode::NO_CONTENT);
+    let missing = http.get(server.url("/missing.png")).send().await.unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    std::fs::write(root.path().join("favicon.ico"), b"icon").unwrap();
+    assert_eq!(get_text(&server, "/favicon.ico").await, "icon");
+    server.stop().await;
+}
+
+/// Likewise for a Dev Server URL App whose bundler has no favicon.
+#[tokio::test]
+async fn a_favicon_the_bundler_lacks_is_no_content() {
+    let (server, _) = start_proxy(&start_bundler().await, 130).await;
+    let http = proxy::client();
+    let favicon = http.get(server.url("/favicon.ico")).send().await.unwrap();
+    assert_eq!(favicon.status(), StatusCode::NO_CONTENT);
+    let other = http
+        .get(server.url("/favicon.ico?v=2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other.status(), StatusCode::NOT_FOUND);
     server.stop().await;
 }
 

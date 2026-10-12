@@ -4,11 +4,15 @@
 mod support;
 
 use std::time::{Duration, Instant};
-use support::{STARTUP_SECS, expect_event, start};
+use support::{STARTUP_SECS, copy_fixture, eval_callback, expect_event, start, start_folder};
 use tizen_sim_core::session::{ExitReason, Lifecycle, SessionEvent};
 
 fn is_lifecycle(event: &SessionEvent, f: impl Fn(&Lifecycle) -> bool) -> bool {
     matches!(event, SessionEvent::Lifecycle(l) if f(l))
+}
+
+fn is_404(event: &SessionEvent) -> bool {
+    matches!(event, SessionEvent::Console(m) if m.text.contains("404"))
 }
 
 #[tokio::test]
@@ -66,6 +70,50 @@ async fn runs_a_project_folder_and_streams_lifecycle_and_console() {
         })
     })
     .await;
+}
+
+/// Every Engine asks for `/favicon.ico` for its window. That a TV fetches no
+/// favicon for an App is unverified, but the request isn't the App's, so a
+/// missing favicon must not show as an App error (#53). The App's own
+/// missing resources still do.
+#[tokio::test]
+async fn only_the_apps_own_missing_resources_log_a_404() {
+    let mut t = start("hello");
+    t.session.wait_until_loaded().await.unwrap();
+    // The Engine asks for the favicon right after the load.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    t.session
+        .evaluate("new Image().src = '/missing.png'; 0")
+        .await
+        .unwrap();
+    expect_event(&mut t.events, 10, is_404).await;
+
+    let mut history = t.session.events();
+    let mut logged = 0;
+    while let Ok(Some(event)) =
+        tokio::time::timeout(Duration::from_millis(100), history.next()).await
+    {
+        logged += usize::from(is_404(&event));
+    }
+    assert_eq!(logged, 1, "404s logged besides the App's own");
+    t.session.stop().await;
+}
+
+/// An App that ships a favicon is served it as any other file.
+#[tokio::test]
+async fn an_apps_own_favicon_is_served() {
+    let folder = copy_fixture("hello");
+    std::fs::write(folder.path().join("favicon.ico"), b"icon").unwrap();
+    let t = start_folder(folder.path(), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+    let favicon = eval_callback(
+        &t.session,
+        "var xhr = new XMLHttpRequest(); xhr.open('GET', '/favicon.ico'); \
+         xhr.onload = function () { done([xhr.status, xhr.responseText]); }; xhr.send();",
+    )
+    .await;
+    assert_eq!(favicon, serde_json::json!([200, "icon"]));
+    t.session.stop().await;
 }
 
 #[tokio::test]
