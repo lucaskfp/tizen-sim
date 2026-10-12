@@ -30,6 +30,11 @@ pub struct EngineSpec {
     /// have, so they run without (`--no-sandbox`).
     #[serde(default = "default_true")]
     pub sandbox: bool,
+    /// Whether the Engine composites on the GPU. M47 on Windows presents
+    /// nothing once its window is embedded in the GUI (ADR-0006) unless it
+    /// composites in software (`--disable-gpu-compositing`, #59).
+    #[serde(default = "default_true")]
+    pub gpu_compositing: bool,
     /// Prefixes of dynamic symbols the executable exports that are renamed
     /// on install, so system libraries don't bind to them (see
     /// `elf_exports`). Linux only.
@@ -460,6 +465,8 @@ pub struct LaunchOptions {
     pub disable_web_security: bool,
     /// Whether to keep Chromium's sandbox on (see `EngineSpec::sandbox`).
     pub sandbox: bool,
+    /// Whether to composite on the GPU (see `EngineSpec::gpu_compositing`).
+    pub gpu_compositing: bool,
 }
 
 /// A started Engine with its debugging endpoint.
@@ -579,6 +586,9 @@ pub async fn launch(
     }
     if !options.sandbox {
         command.arg("--no-sandbox");
+    }
+    if !options.gpu_compositing {
+        command.arg("--disable-gpu-compositing");
     }
     if let Some(user_agent) = &options.user_agent {
         command.arg(format!("--user-agent={user_agent}"));

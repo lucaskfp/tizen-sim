@@ -3,6 +3,7 @@
 # the archive root. `headless = false` marks an Engine that has no headless
 # mode on that platform; a headless Session then runs it in a window kept off
 # the screen. `sandbox = false` runs an Engine without Chromium's sandbox.
+# `gpu_compositing = false` makes an Engine composite in software.
 #
 # Chrome for Testing starts at M113, so older Engines come from the Chromium
 # snapshot archive (chromium-browser-snapshots/<platform>/<revision>/), which
@@ -12,7 +13,8 @@
 # Chromium 47.0.2526.0 (trunk revision 352221). Windows snapshots of that age
 # are 32-bit builds (the `Win` folder); they run on 64-bit Windows 11, as do
 # their sandboxed processes (#24 prototype). Headless mode came to Windows
-# later: this build ignores `--headless` and opens a window.
+# later: this build ignores `--headless` and opens a window. Embedded in the
+# GUI, its window shows nothing while it composites on the GPU (#59).
 [[engine]]
 profile = "3.0"
 milestone = 47
@@ -21,6 +23,7 @@ url = "https://storage.googleapis.com/chromium-browser-snapshots/Win/352221/chro
 sha256 = "eb72cabb06e4b3b906dd6cc1a3a98e351fdd8c7b1648acb197a2a6c305046d85"
 executable = "chrome-win32/chrome.exe"
 headless = false
+gpu_compositing = false
 
 # The same revision for Linux (the `Linux_x64` folder). It needs GTK 2,
 # GConf and dbus-glib from the system; GConf is gone from Debian 13 and

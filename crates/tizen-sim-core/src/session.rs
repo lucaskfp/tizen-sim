@@ -906,14 +906,15 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         }));
 
     // An Engine given by path is taken to be like the pinned one, or to have
-    // a headless mode and a sandbox where there is none.
-    let (executable, has_headless, sandbox) = match &config.engine_path {
+    // a headless mode, a sandbox and GPU compositing where there is none.
+    let (executable, has_headless, sandbox, gpu_compositing) = match &config.engine_path {
         Some(path) => {
             let pinned = EngineSpec::pinned(&profile.version);
             (
                 path.clone(),
                 pinned.is_none_or(|spec| spec.headless),
                 pinned.is_none_or(|spec| spec.sandbox),
+                pinned.is_none_or(|spec| spec.gpu_compositing),
             )
         }
         None => {
@@ -926,7 +927,12 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
                 .ensure(spec, |p| inner.log.publish(SessionEvent::EngineDownload(p)))
                 .await
                 .map_err(|e| e.to_string())?;
-            (installed.executable, spec.headless, spec.sandbox)
+            (
+                installed.executable,
+                spec.headless,
+                spec.sandbox,
+                spec.gpu_compositing,
+            )
         }
     };
     let has_headless = config.engine_has_headless.unwrap_or(has_headless);
@@ -983,6 +989,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             // a Tizen 5.0 TV, ADR-0003).
             disable_web_security: true,
             sandbox,
+            gpu_compositing,
         },
     )
     .await

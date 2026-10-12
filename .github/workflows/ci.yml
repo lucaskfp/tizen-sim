@@ -64,6 +64,11 @@ jobs:
         run: cargo test -p tizen-sim-core
         env:
           TIZEN_SIM_TEST_PROFILE: "3.0"
+      # M47's window embedded in the GUI (#59).
+      - if: runner.os == 'Windows'
+        run: cargo test -p tizen-sim-gui --test embedding
+        env:
+          TIZEN_SIM_TEST_PROFILE: "3.0"
 
   # The Session suite on the M47 Linux Engine, which links GConf: Ubuntu
   # dropped it in 24.04, so this runs on 22.04 (docs/linux.md).

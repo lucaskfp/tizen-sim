@@ -64,6 +64,7 @@ fn spec(url: String, sha256: String) -> EngineSpec {
         executable: "stand-in-engine/chrome.exe".into(),
         headless: true,
         sandbox: true,
+        gpu_compositing: true,
         unexport: Vec::new(),
     }
 }
