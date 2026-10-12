@@ -6,6 +6,7 @@ mod support;
 
 use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::routing::get;
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -82,6 +83,25 @@ fn network_event(event: &SessionEvent, url: &str) -> Option<NetworkRequest> {
         SessionEvent::Network(request) if request.url == url => Some(request.clone()),
         _ => None,
     }
+}
+
+/// The Engine's own background requests would show up as the App's, and in
+/// WARP mode raise Diagnostics the App did nothing to cause. The M63 and M69
+/// Engines on Windows download the Translate Ranker model from
+/// www.gstatic.com within seconds of loading the App.
+#[tokio::test]
+async fn an_app_that_makes_no_requests_has_none_in_the_network_log() {
+    let mut t = support::start("hello");
+    t.session.wait_until_loaded().await.unwrap();
+    let idle = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut requests = vec![];
+    while let Ok(Some(event)) = tokio::time::timeout_at(idle, t.events.next()).await {
+        if let SessionEvent::Network(request) = event {
+            requests.push(request);
+        }
+    }
+    assert_eq!(requests, vec![]);
+    t.session.stop().await;
 }
 
 #[tokio::test]

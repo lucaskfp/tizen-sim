@@ -559,13 +559,16 @@ pub async fn launch(
             // the App's: background updates, the Web Store extension, the
             // search engine preconnect, IP Protection's token requests
             // (phosphor-pa.googleapis.com, measured on M120), the phishing
-            // detection model (ssl.gstatic.com, measured on M63)...
+            // detection model (ssl.gstatic.com, measured on M63), the Translate
+            // Ranker model, loaded while either Ranker feature is on
+            // (www.gstatic.com, measured on M63 and M69 on Windows)...
             .args([
                 "--disable-background-networking",
                 "--disable-client-side-phishing-detection",
                 "--disable-component-update",
                 "--disable-extensions",
-                "--disable-features=PreconnectToSearch,EnableIpPrivacyProxy",
+                "--disable-features=PreconnectToSearch,EnableIpPrivacyProxy,\
+                 TranslateRankerQuery,TranslateRankerEnforcement",
             ])
             // ...and Google account checks, which go to the proxy itself,
             // where they are dropped.
