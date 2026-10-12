@@ -5,7 +5,7 @@ mod support;
 
 use serde_json::json;
 use std::time::Duration;
-use support::{eventually_equals, expect_event, start, start_with};
+use support::{copy_fixture, eventually_equals, expect_event, start, start_folder, start_with};
 use tizen_sim_core::remote_keys::PhysicalKey;
 use tizen_sim_core::session::{ExitReason, KeyAction, KeyOutcome, Lifecycle, SessionEvent};
 
@@ -41,6 +41,25 @@ async fn backspace_in_the_engine_window_delivers_back() {
     t.session.wait_until_loaded().await.unwrap();
     tap(&t.session, BACKSPACE).await;
     eventually_equals(&t.session, "window.keyLog", json!([10009])).await;
+    t.session.stop().await;
+}
+
+/// Some Engines (M94, M108) ignore input until the page's first frame is up,
+/// which can come after the load event, and up to ~0.5 s after it for an App
+/// that paints nothing (#52). Such an App loses a key sent right at load
+/// every time.
+#[tokio::test]
+async fn a_key_sent_as_soon_as_the_app_has_loaded_reaches_it() {
+    let folder = copy_fixture("remote-keys");
+    let page = folder.path().join("index.html");
+    let blank = std::fs::read_to_string(&page)
+        .unwrap()
+        .replace("Press keys", "");
+    std::fs::write(&page, blank).unwrap();
+    let t = start_folder(folder.path(), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+    t.session.press_key("ArrowLeft").await.unwrap();
+    eventually_equals(&t.session, "window.keyLog", json!([37])).await;
     t.session.stop().await;
 }
 

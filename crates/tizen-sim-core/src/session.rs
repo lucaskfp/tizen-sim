@@ -1130,7 +1130,25 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     // lack Page.bringToFront, so its failure is ignored.
     let _ = running.cdp.call("Page.bringToFront", json!({})).await;
     let _ = running.cdp.evaluate("window.focus(); 0").await;
+    wait_for_first_paint(&running.cdp).await;
     Ok(())
+}
+
+/// Waits for the page's first paint, as some Engines (M94, M108) drop key
+/// events until the page's first frame is up, which can come after the load
+/// event (#52). An App that paints nothing gets its first frame anyway after
+/// ~0.5 s (measured on M94), within the 1 s cap. Engines without the Paint
+/// Timing API (before M60) don't drop keys and don't wait.
+async fn wait_for_first_paint(cdp: &Cdp) {
+    const PAINTED: &str = "!performance.getEntriesByType || \
+                           performance.getEntriesByType('paint').length > 0";
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    while tokio::time::Instant::now() < deadline {
+        match cdp.evaluate(PAINTED).await {
+            Ok(Value::Bool(false)) => tokio::time::sleep(Duration::from_millis(10)).await,
+            _ => return,
+        }
+    }
 }
 
 /// Reloads the page, bypassing the cache, and waits for it to load.
