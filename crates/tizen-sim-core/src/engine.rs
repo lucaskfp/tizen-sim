@@ -558,9 +558,11 @@ pub async fn launch(
             // The Engine's own requests would show up in the network log as
             // the App's: background updates, the Web Store extension, the
             // search engine preconnect, IP Protection's token requests
-            // (phosphor-pa.googleapis.com, measured on M120)...
+            // (phosphor-pa.googleapis.com, measured on M120), the phishing
+            // detection model (ssl.gstatic.com, measured on M63)...
             .args([
                 "--disable-background-networking",
+                "--disable-client-side-phishing-detection",
                 "--disable-component-update",
                 "--disable-extensions",
                 "--disable-features=PreconnectToSearch,EnableIpPrivacyProxy",
