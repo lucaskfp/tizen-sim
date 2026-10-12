@@ -531,6 +531,9 @@ pub async fn launch(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    if options.network_proxy.is_some() {
+        turn_off_spellcheck(&options.user_data_dir).map_err(io_err(&options.user_data_dir))?;
+    }
     let debug_port = free_port().map_err(io_err(executable))?;
 
     let mut command = tokio::process::Command::new(executable);
@@ -566,7 +569,9 @@ pub async fn launch(
             // the App's: background updates, the Web Store extension, the
             // search engine preconnect, IP Protection's token requests
             // (phosphor-pa.googleapis.com, measured on M120), the phishing
-            // detection model (ssl.gstatic.com, measured on M63), the Translate
+            // detection model (ssl.gstatic.com, measured on M63), the
+            // spellcheck dictionary (redirector.gvt1.com, measured on M130 on
+            // Linux; turned off in the profile, see `turn_off_spellcheck`), the Translate
             // Ranker model, loaded while either Ranker feature is on
             // (www.gstatic.com, measured on M63 and M69 on Windows)...
             .args([
@@ -692,6 +697,26 @@ fn last_line_of(stderr: tokio::process::ChildStderr) -> tokio::task::JoinHandle<
         }
         last
     })
+}
+
+/// Turns spellchecking off in the Engine's profile, keeping its other
+/// preferences: otherwise the Engine downloads a dictionary from
+/// redirector.gvt1.com, which shows up as the App's request. No switch turns
+/// it off (`--disable-spell-checking` is gone by M130, measured).
+fn turn_off_spellcheck(user_data_dir: &Path) -> std::io::Result<()> {
+    let profile = user_data_dir.join("Default");
+    let file = profile.join("Preferences");
+    let mut preferences = std::fs::read(&file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !preferences["browser"].is_object() {
+        preferences["browser"] = serde_json::json!({});
+    }
+    preferences["browser"]["enable_spellchecking"] = serde_json::Value::Bool(false);
+    std::fs::create_dir_all(&profile)?;
+    std::fs::write(&file, preferences.to_string())
 }
 
 async fn discover(http: &reqwest::Client, base: &str) -> Option<(String, String)> {
@@ -1288,4 +1313,39 @@ fn free_port() -> std::io::Result<u16> {
     Ok(std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn preferences(dir: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.join("Default/Preferences")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn spellcheck_is_turned_off_in_a_new_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        turn_off_spellcheck(dir.path()).unwrap();
+        assert_eq!(
+            preferences(dir.path())["browser"]["enable_spellchecking"],
+            false
+        );
+    }
+
+    #[test]
+    fn turning_off_spellcheck_keeps_the_other_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Default")).unwrap();
+        std::fs::write(
+            dir.path().join("Default/Preferences"),
+            r#"{"browser":{"enable_spellchecking":true,"window_placement":{"top":1}},"zoom":2}"#,
+        )
+        .unwrap();
+        turn_off_spellcheck(dir.path()).unwrap();
+        let preferences = preferences(dir.path());
+        assert_eq!(preferences["browser"]["enable_spellchecking"], false);
+        assert_eq!(preferences["browser"]["window_placement"]["top"], 1);
+        assert_eq!(preferences["zoom"], 2);
+    }
 }
