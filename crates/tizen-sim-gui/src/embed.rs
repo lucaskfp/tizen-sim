@@ -122,6 +122,10 @@ mod windows_impl {
     const REFIT_TIMER: usize = 1;
     const REFIT_EVERY_MS: u32 = 250;
 
+    /// Where the host keeps the page's offset in the Engine window from
+    /// when that was its own window: its window extra bytes.
+    const OWN_OFFSET: WINDOW_LONG_PTR_INDEX = WINDOW_LONG_PTR_INDEX(0);
+
     pub struct Embedder {
         parent: isize,
         state: Mutex<State>,
@@ -198,6 +202,10 @@ mod windows_impl {
                 if IsIconic(target).as_bool() {
                     let _ = ShowWindow(target, SW_RESTORE);
                 }
+                // Where the page is while it is still its own window, before
+                // a native frame goes with the restyling below.
+                let own = page_offset(target);
+                remember_own_offset(hwnd(host), own);
                 let frame = WS_POPUP
                     | WS_CAPTION
                     | WS_THICKFRAME
@@ -353,16 +361,20 @@ mod windows_impl {
                 }
                 None => remembered_offset(host),
             };
-            // The frame is as wide on the right and bottom as on the left;
-            // only the top has more, the title and info bars.
-            let border = left;
+            // The Session fits the App to the window's size less the frame
+            // it had as its own window (`tizen_sim_core::screen`), so the
+            // window keeps that frame around the host, even where it is a
+            // native frame that has gone (old Engines). The frame is as wide
+            // on the right and bottom as on the left; only the top has more,
+            // the title and info bars.
+            let (own_left, own_top) = remembered_own_offset(host).unwrap_or((left, top));
             let _ = SetWindowPos(
                 engine,
                 None,
                 -left,
                 -top,
-                client.right + left + border,
-                client.bottom + top + border,
+                client.right + 2 * own_left,
+                client.bottom + own_top + own_left,
                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
             );
         }
@@ -380,6 +392,20 @@ mod windows_impl {
             let offset = (inner.left - outer.left, inner.top - outer.top);
             (offset.0 >= 0 && offset.1 >= 0).then_some(offset)
         }
+    }
+
+    /// The host keeps where the page was in the Engine window while that was
+    /// its own window, `None` if it had no page window then.
+    unsafe fn remember_own_offset(host: HWND, offset: Option<(i32, i32)>) {
+        let packed = offset.map_or(0, |(left, top)| {
+            (1 << 32) | ((top as u16 as isize) << 16) | (left as u16 as isize)
+        });
+        unsafe { SetWindowLongPtrW(host, OWN_OFFSET, packed) };
+    }
+
+    unsafe fn remembered_own_offset(host: HWND) -> Option<(i32, i32)> {
+        let packed = unsafe { GetWindowLongPtrW(host, OWN_OFFSET) };
+        (packed >> 32 != 0).then_some(((packed & 0xffff) as i32, ((packed >> 16) & 0xffff) as i32))
     }
 
     /// The host keeps the last page offset in its user data.
@@ -459,6 +485,7 @@ mod windows_impl {
                 lpszClassName: HOST_CLASS,
                 hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                cbWndExtra: std::mem::size_of::<isize>() as i32,
                 ..Default::default()
             };
             // Fails harmlessly once the class exists.
@@ -747,6 +774,89 @@ mod windows_tests {
 
         let (host, _) = placement(engine.0);
         assert_eq!(screen_rect(page), screen_rect(host));
+    }
+
+    /// A stand-in for an old Engine's window, with a native frame: the page
+    /// fills the client area below the native title bar.
+    fn natively_framed_chromium_window(x: i32) -> (Window, HWND) {
+        unsafe extern "system" fn frame(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+            unsafe {
+                if m == WM_SIZE
+                    && let Ok(page) = GetWindow(h, GW_CHILD)
+                {
+                    let (width, height) = ((l.0 & 0xffff) as i32, ((l.0 >> 16) & 0xffff) as i32);
+                    let _ = MoveWindow(page, 0, 0, width, height, false);
+                }
+                DefWindowProcW(h, m, w, l)
+            }
+        }
+        unsafe {
+            RegisterClassW(&WNDCLASSW {
+                lpfnWndProc: Some(frame),
+                lpszClassName: w!("FakeNativeChromiumFrame"),
+                ..Default::default()
+            });
+            let window = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("FakeNativeChromiumFrame"),
+                w!("engine"),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                x,
+                100,
+                800,
+                600,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (width, height) = client_size(window);
+            // The page's window class is registered by `chromium_window`.
+            let _ = chromium_window(0);
+            let content = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("Chrome_RenderWidgetHostHWND"),
+                w!("page"),
+                WS_CHILD | WS_VISIBLE,
+                0,
+                0,
+                width,
+                height,
+                Some(window),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (Window(window), content)
+        }
+    }
+
+    fn size(rect: RECT) -> (i32, i32) {
+        (rect.right - rect.left, rect.bottom - rect.top)
+    }
+
+    #[test]
+    fn a_native_frame_the_engine_window_loses_still_counts_in_its_size() {
+        // The Session fits the App to the Engine window's size less its
+        // frame, as measured while it was its own window
+        // (`tizen_sim_core::screen`); a native frame goes when embedded.
+        let gui = top_level(w!("gui"), 100);
+        let (engine, page) = natively_framed_chromium_window(300);
+        let (window, content) = (size(screen_rect(engine.0)), size(screen_rect(page)));
+        let frame = (window.0 - content.0, window.1 - content.1);
+        assert!(frame.1 > 0, "no native frame to lose");
+        let embedder = Embedder::new(gui.parent_handle());
+        embedder.set_area(Some(AREA), 1.0);
+
+        assert!(embedder.embed(engine.handle(), None, true));
+
+        let (host, _) = placement(engine.0);
+        let window = size(screen_rect(engine.0));
+        assert_eq!((window.0 - frame.0, window.1 - frame.1), client_size(host));
+        let (page, host) = (screen_rect(page), screen_rect(host));
+        assert_eq!((page.left, page.top), (host.left, host.top));
     }
 
     #[test]
