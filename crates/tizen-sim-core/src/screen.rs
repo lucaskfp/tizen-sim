@@ -86,15 +86,13 @@ pub(crate) struct Screen {
     resolution: AppResolution,
     /// Whether the Engine draws transparent areas black itself.
     engine_black: bool,
-    /// How the App was last fitted to the window.
-    fit: Mutex<Fit>,
-}
-
-/// The window's content area, in CSS px, and the App's scale in it.
-#[derive(Debug, Clone, Copy)]
-struct Fit {
-    content: (f64, f64),
-    scale: f64,
+    /// Device pixels per CSS px of the Engine window, before the metrics
+    /// override sets its own: the scale of a screenshot of the window's
+    /// content. Only measured at 100% desktop scaling (1); that the image
+    /// follows a larger ratio is **unverified**.
+    pixel_ratio: f64,
+    /// The App's scale in the window, as last fitted.
+    scale: Mutex<f64>,
 }
 
 impl Screen {
@@ -126,19 +124,16 @@ impl Screen {
         if (image.width(), image.height()) == (width, height) {
             return Ok(png);
         }
-        let Fit { content, scale } = *self.fit.lock().unwrap();
-        // The App is drawn at the top left of the content area, sized in CSS
-        // px; the image may be in device pixels.
-        let cut = |pixels: u32, css: f64, screen: u32| {
-            let share = (f64::from(screen) * scale / css).clamp(0.0, 1.0);
-            ((f64::from(pixels) * share).round() as u32).clamp(1, pixels)
+        let scale = *self.scale.lock().unwrap();
+        // The App is drawn at the top left of the window's content, at its
+        // scale, and the image is in device pixels. The content may be larger
+        // than the Session believes: embedded in the GUI, the window keeps
+        // the room of the frame it lost (ADR-0006), past the App (#60).
+        let cut = |pixels: u32, screen: u32| {
+            let drawn = f64::from(screen) * scale * self.pixel_ratio;
+            (drawn.round() as u32).clamp(1, pixels)
         };
-        let app = image.crop_imm(
-            0,
-            0,
-            cut(image.width(), content.0, width),
-            cut(image.height(), content.1, height),
-        );
+        let app = image.crop_imm(0, 0, cut(image.width(), width), cut(image.height(), height));
         let mut out = Vec::new();
         app.resize_exact(width, height, image::imageops::FilterType::Triangle)
             .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
@@ -149,7 +144,7 @@ impl Screen {
     /// Fits the App to a window content area.
     async fn fit(&self, cdp: &Cdp, content: (f64, f64)) -> Result<(), CdpError> {
         let scale = fit_scale(content, self.resolution.size());
-        *self.fit.lock().unwrap() = Fit { content, scale };
+        *self.scale.lock().unwrap() = scale;
         apply(cdp, self.resolution, scale).await
     }
 }
@@ -212,14 +207,17 @@ pub(crate) async fn set_up(
         }
     };
 
-    // The window's frame and content, measured before the override hides the
-    // real viewport size from the page.
+    // The window's frame, content and pixel ratio, measured before the
+    // override hides the real viewport from the page.
     let measured = cdp
-        .evaluate("[outerWidth - innerWidth, outerHeight - innerHeight, innerWidth, innerHeight]")
+        .evaluate(
+            "[outerWidth - innerWidth, outerHeight - innerHeight, innerWidth, innerHeight,              devicePixelRatio]",
+        )
         .await?;
     let number = |i: usize| measured[i].as_f64().unwrap_or(0.0);
     let frame = (number(0), number(1));
     let mut content = (number(2), number(3));
+    let pixel_ratio = Some(number(4)).filter(|ratio| *ratio > 0.0).unwrap_or(1.0);
     let source = match cdp.call("Browser.getWindowForTarget", json!({})).await {
         Ok(window) => WindowSource::Browser(window["windowId"].clone()),
         Err(error) => {
@@ -246,10 +244,8 @@ pub(crate) async fn set_up(
     let screen = Arc::new(Screen {
         resolution,
         engine_black,
-        fit: Mutex::new(Fit {
-            content,
-            scale: 1.0,
-        }),
+        pixel_ratio,
+        scale: Mutex::new(1.0),
     });
     screen.fit(cdp, content).await?;
 
@@ -407,14 +403,14 @@ mod tests {
         out
     }
 
-    fn screen(content: (f64, f64)) -> Screen {
+    /// A Screen whose App was fitted to a `content`-sized window area, with
+    /// `pixel_ratio` device pixels per CSS px.
+    fn screen(content: (f64, f64), pixel_ratio: f64) -> Screen {
         Screen {
             resolution: AppResolution::Uhd,
             engine_black: false,
-            fit: Mutex::new(Fit {
-                content,
-                scale: fit_scale(content, (1920, 1080)),
-            }),
+            pixel_ratio,
+            scale: Mutex::new(fit_scale(content, (1920, 1080))),
         }
     }
 
@@ -422,7 +418,9 @@ mod tests {
     fn a_screenshot_of_the_screen_is_kept() {
         let shot = png(1920, 1080, |_, _| [1, 2, 3]);
         assert_eq!(
-            screen((960.0, 540.0)).fit_screenshot(shot.clone()).unwrap(),
+            screen((960.0, 540.0), 1.0)
+                .fit_screenshot(shot.clone())
+                .unwrap(),
             shot
         );
     }
@@ -436,7 +434,7 @@ mod tests {
             600,
             |_, y| if y < 540 { [255, 0, 0] } else { [0, 0, 255] },
         );
-        let fitted = screen((960.0, 600.0)).fit_screenshot(shot).unwrap();
+        let fitted = screen((960.0, 600.0), 1.0).fit_screenshot(shot).unwrap();
         let fitted = image::load_from_memory(&fitted).unwrap().to_rgb8();
         assert_eq!(fitted.dimensions(), (1920, 1080));
         assert_eq!(fitted.get_pixel(960, 1079).0, [255, 0, 0]);
@@ -450,7 +448,23 @@ mod tests {
             1200,
             |_, y| if y < 1080 { [255, 0, 0] } else { [0, 0, 255] },
         );
-        let fitted = screen((960.0, 600.0)).fit_screenshot(shot).unwrap();
+        let fitted = screen((960.0, 600.0), 2.0).fit_screenshot(shot).unwrap();
+        let fitted = image::load_from_memory(&fitted).unwrap().to_rgb8();
+        assert_eq!(fitted.get_pixel(1919, 1079).0, [255, 0, 0]);
+    }
+
+    #[test]
+    fn a_window_larger_than_believed_is_cut_to_the_app() {
+        // Embedded in the GUI, the window keeps the room of its lost frame:
+        // the App is fitted to 1280x720, the content is 1296x759 (#60).
+        let shot = png(1296, 759, |x, y| {
+            if x < 1280 && y < 720 {
+                [255, 0, 0]
+            } else {
+                [128, 128, 128]
+            }
+        });
+        let fitted = screen((1280.0, 720.0), 1.0).fit_screenshot(shot).unwrap();
         let fitted = image::load_from_memory(&fitted).unwrap().to_rgb8();
         assert_eq!(fitted.get_pixel(1919, 1079).0, [255, 0, 0]);
     }

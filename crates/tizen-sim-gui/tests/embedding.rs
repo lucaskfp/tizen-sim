@@ -84,9 +84,18 @@ fn screen_color(window: HWND, x: i32, y: i32) -> (u32, u32, u32) {
     }
 }
 
-/// The `screen` fixture draws a red box at the top left of the TV screen.
-#[test]
-fn an_embedded_engine_window_shows_the_app() {
+/// A windowed Session on the `screen` fixture, its Engine window embedded in
+/// a stand-in for the GUI's window.
+struct Embedded {
+    gui: HWND,
+    host: HWND,
+    embedder: Embedder,
+    session: Session,
+    runtime: tokio::runtime::Runtime,
+    _state: tempfile::TempDir,
+}
+
+fn embedded() -> Embedded {
     let gui = gui_window();
     let state = tempfile::tempdir().unwrap();
     let home = Home::from_env().with_state_dir(state.path().to_path_buf());
@@ -131,22 +140,80 @@ fn an_embedded_engine_window_shows_the_app() {
     );
     assert!(embedder.embed(entry.window.unwrap(), entry.engine_pid, false));
     let host = unsafe { GetWindow(gui, GW_CHILD) }.unwrap();
+    pump(Duration::from_millis(500));
+    Embedded {
+        gui,
+        host,
+        embedder,
+        session,
+        runtime,
+        _state: state,
+    }
+}
+
+impl Embedded {
+    fn end(self) {
+        self.embedder.release();
+        self.runtime.block_on(self.session.stop());
+        unsafe { DestroyWindow(self.gui).unwrap() };
+    }
+}
+
+/// The `screen` fixture draws a red box at the top left of the TV screen.
+#[test]
+fn an_embedded_engine_window_shows_the_app() {
+    let t = embedded();
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut color = screen_color(host, 30, 30);
+    let mut color = screen_color(t.host, 30, 30);
     while !is_red(color) && Instant::now() < deadline {
         pump(Duration::from_millis(200));
-        color = screen_color(host, 30, 30);
+        color = screen_color(t.host, 30, 30);
     }
-
-    embedder.release();
-    runtime.block_on(session.stop());
-    unsafe { DestroyWindow(gui).unwrap() };
+    t.end();
     assert!(
         is_red(color),
         "the screen shows {color:?} where the App's red box is"
     );
 }
 
+/// A screenshot is the App's screen whether or not its window is embedded:
+/// an App filling it in blue is blue to the bottom right corner.
+#[test]
+fn a_screenshot_of_an_embedded_session_is_the_whole_app() {
+    let t = embedded();
+    t.runtime
+        .block_on(t.session.evaluate(
+            "var fill = document.createElement('div');              fill.style.cssText = 'position:fixed;left:0;top:0;width:1920px;height:1080px;background:#00f';              document.body.appendChild(fill); 0",
+        ))
+        .unwrap();
+    pump(Duration::from_millis(500));
+    let shot = t.runtime.block_on(t.session.screenshot()).unwrap();
+    t.end();
+    let (width, height) = png_size(&shot);
+    assert_eq!((width, height), (1920, 1080));
+    for (x, y) in [(5, 5), (1915, 5), (5, 1075), (1915, 1075)] {
+        assert_eq!(pixel(&shot, x, y), [0, 0, 255], "at ({x}, {y})");
+    }
+}
+
 fn is_red((r, g, b): (u32, u32, u32)) -> bool {
     r > 200 && g < 60 && b < 60
+}
+
+fn png_size(png: &[u8]) -> (u32, u32) {
+    let reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    (reader.info().width, reader.info().height)
+}
+
+/// The RGB colour of a pixel of a PNG screenshot.
+fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+    let frame = reader.next_frame(&mut buffer).unwrap();
+    let at = (y * frame.width + x) as usize * frame.color_type.samples();
+    [buffer[at], buffer[at + 1], buffer[at + 2]]
 }
