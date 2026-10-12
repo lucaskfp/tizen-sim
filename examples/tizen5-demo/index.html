@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tizen 5.0 Demo</title>
+<link rel="stylesheet" href="style.css">
+<script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Tizen 5.0 Demo</h1>
+    <div id="clock"></div>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Device</h2>
+      <dl id="info"></dl>
+    </section>
+    <section class="card">
+      <h2>Remote</h2>
+      <div id="tiles">
+        <button class="tile red" data-key="ColorF0Red">A</button>
+        <button class="tile green" data-key="ColorF1Green">B</button>
+        <button class="tile yellow" data-key="ColorF2Yellow">C</button>
+        <button class="tile blue" data-key="ColorF3Blue">D</button>
+      </div>
+      <p class="hint">Arrows move focus, Enter selects, color keys light their tile.</p>
+      <div id="lastKey">Press a key</div>
+    </section>
+    <section class="card">
+      <h2>Storage</h2>
+      <p>Launches</p>
+      <div id="launches">-</div>
+      <p class="hint" id="fsNote"></p>
+    </section>
+    <section class="card wide">
+      <h2>Events</h2>
+      <ol id="events"></ol>
+    </section>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; }
+body {
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  color: #eef1f6;
+  background: linear-gradient(135deg, #0d1b3d 0%, #1b2f63 55%, #2a1846 100%);
+}
+header { display: flex; justify-content: space-between; align-items: baseline; padding: 48px 96px 24px; }
+h1 { margin: 0; font-size: 64px; font-weight: 600; letter-spacing: 1px; }
+#clock { font-size: 40px; opacity: .8; }
+main { display: flex; flex-wrap: wrap; padding: 0 64px; }
+.card { background: rgba(255, 255, 255, .08); border-radius: 20px; padding: 28px 36px; width: 552px; height: 400px; margin: 0 32px 32px 0; }
+.card.wide { width: 1720px; height: 330px; }
+h2 { margin: 0 0 20px; font-size: 32px; font-weight: 500; color: #9fb7ff; }
+dl { margin: 0; font-size: 24px; }
+dt { float: left; clear: left; width: 170px; opacity: .65; margin-bottom: 10px; }
+dd { margin: 0 0 10px 170px; word-break: break-all; }
+#tiles { display: flex; }
+.tile { width: 100px; height: 100px; margin-right: 20px; border: 4px solid transparent; border-radius: 16px; font-size: 40px; color: #fff; opacity: .55; }
+.tile:focus { outline: none; border-color: #fff; opacity: 1; transform: scale(1.08); }
+.tile.lit { opacity: 1; box-shadow: 0 0 32px #fff; }
+.red { background: #d93434; }
+.green { background: #2fa84f; }
+.yellow { background: #d8b01e; }
+.blue { background: #2d6fd9; }
+p { font-size: 24px; margin: 0 0 8px; }
+.hint { font-size: 20px; opacity: .6; margin-top: 20px; }
+#lastKey { margin-top: 24px; font-size: 30px; }
+#launches { font-size: 96px; font-weight: 600; }
+#events { margin: 0; padding-left: 32px; font-size: 22px; line-height: 1.5; height: 230px; overflow: hidden; }
