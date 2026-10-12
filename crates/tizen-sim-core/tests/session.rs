@@ -72,10 +72,10 @@ async fn runs_a_project_folder_and_streams_lifecycle_and_console() {
     .await;
 }
 
-/// Every Engine asks for `/favicon.ico` for its window. That a TV fetches no
-/// favicon for an App is unverified, but the request isn't the App's, so a
-/// missing favicon must not show as an App error (#53). The App's own
-/// missing resources still do.
+/// Every Engine asks for `/favicon.ico` for a page served over HTTP; a TV,
+/// loading the App from `file://`, asks for none (measured on a Tizen 5.0
+/// TV). So a missing favicon must not show as an App error (#53). The App's
+/// own missing resources still do.
 #[tokio::test]
 async fn only_the_apps_own_missing_resources_log_a_404() {
     let mut t = start("hello");

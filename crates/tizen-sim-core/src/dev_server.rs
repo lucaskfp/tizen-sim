@@ -201,9 +201,10 @@ async fn serve_app(State(state): State<Arc<ServerState>>, request: Request) -> R
             response
         }
     };
-    // Every Engine asks for a favicon for its window (#53); an App without
-    // one would see the 404 logged as its own error. That a TV fetches no
-    // favicon for an App is unverified: the TV guides don't mention it.
+    // Every Engine asks for a favicon for a page served over HTTP (#53); an
+    // App without one would see the 404 logged as its own error. A TV loads
+    // the App from `file://` and asks for none (measured on a Tizen 5.0 TV,
+    // see docs/agents/tizen-behaviour.md).
     if asks_for_favicon && response.status() == StatusCode::NOT_FOUND {
         return StatusCode::NO_CONTENT.into_response();
     }
