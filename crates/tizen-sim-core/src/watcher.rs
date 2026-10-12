@@ -2,7 +2,8 @@
 //! changes (an editor's save-all, an atomic save's temporary file) into batches.
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -112,6 +113,10 @@ async fn debounce(
     let relevant = |path: &Path| {
         app_path(&root, path).filter(|p| only_file_name.as_ref().is_none_or(|name| p == name))
     };
+    // What each file held when it was last in a batch. Windows may report a
+    // write again well after it (500 ms, measured under load), and a file
+    // saved unchanged changes nothing either: neither makes a batch (#63).
+    let mut last_seen = HashMap::new();
     while let Some(first) = changes.recv().await {
         let deadline = Instant::now() + MAX_WAIT;
         let mut paths = BTreeSet::new();
@@ -123,6 +128,10 @@ async fn debounce(
                 Ok(None) | Err(_) => break,
             }
         }
+        paths.retain(|path| {
+            let now = fingerprint(&root.join(path));
+            last_seen.insert(path.clone(), now) != Some(now)
+        });
         if !paths.is_empty()
             && batches
                 .send(Batch {
@@ -161,6 +170,14 @@ fn app_path(root: &Path, path: &Path) -> Option<String> {
         parts.push(part);
     }
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// What a file holds, or `None` if it can't be read (gone, or a folder).
+fn fingerprint(path: &Path) -> Option<u64> {
+    let contents = std::fs::read(path).ok()?;
+    let mut hasher = DefaultHasher::new();
+    contents.hash(&mut hasher);
+    Some(hasher.finish())
 }
 
 fn has_extension(path: &str, extension: &str) -> bool {

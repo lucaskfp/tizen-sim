@@ -159,21 +159,51 @@ async fn a_broken_config_xml_leaves_the_app_running() {
     t.session.stop().await;
 }
 
+/// Windows may report a write again well after it (500 ms, measured under
+/// load), which would reload the App a second time for nothing (#63). Here
+/// the file is reported again by toggling an attribute and by writing the
+/// same contents.
+#[tokio::test]
+async fn a_file_reported_again_unchanged_does_not_reload_again() {
+    let folder = copy_fixture("hot-reload");
+    let mut t = start_folder(folder.path(), |_| {});
+    t.session.wait_until_loaded().await.unwrap();
+    write(folder.path(), "app.js", "window.scriptVersion = 2;\n");
+    expect_event(&mut t.events, 10, |e| {
+        is_hot_reload(e, |h| matches!(h, HotReload::Reloaded))
+    })
+    .await;
+    count_until_quiet(&mut t.events, Duration::from_millis(500), |_| true).await;
+
+    let file = folder.path().join("app.js");
+    let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file, permissions.clone()).unwrap();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&file, permissions).unwrap();
+    write(folder.path(), "app.js", "window.scriptVersion = 2;\n");
+
+    let more = count_until_quiet(&mut t.events, Duration::from_millis(1500), |_| true).await;
+    assert_eq!(more, 0, "the App reloaded for a file that didn't change");
+    t.session.stop().await;
+}
+
 #[tokio::test]
 async fn a_burst_of_changes_reloads_once() {
     let folder = copy_fixture("hot-reload");
     let mut t = start_folder(folder.path(), |_| {});
     t.session.wait_until_loaded().await.unwrap();
 
-    // An editor's save-all writes several files in quick succession.
+    // An editor's save-all writes several files one after the other. Without
+    // pauses between them: on a loaded machine a 20 ms sleep took 300 ms,
+    // past the watcher's quiet time, which made two bursts of it (#63).
     write(folder.path(), "app.js", "window.scriptVersion = 3;\n");
-    tokio::time::sleep(Duration::from_millis(20)).await;
     write(
         folder.path(),
         "style.css",
         "body { color: rgb(3, 3, 3); }\n",
     );
-    tokio::time::sleep(Duration::from_millis(20)).await;
     write(folder.path(), "extra.js", "window.extra = true;\n");
     write(folder.path(), "app.js", "window.scriptVersion = 4;\n");
 
