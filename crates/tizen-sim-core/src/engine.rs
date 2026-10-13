@@ -1315,13 +1315,15 @@ mod virtual_display {
 
     #[cfg(target_os = "linux")]
     pub async fn start() -> Result<VirtualDisplay, String> {
-        start_program("Xvfb", START_WAIT).await
+        start_program("Xvfb", &[], START_WAIT).await
     }
 
-    /// Starts `program` as Xvfb, waiting up to `wait` for its display.
+    /// Starts `program` with `leading` arguments as Xvfb, waiting up to
+    /// `wait` for its display.
     #[cfg(target_os = "linux")]
     pub(super) async fn start_program(
         program: &str,
+        leading: &[&str],
         wait: std::time::Duration,
     ) -> Result<VirtualDisplay, String> {
         use std::process::Stdio;
@@ -1330,6 +1332,7 @@ mod virtual_display {
         // Xvfb picks a free display and writes its number to `-displayfd`.
         let mut command = tokio::process::Command::new(program);
         command
+            .args(leading)
             .args([
                 "-displayfd",
                 "1",
@@ -1544,21 +1547,20 @@ mod tests {
         assert_eq!(preferences["zoom"], 2);
     }
 
-    /// A stand-in for Xvfb: a shell script with this body.
+    /// A stand-in for Xvfb: a shell script with this body, run by `sh`. Not
+    /// run directly: a test forking at the same time can still hold it open
+    /// for writing, and executing it then fails with ETXTBSY (seen on CI).
     #[cfg(target_os = "linux")]
     fn fake_xvfb(dir: &Path, body: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join("Xvfb");
+        let path = dir.join(format!("xvfb-{}.sh", body.len()));
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh
-{body}
+                "{body}
 "
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().into_owned()
     }
 
@@ -1567,7 +1569,7 @@ mod tests {
     async fn the_virtual_display_is_the_one_xvfb_reports() {
         let dir = tempfile::tempdir().unwrap();
         let xvfb = fake_xvfb(dir.path(), "echo 7; sleep 30");
-        let display = virtual_display::start_program(&xvfb, Duration::from_secs(5))
+        let display = virtual_display::start_program("/bin/sh", &[&xvfb], Duration::from_secs(5))
             .await
             .unwrap();
         assert_eq!(display.number(), 7);
@@ -1582,14 +1584,14 @@ mod tests {
         let wait = Duration::from_millis(500);
 
         let slow = fake_xvfb(dir.path(), "sleep 5; echo 7");
-        let error = virtual_display::start_program(&slow, wait)
+        let error = virtual_display::start_program("/bin/sh", &[&slow], wait)
             .await
             .err()
             .unwrap();
         assert_eq!(error, "Xvfb did not report a display within 500ms");
 
         let dead = fake_xvfb(dir.path(), "exit 1");
-        let error = virtual_display::start_program(&dead, wait)
+        let error = virtual_display::start_program("/bin/sh", &[&dead], wait)
             .await
             .err()
             .unwrap();
@@ -1599,7 +1601,7 @@ mod tests {
         );
 
         let missing = dir.path().join("no-such-xvfb");
-        let error = virtual_display::start_program(&missing.to_string_lossy(), wait)
+        let error = virtual_display::start_program(&missing.to_string_lossy(), &[], wait)
             .await
             .err()
             .unwrap();
