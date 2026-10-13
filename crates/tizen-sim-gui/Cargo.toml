@@ -21,7 +21,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 tauri = { version = "2.12.3", features = [] }
 tauri-plugin-dialog = "2.8.2"
 thiserror = "2.0.21"
-tizen-sim-core = { version = "0.1.0", path = "../tizen-sim-core" }
+tizen-sim-core = { path = "../tizen-sim-core" }
 tokio = { version = "1.53.2", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
