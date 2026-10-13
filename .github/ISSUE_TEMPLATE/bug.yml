@@ -1,0 +1,56 @@
+name: Bug report
+description: tizen-sim does something wrong, or differs from what a real TV does.
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did and what tizen-sim did. Include errors, the Session log or a screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Ideally what a real TV does, with its model or year, or the Samsung or Tizen doc page that says so.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The `tizen-sim` command or GUI steps, and a minimal App if you can share one.
+      placeholder: |
+        1. tizen-sim run ./my-app --profile 6.0
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Version Profile
+      options: ["10.0", "9.0", "8.0", "7.0", "6.5", "6.0", "5.5", "5.0", "4.0", "3.0", "All, or doesn't depend on it"]
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: CLI or GUI
+      options: ["CLI", "GUI", "Both"]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11, Ubuntu 24.04, ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: tizen-sim version
+      description: The release, or the commit if you built from source.
+    validations:
+      required: true

@@ -1,0 +1,25 @@
+name: Feature or missing platform behaviour
+description: Something a Tizen TV does that tizen-sim doesn't, or a feature for the developer loop.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        tizen-sim emulates what the **TV platform** does, not how an App should behave: Samsung's UX guidelines and certification checklist are out of scope. Ask: "does the TV do this, or does Samsung tell the App to do it?" See the README's Scope section.
+  - type: textarea
+    id: what
+    attributes:
+      label: What the TV does, or what you need
+      description: For platform behaviour, the source (Samsung or Tizen doc page) or what you measured on a TV, with its model or year.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: What goes wrong or takes longer without it.
+  - type: input
+    id: profiles
+    attributes:
+      label: Version Profiles affected
+      placeholder: e.g. 6.0 and later, or all
