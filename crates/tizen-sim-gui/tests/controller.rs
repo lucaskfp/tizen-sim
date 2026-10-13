@@ -151,19 +151,25 @@ fn is_screen(event: &GuiEvent, session: u64) -> bool {
 const STARTUP_SECS: u64 = 600;
 
 impl TestGui {
-    /// Waits for the first event matching `pred`, failing after `secs`.
+    /// Waits for the first event matching `pred`, failing after `secs` and
+    /// naming the events that came instead, like the core's `expect_event`.
     async fn expect(&mut self, secs: u64, pred: impl Fn(&GuiEvent) -> bool) -> GuiEvent {
+        let mut seen = Vec::new();
         let wait = async {
             while let Some(event) = self.events.recv().await {
                 if pred(&event) {
                     return event;
                 }
+                seen.push(format!("{event:?}"));
             }
             panic!("the event stream ended before the expected event");
         };
-        tokio::time::timeout(Duration::from_secs(secs), wait)
-            .await
-            .expect("timed out waiting for the expected GUI event")
+        let result = tokio::time::timeout(Duration::from_secs(secs), wait).await;
+        result.unwrap_or_else(|_| {
+            panic!(
+                "timed out after {secs}s waiting for the expected GUI event; saw instead: {seen:#?}"
+            )
+        })
     }
 
     /// Waits until Session `session` has loaded its App.
