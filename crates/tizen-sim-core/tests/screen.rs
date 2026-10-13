@@ -117,6 +117,46 @@ async fn the_app_is_laid_out_at_1920x1080_whatever_the_window_size() {
     t.session.stop().await;
 }
 
+/// The Engine window, through the `Browser` domain where the Engine has it,
+/// or else through the page: an app window may resize itself (M56, #65).
+struct WindowControl<'a> {
+    session: &'a Session,
+    ws: &'a str,
+    window_id: Option<Value>,
+}
+
+impl WindowControl<'_> {
+    async fn resize(&self, width: u32, height: u32) {
+        match &self.window_id {
+            Some(id) => {
+                let bounds = json!({ "width": width, "height": height });
+                let params = json!({ "windowId": id, "bounds": bounds });
+                cdp_call(self.ws, None, "Browser.setWindowBounds", params).await;
+            }
+            None => {
+                let resize = format!("resizeTo({width}, {height}); 0");
+                self.session.evaluate(&resize).await.unwrap();
+            }
+        }
+    }
+
+    /// `[width, height]` of the whole window.
+    async fn size(&self) -> Value {
+        match &self.window_id {
+            Some(id) => {
+                let params = json!({ "windowId": id });
+                let window = cdp_call(self.ws, None, "Browser.getWindowBounds", params).await;
+                json!([window["bounds"]["width"], window["bounds"]["height"]])
+            }
+            None => self
+                .session
+                .evaluate("[outerWidth, outerHeight]")
+                .await
+                .unwrap(),
+        }
+    }
+}
+
 /// `Browser.getWindowForTarget`'s parameters for the page at `ws_url`.
 fn target(ws_url: &str) -> Value {
     json!({ "targetId": ws_url.rsplit('/').next().unwrap() })
@@ -127,39 +167,30 @@ async fn a_resized_window_is_snapped_to_the_apps_aspect() {
     let t = start("screen");
     t.session.wait_until_loaded().await.unwrap();
     let ws = debugger_url(&t.session).await;
-    let Ok(window) = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await
-    else {
-        // Engines without the Browser domain (M47, M56) can't be resized;
+    // M47 takes one debugging client per page, the Session's.
+    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await;
+    if window.is_err() && support::profile().version == "3.0" {
         // M47 centers the App instead (see the test above).
         return;
-    };
-    let window_id = &window["windowId"];
-    cdp_call(
-        &ws,
-        None,
-        "Browser.setWindowBounds",
-        json!({ "windowId": window_id, "bounds": { "width": 800, "height": 600 } }),
-    )
-    .await;
+    }
     // Too tall for the App's 16:9 by both sides changing: the window keeps
     // its width and loses the leftover height once it settles.
-    let mut bounds = Value::Null;
+    let window = WindowControl {
+        session: &t.session,
+        ws: &ws,
+        window_id: window.ok().map(|window| window["windowId"].clone()),
+    };
+    window.resize(800, 600).await;
+    let mut size = Value::Null;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        let window = cdp_call(
-            &ws,
-            None,
-            "Browser.getWindowBounds",
-            json!({ "windowId": window_id }),
-        )
-        .await;
-        bounds = window["bounds"].clone();
-        if bounds["height"] != 600 {
+        size = window.size().await;
+        if size[1] != 600 {
             break;
         }
     }
-    assert_eq!(bounds["width"], 800, "{bounds}");
-    assert!(bounds["height"].as_f64().unwrap() < 600.0, "{bounds}");
+    assert_eq!(size[0], 800, "{size}");
+    assert!(size[1].as_f64().unwrap() < 600.0, "{size}");
     t.session.stop().await;
 }
 

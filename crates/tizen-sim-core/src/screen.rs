@@ -14,18 +14,21 @@
 //!   page outside AVPlay's Video Plane (ADR-0004). **Unverified.**
 //! - **Centered.** The TV screen sits in the middle of the window, with the
 //!   leftover space as a letterbox (#57). Only M47 can draw the App off the
-//!   window's top left (`offsetX`/`offsetY`); from M63 on the metrics
-//!   override's `viewport` was measured not to shift it right or down
-//!   (negative positions do nothing). So elsewhere the window is snapped to
-//!   the App's aspect once the user resizes it, which a maximized or full
-//!   screen window can't be, and M56 (neither) keeps the App at the top left.
+//!   window's top left (`offsetX`/`offsetY`); M56 ignores them, and from M63
+//!   on neither the metrics override's `viewport` (negative positions do
+//!   nothing) nor its `positionX`/`positionY` (they only move `screenX`/
+//!   `screenY`) shift it right or down (measured on M56, M63 and M130,
+//!   #57, #65). So elsewhere the window is snapped to the App's aspect once
+//!   the user resizes it. A maximized or full screen window can't be, and
+//!   keeps the App at the top left.
 //!
 //! Old Engines lack some of the protocol used here, so each part has a
 //! fallback, measured on M47 (protocol 1.1):
 //!
 //! - Without the `Browser` domain (M47, M56), the window is measured from
 //!   the page (`outerWidth`/`outerHeight`, which the metrics override leaves
-//!   alone) and not resized.
+//!   alone) and resized by it (`resizeTo`, which an `--app` window may call;
+//!   measured on M47 and M56).
 //! - Without `screenWidth`/`screenHeight` in the metrics override, the Shims
 //!   report the screen size (see `shim::session_data`).
 //! - Without `setDefaultBackgroundColorOverride`, a black layer at the back
@@ -126,6 +129,13 @@ pub(crate) fn draws_at_offset(engine_version: &str) -> bool {
     milestone.is_some_and(|milestone| milestone <= 47)
 }
 
+/// Whether a window of `outer` size fills its display's work area, `avail`:
+/// it is maximized or full screen. Measured on M56: a maximized window is
+/// exactly the work area, and `resizeTo` would restore it.
+fn fills_screen(outer: (f64, f64), avail: (f64, f64)) -> bool {
+    outer.0 >= avail.0 && outer.1 >= avail.1
+}
+
 /// How the App is drawn in the window's content area.
 #[derive(Debug, Clone, Copy)]
 struct Fit {
@@ -157,7 +167,7 @@ pub(crate) struct Screen {
     pixel_ratio: f64,
     /// Whether the Engine centers the App in the window (`draws_at_offset`);
     /// otherwise it is drawn at the top left, and the window is snapped to
-    /// it instead where the Engine can be resized.
+    /// it instead while it is neither maximized nor full screen.
     draws_at_offset: bool,
     /// The App in the window, as last fitted.
     fit: Mutex<Fit>,
@@ -240,8 +250,7 @@ enum WindowSource {
 struct Window {
     /// Its content area.
     content: (f64, f64),
-    /// Whether it can be resized: neither maximized nor full screen, and
-    /// measured through the `Browser` domain, which can resize it.
+    /// Whether it can be resized: neither maximized nor full screen.
     resizable: bool,
 }
 
@@ -262,13 +271,20 @@ impl WindowSource {
                 (bounds["width"].as_f64(), bounds["height"].as_f64(), normal)
             }
             WindowSource::Page => {
-                let outer = cdp
-                    .evaluate("[outerWidth, outerHeight, document.hidden]")
-                    .await?;
+                let outer = cdp.evaluate(PAGE_WINDOW).await?;
                 if outer[2] == true {
                     return Ok(None);
                 }
-                (outer[0].as_f64(), outer[1].as_f64(), false)
+                let size = |i: usize| outer[i].as_f64();
+                // A work area that can't be read is taken as filled: the
+                // window is left alone rather than pulled out of maximized.
+                let filled = match (size(0), size(1), size(3), size(4)) {
+                    (Some(w), Some(h), Some(avail_w), Some(avail_h)) => {
+                        fills_screen((w, h), (avail_w, avail_h))
+                    }
+                    _ => true,
+                };
+                (size(0), size(1), !filled)
             }
         };
         Ok(Some(Window {
@@ -281,31 +297,49 @@ impl WindowSource {
     }
 
     /// Resizes the window to a `content`-sized content area, given its
-    /// `frame`, where the Engine can.
+    /// `frame`.
     async fn resize(
         &self,
         cdp: &Cdp,
         frame: (f64, f64),
         content: (f64, f64),
     ) -> Result<(), CdpError> {
-        if let WindowSource::Browser(window_id) = self {
-            // Whole pixels: M63 refuses `800.0`.
-            let pixels = |size: f64| size.round() as i64;
-            cdp.call(
-                "Browser.setWindowBounds",
-                json!({
-                    "windowId": window_id,
-                    "bounds": {
-                        "width": pixels(content.0 + frame.0),
-                        "height": pixels(content.1 + frame.1),
-                    },
-                }),
-            )
-            .await?;
+        // Whole pixels: M63 refuses `800.0`.
+        let (width, height) = (
+            (content.0 + frame.0).round() as i64,
+            (content.1 + frame.1).round() as i64,
+        );
+        match self {
+            WindowSource::Browser(window_id) => {
+                cdp.call(
+                    "Browser.setWindowBounds",
+                    json!({
+                        "windowId": window_id,
+                        "bounds": { "width": width, "height": height },
+                    }),
+                )
+                .await?;
+            }
+            // An `--app` window may resize itself (measured on M47 and M56).
+            WindowSource::Page => {
+                cdp.evaluate(&format!("resizeTo({width}, {height}); 0"))
+                    .await?;
+            }
         }
         Ok(())
     }
 }
+
+/// The window's outer size, whether the page is hidden, and its display's
+/// work area, from the page. The work area comes from `Screen`'s own getters:
+/// the Shims report the TV's screen in its place.
+const PAGE_WINDOW: &str = "(function () {
+  function real(name) {
+    var own = Object.getOwnPropertyDescriptor(Screen.prototype, name);
+    return own && own.get ? own.get.call(screen) : screen[name];
+  }
+  return [outerWidth, outerHeight, document.hidden, real('availWidth'), real('availHeight')];
+})()";
 
 /// The Engine's page target: its id (the last part of its debugging
 /// address) and the Engine's `/json/version` browser name.
@@ -317,12 +351,12 @@ pub(crate) struct PageTarget<'a> {
 /// Sets up the TV screen in the Engine's page target and keeps the App
 /// scaled to the window and centered in it as it is resized, until the
 /// Engine goes away. `headed` windows are first resized to a 720p content
-/// area, where the Engine can.
+/// area.
 ///
 /// Only the oldest Engines can draw the App off the window's top left
 /// (`draws_at_offset`); for the others the window is snapped to the App's
 /// aspect once the user has resized it, while it is neither maximized nor
-/// full screen (#57).
+/// full screen (#57, #65).
 pub(crate) async fn set_up(
     cdp: &Arc<Cdp>,
     target: PageTarget<'_>,
@@ -360,7 +394,8 @@ pub(crate) async fn set_up(
             WindowSource::Page
         }
     };
-    if let (true, WindowSource::Browser(_)) = (headed, &source) {
+    // A window that opens maximized or full screen is left so.
+    if headed && matches!(source.window(cdp, frame).await, Ok(Some(window)) if window.resizable) {
         match source.resize(cdp, frame, INITIAL_CONTENT).await {
             Ok(()) => content = INITIAL_CONTENT,
             Err(error) => tracing::warn!(%error, "could not size the Engine window"),
@@ -607,6 +642,16 @@ mod tests {
     #[test]
     fn an_empty_window_is_not_snapped() {
         assert_eq!(snap((1280.0, 720.0), (0.0, 0.0), UHD), None);
+    }
+
+    #[test]
+    fn a_maximized_or_full_screen_window_fills_the_screen() {
+        // Measured on M56 on a 3440x1440 display with a 48px taskbar.
+        assert!(fills_screen((3440.0, 1392.0), (3440.0, 1392.0)));
+        assert!(fills_screen((3440.0, 1440.0), (3440.0, 1392.0)));
+        assert!(!fills_screen((1296.0, 759.0), (3440.0, 1392.0)));
+        // As wide as the screen, but not as tall.
+        assert!(!fills_screen((3440.0, 759.0), (3440.0, 1392.0)));
     }
 
     #[test]
