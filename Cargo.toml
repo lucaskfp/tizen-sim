@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# Listed one by one: release-please bumps each member's version and reads
+# `members` literally, so a glob would be skipped.
+members = ["crates/tizen-sim-cli", "crates/tizen-sim-core", "crates/tizen-sim-gui"]
 
 [workspace.package]
 edition = "2024"

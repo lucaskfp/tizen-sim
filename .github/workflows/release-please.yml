@@ -1,0 +1,43 @@
+name: Release Please
+
+# On every push to main, release-please keeps one release pull request open,
+# "chore: release <version>", with the next version (from the Conventional
+# Commit titles since the last release: feat bumps 0.x, fix 0.0.x) and the
+# CHANGELOG.md entry. Merging that pull request is what releases: it bumps
+# the crates, Cargo.lock and tauri.conf.json, tags v<version>, and drafts
+# the GitHub release, which release.yml then fills with the installers.
+#
+# What GITHUB_TOKEN creates doesn't trigger other workflows, so CI doesn't
+# run on the release pull request itself (it only changes versions and the
+# changelog): an admin merges it with the ruleset's pull request bypass.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
+    permissions:
+      contents: write
