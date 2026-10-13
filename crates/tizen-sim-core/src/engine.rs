@@ -1313,10 +1313,14 @@ mod virtual_display {
             Ok(Err(error)) => return Err(format!("Xvfb's output could not be read: {error}")),
             Ok(Ok(_)) => {}
         }
-        let number = line.trim().parse().map_err(|_| match server.try_wait() {
-            Ok(Some(status)) => format!("Xvfb exited without a display ({status})"),
-            _ => format!("Xvfb reported no display ({line:?})"),
-        })?;
+        let Ok(number) = line.trim().parse() else {
+            // Its output ends before it can be reaped: give it a moment.
+            let exited = tokio::time::timeout(std::time::Duration::from_secs(1), server.wait());
+            return Err(match exited.await {
+                Ok(Ok(status)) => format!("Xvfb exited without a display ({status})"),
+                _ => format!("Xvfb reported no display ({line:?})"),
+            });
+        };
         Ok(VirtualDisplay {
             number,
             _server: server,
