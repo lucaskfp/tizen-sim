@@ -30,7 +30,7 @@ Contributions are welcome: bug reports, behaviour you've measured on a real TV, 
 4. Run the checks under [Development](#development) before pushing.
 5. Open the pull request against `main` and reference the issue (`Closes #123`).
 
-`main` only takes pull requests whose CI passes: lint, tests on Windows and Linux, the GUI and Shim builds, and CodeQL. Pull requests are squash-merged, so the PR title becomes the commit message: write it as a [Conventional Commit](https://www.conventionalcommits.org). A first-time contributor's CI runs once a maintainer approves it.
+`main` only takes pull requests whose CI passes: lint, tests on Windows and Linux, the GUI and Shim builds, and CodeQL. Pull requests are squash-merged, so the PR title becomes the commit message: write it as a [Conventional Commit](https://www.conventionalcommits.org). The `PR title` check enforces it, with the types `feat`, `fix`, `docs`, `ci`, `build`, `test`, `refactor`, `perf`, `chore` and `revert`. `feat` and `fix` decide the next version. A first-time contributor's CI runs once a maintainer approves it.
 
 ## Platform behaviour must be sourced
 
