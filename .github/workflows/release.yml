@@ -1,34 +1,51 @@
 name: Release
 
-# A `v<version>` tag builds the GUI's installers and the CLI's archives for
-# Windows and Linux, and attaches them to a draft GitHub release with
-# generated notes. Publishing the draft is left to a person.
+# Builds the GUI's installers and the CLI's archives for Windows and Linux
+# for a `v<version>` tag, and attaches them to that tag's draft GitHub
+# release. release-please calls it once it has drafted a release (see
+# release-please.yml); a tag pushed by hand runs it too, and gets a draft
+# with generated notes. Publishing the draft is left to a person.
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The release's tag, e.g. v0.2.0.
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  GH_REPO: ${{ github.repository }}
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   draft:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       # The tag names the version every crate and the GUI's installers carry.
       - name: Tag matches the version
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           for file in crates/*/Cargo.toml; do
             grep -q "^version = \"$version\"" "$file" || { echo "::error::$file is not $version"; exit 1; }
           done
           grep -q "\"version\": \"$version\"" crates/tizen-sim-gui/tauri.conf.json \
             || { echo "::error::tauri.conf.json is not $version"; exit 1; }
-      - run: gh release create "$GITHUB_REF_NAME" --draft --generate-notes --title "tizen-sim ${GITHUB_REF_NAME#v}"
+      # release-please drafts its own, with the changelog as notes.
+      - name: Draft the release
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --draft --generate-notes --title "tizen-sim ${TAG#v}"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -51,6 +68,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -69,7 +88,7 @@ jobs:
         working-directory: crates/tizen-sim-gui
       - name: CLI archive
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           cargo build --release -p tizen-sim
           name="tizen-sim-cli-$version-${{ matrix.platform }}"
           mkdir -p "dist/$name"
@@ -84,7 +103,7 @@ jobs:
       - name: Attach to the draft
         run: |
           shopt -s nullglob
-          gh release upload "$GITHUB_REF_NAME" --clobber \
+          gh release upload "$TAG" --clobber \
             target/release/bundle/nsis/*.exe \
             target/release/bundle/msi/*.msi \
             target/release/bundle/appimage/*.AppImage \
