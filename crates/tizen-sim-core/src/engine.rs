@@ -573,14 +573,16 @@ pub async fn launch(
             // spellcheck dictionary (redirector.gvt1.com, measured on M130 on
             // Linux; turned off in the profile, see `turn_off_spellcheck`), the Translate
             // Ranker model, loaded while either Ranker feature is on
-            // (www.gstatic.com, measured on M63 and M69 on Windows)...
+            // (www.gstatic.com, measured on M63 and M69 on Windows), the
+            // Optimization Guide (optimizationguide-pa.googleapis.com,
+            // measured on M120 on Windows and Linux)...
             .args([
                 "--disable-background-networking",
                 "--disable-client-side-phishing-detection",
                 "--disable-component-update",
                 "--disable-extensions",
                 "--disable-features=PreconnectToSearch,EnableIpPrivacyProxy,\
-                 TranslateRankerQuery,TranslateRankerEnforcement",
+                 TranslateRankerQuery,TranslateRankerEnforcement,OptimizationHints",
             ])
             // ...and Google account checks, which go to the proxy itself,
             // where they are dropped.
