@@ -10,12 +10,28 @@ updates:
       cargo:
         update-types: [minor, patch]
   - package-ecosystem: npm
-    directories: [/crates/tizen-sim-gui, /shims]
+    directory: /crates/tizen-sim-gui
     schedule:
       interval: weekly
     groups:
       npm:
         update-types: [minor, patch]
+    ignore:
+      # The types of the Node.js the project runs on (24, as in CI).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: npm
+    directory: /shims
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        update-types: [minor, patch]
+    ignore:
+      # The Shims are one ES5 file for Chromium M47; TypeScript 7 dropped
+      # both `target: ES5` and `outFile` (#88).
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
