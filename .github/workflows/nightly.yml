@@ -23,7 +23,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: matrix
         run: echo "matrix=$(python3 .github/scripts/shim-suite-matrix.py)" >> "$GITHUB_OUTPUT"
 
@@ -40,14 +40,14 @@ jobs:
     env:
       TIZEN_SIM_TEST_NO_HEADLESS: ${{ matrix.no_headless }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # One build cache per runner image: objects built on ubuntu-latest's
       # newer glibc don't link on the ubuntu-22.04 runner of old Engines.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.runner }}
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.tizen-sim/engines
           key: engines-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('crates/tizen-sim-core/data/engines.toml') }}
