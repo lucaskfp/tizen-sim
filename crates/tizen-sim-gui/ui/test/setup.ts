@@ -5,6 +5,8 @@ import { afterEach } from "vitest";
 
 afterEach(async () => {
   cleanup();
+  // The panel layout is remembered in localStorage (#76).
+  localStorage.clear();
   // Unmounting stops event listeners asynchronously, through the mocks.
   await new Promise((resolve) => setTimeout(resolve));
   clearMocks();
