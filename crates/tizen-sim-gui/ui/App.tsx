@@ -1,20 +1,24 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { Camera, FolderOpen, Globe, MonitorPlay, Package, RotateCw } from "lucide-react";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { Camera, FolderOpen, Globe, MonitorPlay, Package, PanelBottom, PanelRight, RotateCw } from "lucide-react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { DevServerForm } from "@/components/DevServerForm";
 import { DiagnosticsPanel, LogPanel, NetworkPanel } from "@/components/Panels";
 import { Remote } from "@/components/Remote";
 import { RunningSessions } from "@/components/RunningSessions";
+import { Splitter } from "@/components/Splitter";
 import { TvScreen } from "@/components/TvScreen";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as commands from "@/lib/commands";
+import { usePanelLayout } from "@/lib/panelLayout";
 import { initialView, reduce, type Status } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 /** The panel open under the toolbar, if any. Panels sit beside the TV screen, never over it. */
 type Panel = "devServer" | "sessions" | null;
+
+const PANEL_ID = "session-panel";
 
 export function App() {
   const [view, dispatch] = useReducer(reduce, initialView);
@@ -24,6 +28,9 @@ export function App() {
   /** The last command that failed, and why. */
   const [problem, setProblem] = useState<string | null>(null);
   const showProblem = useCallback((e: unknown) => setProblem(String(e)), []);
+  /** Where the Log/Network/Diagnostics panel sits, and its share of the area it splits with the TV screen. */
+  const sessionPanel = usePanelLayout();
+  const splitArea = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const unlisten = commands.onSessionEvent(dispatch);
@@ -59,6 +66,8 @@ export function App() {
       if (path) await commands.screenshot(path);
     });
 
+  const dockedBottom = sessionPanel.layout.dock === "bottom";
+  const dockLabel = dockedBottom ? "Dock the panel on the right" : "Dock the panel at the bottom";
   const hasSession = view.session !== null;
   const loaded = view.status.kind === "running" || view.status.kind === "hidden";
 
@@ -140,16 +149,46 @@ export function App() {
           <Remote disabled={!loaded} onPress={(key) => run(() => commands.pressKey(key))} />
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className={cn("flex min-h-0 flex-col", embeds ? "flex-[3]" : "flex-none")}>
+        <main ref={splitArea} className={cn("flex min-h-0 min-w-0 flex-1", dockedBottom ? "flex-col" : "flex-row")}>
+          {/* The TV screen takes what the panel leaves, down to its minimum (MIN_SCREEN_PX in panelLayout.ts). */}
+          <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", dockedBottom ? "min-h-40" : "min-w-40")}>
             <TvScreen view={view} embeds={embeds} onRestart={() => run(commands.restart)} />
           </div>
-          <Tabs defaultValue="log" className={cn("min-h-0 gap-0 border-t", embeds ? "flex-[2]" : "flex-1")}>
-            <TabsList className="m-2">
-              <TabsTrigger value="log">Log</TabsTrigger>
-              <TabsTrigger value="network">Network ({view.network.length})</TabsTrigger>
-              <TabsTrigger value="diagnostics">Diagnostics ({view.diagnostics.length})</TabsTrigger>
-            </TabsList>
+          <Splitter
+            dock={sessionPanel.layout.dock}
+            fraction={sessionPanel.layout.fraction}
+            splitArea={splitArea}
+            controls={PANEL_ID}
+            onPreview={sessionPanel.preview}
+            onResize={sessionPanel.resize}
+            onReset={sessionPanel.reset}
+          />
+          <Tabs
+            id={PANEL_ID}
+            defaultValue="log"
+            // Grows no further than its share, but gives up the splitter's pixel when the screen is at its
+            // minimum; never below MIN_PANEL_PX (panelLayout.ts).
+            className={cn("min-h-0 min-w-0 shrink grow-0 gap-0 overflow-hidden", dockedBottom ? "min-h-30" : "min-w-30")}
+            style={{ flexBasis: `${sessionPanel.layout.fraction * 100}%` }}
+          >
+            <div className="flex items-start gap-2 p-2">
+              {/* A narrow panel wraps its tabs rather than overflowing. */}
+              <TabsList className="min-w-0 flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
+                <TabsTrigger value="log">Log</TabsTrigger>
+                <TabsTrigger value="network">Network ({view.network.length})</TabsTrigger>
+                <TabsTrigger value="diagnostics">Diagnostics ({view.diagnostics.length})</TabsTrigger>
+              </TabsList>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="ml-auto shrink-0"
+                aria-label={dockLabel}
+                title={dockLabel}
+                onClick={() => sessionPanel.dock(dockedBottom ? "right" : "bottom")}
+              >
+                {dockedBottom ? <PanelRight /> : <PanelBottom />}
+              </Button>
+            </div>
             <TabsContent value="log" className="min-h-0 border-t">
               <LogPanel log={view.log} />
             </TabsContent>

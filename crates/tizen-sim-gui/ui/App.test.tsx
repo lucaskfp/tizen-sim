@@ -3,6 +3,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { onTestFinished, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
@@ -268,4 +269,109 @@ test("a failed command is shown", async () => {
   await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("invalid dev server URL");
+});
+
+/** Has the webview report a monitor of this size until the test ends. */
+function monitor(width: number, height: number) {
+  for (const [name, value] of Object.entries({ width, height })) {
+    Object.defineProperty(window.screen, name, { value, configurable: true });
+  }
+  onTestFinished(() => {
+    delete (window.screen as unknown as Record<string, unknown>).width;
+    delete (window.screen as unknown as Record<string, unknown>).height;
+  });
+}
+
+const splitter = () => screen.getByRole("separator", { name: /resize the panel/i });
+
+test("the panel docks at the bottom, a button moves it to the right, and the choice is remembered", async () => {
+  monitor(3840, 2160);
+  rustSide();
+  const { unmount } = render(<App />);
+  expect(splitter()).toHaveAttribute("aria-orientation", "horizontal");
+  expect(splitter()).toHaveAttribute("aria-valuenow", "30");
+
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel on the right" }));
+
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
+  unmount();
+  rustSide();
+  render(<App />);
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel at the bottom" }));
+  expect(splitter()).toHaveAttribute("aria-orientation", "horizontal");
+});
+
+test("on an ultrawide monitor the panel starts on the right, unless the developer chose otherwise", async () => {
+  monitor(3440, 1440);
+  rustSide();
+  const { unmount } = render(<App />);
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
+  expect(splitter()).toHaveAttribute("aria-valuenow", "30");
+
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel at the bottom" }));
+  unmount();
+  rustSide();
+  render(<App />);
+
+  expect(splitter()).toHaveAttribute("aria-orientation", "horizontal");
+});
+
+test("the arrow keys resize the panel, a double click restores its size, and the size is remembered", async () => {
+  rustSide();
+  const { unmount } = render(<App />);
+
+  splitter().focus();
+  // Docked at the bottom, up moves the splitter up: a taller panel.
+  await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+  expect(splitter()).toHaveAttribute("aria-valuenow", "34");
+  unmount();
+  rustSide();
+  render(<App />);
+  expect(splitter()).toHaveAttribute("aria-valuenow", "34");
+
+  await userEvent.dblClick(splitter());
+  expect(splitter()).toHaveAttribute("aria-valuenow", "30");
+
+  // Docked on the right, left moves it left: a wider panel.
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel on the right" }));
+  splitter().focus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(splitter()).toHaveAttribute("aria-valuenow", "32");
+  await userEvent.keyboard("{ArrowRight}{ArrowRight}");
+  expect(splitter()).toHaveAttribute("aria-valuenow", "28");
+});
+
+test("docked on the right, the screen area still tells the Rust side where the Engine window goes", async () => {
+  monitor(3440, 1440);
+  const invoked = rustSide({ embeds_screen: true });
+  render(<App />);
+
+  await screen.findByRole("region", { name: "TV screen" });
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
+
+  await waitFor(() => expect(invoked.some((i) => i.cmd === "set_screen_area" && i.args.area !== null)).toBe(true));
+});
+
+test("a click on the splitter without dragging leaves the panel's size alone", async () => {
+  rustSide();
+  render(<App />);
+
+  await userEvent.click(splitter());
+
+  expect(splitter()).toHaveAttribute("aria-valuenow", "30");
+  expect(localStorage.getItem("tizen-sim.panel")).toBeNull();
+});
+
+test("where the layout can't be remembered, the dock button still moves the panel", async () => {
+  rustSide();
+  const blocked = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("blocked", "SecurityError");
+  });
+  onTestFinished(() => blocked.mockRestore());
+  render(<App />);
+
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel on the right" }));
+
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
 });
