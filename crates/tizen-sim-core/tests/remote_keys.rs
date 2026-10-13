@@ -438,3 +438,31 @@ async fn typing_in_a_text_field_is_not_mistaken_for_remote_keys() {
     eventually_equals(&t.session, "window.keyLog", json!([189])).await;
     t.session.stop().await;
 }
+
+/// A page busy as a key is held runs the long-press timer late, after the
+/// release (input goes before timers): the hold still counts by the keys' own
+/// times (#75; a starved CI runner did this).
+#[tokio::test]
+async fn a_long_press_counts_even_if_the_page_is_busy_when_it_ends() {
+    let t = start_with("remote-keys", |c| {
+        c.key_map
+            .insert(PhysicalKey::parse("F7").unwrap(), "MediaFastForward")
+            .unwrap();
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    t.session
+        .evaluate("tizen.tvinputdevice.registerKeyBatch(['MediaFastForward', 'MediaTrackNext']); 0")
+        .await
+        .unwrap();
+    let f7 = PhysicalKey(118);
+    t.session.physical_key(f7, KeyAction::Down).await.unwrap();
+    // The page is busy from 800 ms after the press until after the release.
+    t.session
+        .evaluate("setTimeout(function () { var t = Date.now(); while (Date.now() - t < 800) {} }, 800); 0")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1300)).await;
+    t.session.physical_key(f7, KeyAction::Up).await.unwrap();
+    eventually_equals(&t.session, "window.keyLog", json!([10233])).await;
+    t.session.stop().await;
+}

@@ -92,6 +92,12 @@ pub enum EngineError {
     DebugPortTimeout(Duration),
     #[error("the Engine exited during startup ({0})")]
     ExitedDuringStartup(String),
+    /// Linux only: an off-screen Engine window needs a display, and there is
+    /// neither a virtual one nor the desktop's.
+    #[error(
+        "the Engine needs a display for its off-screen window, and {0} (Xvfb is listed in docs/linux.md)"
+    )]
+    NoDisplay(String),
     #[error("another Session is already running this App on this Version Profile (Engine data in use at {})", .0.display())]
     EngineDataInUse(PathBuf),
 }
@@ -611,9 +617,20 @@ pub async fn launch(
                     "--window-position={},{}",
                     OFF_SCREEN.0, OFF_SCREEN.1
                 ));
-                display = virtual_display::start().await;
-                if let Some(display) = &display {
-                    display.use_for(&mut command);
+                match virtual_display::start().await {
+                    Ok(virtual_display) => {
+                        virtual_display.use_for(&mut command);
+                        display = Some(virtual_display);
+                    }
+                    // Without a display M47 exits saying only "configure your
+                    // SUID sandbox" (measured, #75): say what's missing.
+                    Err(reason) if !virtual_display::desktop_has_display() => {
+                        return Err(EngineError::NoDisplay(reason));
+                    }
+                    Err(reason) => tracing::warn!(
+                        %reason,
+                        "no virtual display; the off-screen Engine window may show on the desktop"
+                    ),
                 }
             }
             // An app window: no tabs or address bar. `--app=about:blank`
@@ -1244,13 +1261,28 @@ mod virtual_display {
         }
     }
 
+    /// How long Xvfb may take to report its display. Measured on fresh
+    /// GitHub ubuntu-22.04 runners starting 4 at once with their Engines: up
+    /// to 4.7 s (#75); 10 s, the old limit, was too close.
     #[cfg(target_os = "linux")]
-    pub async fn start() -> Option<VirtualDisplay> {
+    const START_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    #[cfg(target_os = "linux")]
+    pub async fn start() -> Result<VirtualDisplay, String> {
+        start_program("Xvfb", START_WAIT).await
+    }
+
+    /// Starts `program` as Xvfb, waiting up to `wait` for its display.
+    #[cfg(target_os = "linux")]
+    pub(super) async fn start_program(
+        program: &str,
+        wait: std::time::Duration,
+    ) -> Result<VirtualDisplay, String> {
         use std::process::Stdio;
         use tokio::io::AsyncBufReadExt;
 
         // Xvfb picks a free display and writes its number to `-displayfd`.
-        let mut command = tokio::process::Command::new("Xvfb");
+        let mut command = tokio::process::Command::new(program);
         command
             .args([
                 "-displayfd",
@@ -1266,34 +1298,39 @@ mod virtual_display {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         super::containment::die_with_parent(&mut command);
-        let mut server = match command.spawn() {
-            Ok(server) => server,
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "Xvfb is not available; the off-screen Engine window may show on the desktop"
-                );
-                return None;
-            }
-        };
+        let mut server = command
+            .spawn()
+            .map_err(|error| format!("Xvfb could not be started: {error}"))?;
         let mut line = String::new();
-        let mut stdout = tokio::io::BufReader::new(server.stdout.take()?);
-        let read = stdout.read_line(&mut line);
-        let number = match tokio::time::timeout(std::time::Duration::from_secs(10), read).await {
-            Ok(Ok(_)) => line.trim().parse().ok(),
-            _ => None,
-        };
-        let Some(number) = number else {
-            tracing::warn!(
-                "Xvfb did not start; the off-screen Engine window may show on the desktop"
-            );
-            return None;
-        };
-        Some(VirtualDisplay {
+        let mut stdout = tokio::io::BufReader::new(
+            server
+                .stdout
+                .take()
+                .ok_or("Xvfb's output could not be read")?,
+        );
+        match tokio::time::timeout(wait, stdout.read_line(&mut line)).await {
+            Err(_) => return Err(format!("Xvfb did not report a display within {wait:?}")),
+            Ok(Err(error)) => return Err(format!("Xvfb's output could not be read: {error}")),
+            Ok(Ok(_)) => {}
+        }
+        let number = line.trim().parse().map_err(|_| match server.try_wait() {
+            Ok(Some(status)) => format!("Xvfb exited without a display ({status})"),
+            _ => format!("Xvfb reported no display ({line:?})"),
+        })?;
+        Ok(VirtualDisplay {
             number,
             _server: server,
             _stdout: stdout,
         })
+    }
+
+    /// Whether the desktop has a display of its own for the window to go on:
+    /// on Linux only with an X or Wayland server; elsewhere always.
+    pub fn desktop_has_display() -> bool {
+        !cfg!(target_os = "linux")
+            || ["DISPLAY", "WAYLAND_DISPLAY"]
+                .iter()
+                .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -1310,9 +1347,10 @@ mod virtual_display {
         }
     }
 
+    /// Elsewhere the window goes off the desktop's own screen.
     #[cfg(not(target_os = "linux"))]
-    pub async fn start() -> Option<VirtualDisplay> {
-        None
+    pub async fn start() -> Result<VirtualDisplay, String> {
+        Err("only Linux uses a virtual display".into())
     }
 }
 
@@ -1354,5 +1392,67 @@ mod tests {
         assert_eq!(preferences["browser"]["enable_spellchecking"], false);
         assert_eq!(preferences["browser"]["window_placement"]["top"], 1);
         assert_eq!(preferences["zoom"], 2);
+    }
+
+    /// A stand-in for Xvfb: a shell script with this body.
+    #[cfg(target_os = "linux")]
+    fn fake_xvfb(dir: &Path, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("Xvfb");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh
+{body}
+"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_virtual_display_is_the_one_xvfb_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let xvfb = fake_xvfb(dir.path(), "echo 7; sleep 30");
+        let display = virtual_display::start_program(&xvfb, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(display.number(), 7);
+    }
+
+    /// Without a display, M47 dies naming only its sandbox (#75): a virtual
+    /// display that can't start must say so.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_virtual_display_that_cannot_start_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let wait = Duration::from_millis(500);
+
+        let slow = fake_xvfb(dir.path(), "sleep 5; echo 7");
+        let error = virtual_display::start_program(&slow, wait)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error, "Xvfb did not report a display within 500ms");
+
+        let dead = fake_xvfb(dir.path(), "exit 1");
+        let error = virtual_display::start_program(&dead, wait)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            error.starts_with("Xvfb exited without a display"),
+            "{error}"
+        );
+
+        let missing = dir.path().join("no-such-xvfb");
+        let error = virtual_display::start_program(&missing.to_string_lossy(), wait)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with("Xvfb could not be started"), "{error}");
     }
 }
