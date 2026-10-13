@@ -88,7 +88,7 @@ fn network_event(event: &SessionEvent, url: &str) -> Option<NetworkRequest> {
 /// WARP mode raise Diagnostics the App did nothing to cause. The M63 and M69
 /// Engines on Windows download the Translate Ranker model from
 /// www.gstatic.com within seconds of loading the App; M120 calls the
-/// Optimization Guide. The nightly suite runs this on every Engine (#61).
+/// Optimization Guide.
 #[tokio::test]
 async fn an_app_that_makes_no_requests_has_none_in_the_network_log() {
     let mut t = support::start("hello");

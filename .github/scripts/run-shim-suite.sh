@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Runs the in-page Shim suite on one Version Profile's Engine, with the
-# network tests: an Engine's own background requests (model and dictionary
-# downloads) would show up in the App's network log, and they differ by
-# Engine (#61). On failure, names the Version Profile and each failing test
+# network tests: an Engine's own background requests would show up in the
+# App's network log, and which it makes differs by Engine (#61). On failure, names the Version Profile and each failing test
 # as GitHub annotations and in the job summary.
 #
 # Usage: run-shim-suite.sh <version-profile>
@@ -25,13 +24,13 @@ failures=$(sed -E 's/\x1b\[[0-9;]*m//g' "$log" | awk '
 ')
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
-echo "### Shim suite failed on Tizen $profile" >> "$summary"
+echo "### Per-Engine suite failed on Tizen $profile" >> "$summary"
 if [ -z "$failures" ]; then
-  echo "::error title=Shim suite failed on Tizen $profile::no failing test was reported (build error or crash); see the log"
+  echo "::error title=Per-Engine suite failed on Tizen $profile::no failing test was reported (build error or crash); see the log"
   echo "No failing test was reported (build error or crash); see the log." >> "$summary"
 else
   while read -r test; do
-    echo "::error title=Shim suite failed on Tizen $profile::$test"
+    echo "::error title=Per-Engine suite failed on Tizen $profile::$test"
     echo "- \`$test\`" >> "$summary"
   done <<< "$failures"
 fi

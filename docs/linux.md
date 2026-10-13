@@ -1,6 +1,6 @@
 # tizen-sim on Linux
 
-Linux (x86-64) is a tier 2 platform: the CLI and the GUI do everything they do on Windows. CI runs the Session, CLI and GUI tests on Linux on Tizen 10.0, the Session suite on Tizen 3.0, and starts the real GUI; a nightly job runs the in-page Shim suite on every Version Profile. This page lists where Linux differs and what it needs from the system.
+Linux (x86-64) is a tier 2 platform: the CLI and the GUI do everything they do on Windows. CI runs the Session, CLI and GUI tests on Linux on Tizen 10.0, the Session suite on Tizen 3.0, and starts the real GUI; a nightly job runs the in-page Shim suite and the network tests on every Version Profile. This page lists where Linux differs and what it needs from the system.
 
 ## What it needs
 
