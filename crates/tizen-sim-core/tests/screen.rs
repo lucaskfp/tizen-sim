@@ -402,3 +402,50 @@ async fn the_devtools_address_is_the_engines_own_working_inspector() {
     assert_eq!(result["result"]["value"], "Screen fixture");
     t.session.stop().await;
 }
+
+/// M63 and M69 drop the metrics override whenever their window is resized
+/// (measured; M47, M56 and M76 on keep it), so the App would see the window's
+/// own size, as one Nightly did 2 s after a resize. The TV screen is laid out
+/// again as soon as the frame is resized, not at the next poll.
+#[tokio::test]
+async fn the_app_is_laid_out_again_as_soon_as_the_window_is_resized() {
+    let t = start("screen");
+    t.session.wait_until_loaded().await.unwrap();
+    let ws = debugger_url(&t.session).await;
+    // M47 takes one debugging client per page, the Session's.
+    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await;
+    let window = WindowControl {
+        session: &t.session,
+        ws: &ws,
+        window_id: window.ok().map(|window| window["windowId"].clone()),
+    };
+    let mut slowest = Duration::ZERO;
+    // At 16:9, so the window isn't snapped in between.
+    for (width, height) in [
+        (1000, 600),
+        (1200, 714),
+        (900, 545),
+        (1100, 657),
+        (950, 573),
+    ] {
+        window.resize(width, height).await;
+        let resized = std::time::Instant::now();
+        loop {
+            if t.session.evaluate(SIZE).await.unwrap() == json!([1920, 1080, 1920, 1080]) {
+                break;
+            }
+            assert!(
+                resized.elapsed() < Duration::from_secs(5),
+                "never laid out again"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        slowest = slowest.max(resized.elapsed());
+        tokio::time::sleep(Duration::from_millis(700)).await;
+    }
+    assert!(
+        slowest < Duration::from_millis(300),
+        "laid out again only after {slowest:?}"
+    );
+    t.session.stop().await;
+}

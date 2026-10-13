@@ -37,7 +37,7 @@
 //! - `Page.captureScreenshot` gives the window's content, not the emulated
 //!   screen, so `Screen::fit_screenshot` cuts the App out and scales it.
 
-use crate::cdp::{Cdp, CdpError};
+use crate::cdp::{Cdp, CdpError, CdpEvent};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -541,13 +541,38 @@ pub(crate) async fn set_up(
     screen.fit(cdp, content).await?;
 
     let (cdp, watched) = (cdp.clone(), screen.clone());
+    let mut events = cdp.subscribe();
     tokio::spawn(async move {
         // The size the App was last fitted to, and the last one the window
         // settled at: it is snapped only once its size stops changing, so a
         // resize the user is still dragging isn't fought.
         let (mut last, mut settled) = (content, content);
         loop {
-            tokio::time::sleep(RESIZE_POLL).await;
+            // Until the next poll, the App is laid out again as soon as its
+            // frame is resized: M63 and M69 drop the metrics override when
+            // their window is resized, so the App would see the window's own
+            // size until then (measured; M47, M56 and M76 on keep it).
+            let poll = tokio::time::Instant::now() + RESIZE_POLL;
+            let mut refitted = false;
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(poll) => break,
+                    resized = frame_resized(&mut events) => {
+                        if !resized {
+                            return;
+                        }
+                        if let Ok(Some(window)) = source.window(&cdp, frame).await
+                            && window.content != last
+                        {
+                            last = window.content;
+                            refitted = true;
+                            if watched.fit(&cdp, last).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             let window = match source.window(&cdp, frame).await {
                 Ok(Some(window)) => window,
                 Ok(None) => continue,
@@ -558,6 +583,10 @@ pub(crate) async fn set_up(
                 Err(_) => continue,
             };
             let now = window.content;
+            // A size that changed during this poll hasn't settled yet.
+            if refitted {
+                continue;
+            }
             if now != last {
                 last = now;
                 if watched.fit(&cdp, now).await.is_err() {
@@ -587,6 +616,18 @@ pub(crate) async fn set_up(
         }
     });
     Ok(screen)
+}
+
+/// Waits for the page's frame to be resized: `false` once the Engine's
+/// connection is gone.
+async fn frame_resized(events: &mut tokio::sync::broadcast::Receiver<CdpEvent>) -> bool {
+    loop {
+        match events.recv().await {
+            Ok((method, _)) if method == "Page.frameResized" => return true,
+            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+        }
+    }
 }
 
 /// Lays the page out at the TV's resolution, drawn as `fit` says.
