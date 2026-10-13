@@ -466,15 +466,16 @@ async fn a_declared_privilege_allows_the_read() {
         .unwrap();
     assert_eq!(size, "number");
     t.session.stop().await;
-    let mut diagnostics = 0;
+    // Named, not counted: one showed up once on the Nightly (#75).
+    let mut diagnostics = Vec::new();
     while let Ok(Some(event)) =
         tokio::time::timeout(std::time::Duration::from_millis(100), t.events.next()).await
     {
-        if matches!(event, SessionEvent::Diagnostic(_)) {
-            diagnostics += 1;
+        if let SessionEvent::Diagnostic(d) = event {
+            diagnostics.push(format!("{}: {}", d.code, d.message));
         }
     }
-    assert_eq!(diagnostics, 0);
+    assert_eq!(diagnostics, Vec::<String>::new());
 }
 
 #[tokio::test]
