@@ -200,7 +200,7 @@ npm run check-es5
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, `docs:`, `ci:`, ...) and reference their issue, e.g. `(#50)`.
 - **Code** should read like the code around it: same naming, idiom and comment density.
-- **CI** runs lint and tests on Windows and Linux on every push. A nightly job runs the in-page Shim suite on every Version Profile's Engine.
+- **CI** runs lint and tests on Windows and Linux on every push. A nightly job runs the in-page Shim suite and the network tests on every Version Profile's Engine.
 
 ### AI agents
 

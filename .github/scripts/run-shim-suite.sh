@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Runs the in-page Shim suite on one Version Profile's Engine. On failure,
-# names the Version Profile and each failing Shim test as GitHub annotations
-# and in the job summary.
+# Runs the in-page Shim suite on one Version Profile's Engine, with the
+# network tests: an Engine's own background requests (model and dictionary
+# downloads) would show up in the App's network log, and they differ by
+# Engine (#61). On failure, names the Version Profile and each failing test
+# as GitHub annotations and in the job summary.
 #
 # Usage: run-shim-suite.sh <version-profile>
 set -uo pipefail
@@ -10,7 +12,7 @@ profile="$1"
 log="$(mktemp)"
 
 TIZEN_SIM_TEST_PROFILE="$profile" cargo test -p tizen-sim-core --no-fail-fast \
-  --test shims --test webapis --test remote_keys --test screen 2>&1 | tee "$log"
+  --test shims --test webapis --test remote_keys --test screen --test network 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 [ "$status" -eq 0 ] && exit 0
 

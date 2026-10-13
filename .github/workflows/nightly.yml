@@ -1,8 +1,9 @@
 name: Nightly
 
 # The in-page Shim suite on every Version Profile with an Engine, so a Shim
-# change can't silently break older TVs. The jobs come from the Engine
-# Manifest: adding an Engine adds its job.
+# change can't silently break older TVs, and the network tests, which catch
+# an Engine's own requests showing up as the App's (#61). The jobs come from
+# the Engine Manifest: adding an Engine adds its job.
 
 on:
   schedule:
