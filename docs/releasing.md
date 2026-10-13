@@ -2,14 +2,11 @@
 
 Releases are cut by [release-please](https://github.com/googleapis/release-please) from the Conventional Commit titles on `main` (`release-please-config.json`, `.github/workflows/release-please.yml`).
 
-1. **Merging a pull request doesn't release.** After each merge, release-please opens or updates one pull request, `chore: release <version>`. It holds the next version and the `CHANGELOG.md` entry:
+1. **Merging a pull request doesn't release.** After each merge, release-please opens or updates one pull request, `chore: release <version>`. It bumps the three crates, their `Cargo.lock` entries and `tauri.conf.json` to the next version, and adds the `CHANGELOG.md` entry:
    - while the version is 0.x, `feat` bumps 0.**x**.0, and a breaking change (`feat!:`) does too;
    - `fix`, `perf` and `revert` bump 0.0.**x**;
    - `docs`, `ci`, `build`, `test`, `refactor` and `chore` don't bump the version.
-2. **To release, merge that pull request.** CI doesn't run on it, since GitHub doesn't trigger workflows for what a workflow's token creates, and it only changes versions and the changelog. Merge it with the admin bypass (`gh pr merge <n> --squash --admin`). release-please then:
-   - bumps the three crates, `Cargo.lock` and `tauri.conf.json`;
-   - tags `v<version>`;
-   - drafts the GitHub release with the changelog as notes.
+2. **To release, merge that pull request.** CI doesn't run on it, since GitHub doesn't trigger workflows for what a workflow's token creates, and it only changes versions and the changelog. Merge it with the admin bypass (`gh pr merge <n> --squash --admin`). release-please then tags `v<version>` and drafts the GitHub release, with the changelog as notes.
 3. **`release.yml` builds and attaches** the GUI's installers (NSIS and MSI, AppImage and `.deb`) and the CLI's archives, in about 20 minutes.
 4. **Review the draft and publish it** on the [Releases](https://github.com/lucaskfp/tizen-sim/releases) page, or with `gh release edit v<version> --draft=false`.
 

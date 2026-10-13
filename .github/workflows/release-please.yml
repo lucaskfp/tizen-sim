@@ -1,11 +1,12 @@
 name: Release Please
 
 # On every push to main, release-please keeps one release pull request open,
-# "chore: release <version>", with the next version (from the Conventional
-# Commit titles since the last release: feat bumps 0.x, fix 0.0.x) and the
-# CHANGELOG.md entry. Merging that pull request is what releases: it bumps
-# the crates, Cargo.lock and tauri.conf.json, tags v<version>, and drafts
-# the GitHub release, which release.yml then fills with the installers.
+# "chore: release <version>", which bumps the crates, Cargo.lock and
+# tauri.conf.json to the next version (from the Conventional Commit titles
+# since the last release: feat bumps 0.x, fix 0.0.x) and adds the
+# CHANGELOG.md entry. Merging it is what releases: release-please tags
+# v<version> and drafts the GitHub release, which release.yml then fills
+# with the installers (docs/releasing.md).
 #
 # What GITHUB_TOKEN creates doesn't trigger other workflows, so CI doesn't
 # run on the release pull request itself (it only changes versions and the
