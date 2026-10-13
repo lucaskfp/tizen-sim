@@ -10,6 +10,10 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+# The jobs only read the repo (CodeQL actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
