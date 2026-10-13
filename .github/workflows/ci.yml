@@ -144,3 +144,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  # Dependencies: RustSec advisories, licenses compatible with MIT OR
+  # Apache-2.0, crates.io only (deny.toml).
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

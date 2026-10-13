@@ -1,0 +1,52 @@
+# cargo-deny: run in CI by the `deny` job (`cargo deny check`).
+
+[graph]
+all-features = true
+
+# Vulnerable, unmaintained or yanked crates, from the RustSec advisory database.
+[advisories]
+yanked = "deny"
+ignore = [
+    # Unmaintained, not vulnerable: a build-time proc macro under glib-macros
+    # 0.18, which Tauri pulls in for GTK 3 on Linux (tauri -> muda -> gtk).
+    # Goes away when Tauri moves off gtk-rs 0.18.
+    { id = "RUSTSEC-2024-0370", reason = "pulled in by Tauri's GTK 3 bindings; build-time only" },
+]
+
+# Licenses a dependency may carry: permissive ones, plus MPL-2.0 (file-level
+# copyleft, fine for binaries). tizen-sim is MIT OR Apache-2.0, so nothing
+# that would require relicensing it (GPL, AGPL) is allowed.
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "bzip2-1.0.6",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Duplicate versions are common through Tauri's tree and not worth failing on.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# Only crates.io; no git dependencies.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
