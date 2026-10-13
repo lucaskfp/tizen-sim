@@ -28,6 +28,8 @@ var held = {
   keyCode: -1,
   timer: 0,
   sentLongPress: false,
+  /** The keydown's `timeStamp`: when the key went down, not when the page got to it. */
+  downAt: 0,
 };
 
 function pressRemoteKey(name: string) {
@@ -56,18 +58,24 @@ function onMappedKeyDown(e: KeyboardEvent, mapped: string) {
     return;
   }
   // Sent on release; held long enough, the long-press action happens instead.
-  var longPress = LONG_PRESS[mapped];
   if (held.keyCode === -1) {
     held.keyCode = e.keyCode;
     held.sentLongPress = false;
+    held.downAt = e.timeStamp;
     held.timer = window.setTimeout(function () {
-      held.sentLongPress = true;
-      if (longPress === TERMINATE) {
-        bridge.notify("application.terminate");
-      } else {
-        pressRemoteKey(longPress);
-      }
+      sendLongPress(mapped);
     }, LONG_PRESS_MS);
+  }
+}
+
+/** Does what holding `mapped` does, once per hold. */
+function sendLongPress(mapped: string) {
+  held.sentLongPress = true;
+  var longPress = LONG_PRESS[mapped];
+  if (longPress === TERMINATE) {
+    bridge.notify("application.terminate");
+  } else {
+    pressRemoteKey(longPress);
   }
 }
 
@@ -128,7 +136,13 @@ function onKeyUp(e: KeyboardEvent) {
   if (e.keyCode === held.keyCode) {
     window.clearTimeout(held.timer);
     if (!held.sentLongPress) {
-      pressRemoteKey(mapped);
+      // A page busy as the key is held runs its timer late, after this
+      // keyup (input goes first): the events' own times tell the hold (#75).
+      if (e.timeStamp - held.downAt >= LONG_PRESS_MS) {
+        sendLongPress(mapped);
+      } else {
+        pressRemoteKey(mapped);
+      }
     }
     held.keyCode = -1;
   }

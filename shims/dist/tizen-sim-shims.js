@@ -486,6 +486,7 @@ var held = {
     keyCode: -1,
     timer: 0,
     sentLongPress: false,
+    downAt: 0,
 };
 function pressRemoteKey(name) {
     bridge.notify("keys.press", { key: name });
@@ -509,19 +510,23 @@ function onMappedKeyDown(e, mapped) {
         }
         return;
     }
-    var longPress = LONG_PRESS[mapped];
     if (held.keyCode === -1) {
         held.keyCode = e.keyCode;
         held.sentLongPress = false;
+        held.downAt = e.timeStamp;
         held.timer = window.setTimeout(function () {
-            held.sentLongPress = true;
-            if (longPress === TERMINATE) {
-                bridge.notify("application.terminate");
-            }
-            else {
-                pressRemoteKey(longPress);
-            }
+            sendLongPress(mapped);
         }, LONG_PRESS_MS);
+    }
+}
+function sendLongPress(mapped) {
+    held.sentLongPress = true;
+    var longPress = LONG_PRESS[mapped];
+    if (longPress === TERMINATE) {
+        bridge.notify("application.terminate");
+    }
+    else {
+        pressRemoteKey(longPress);
     }
 }
 function onKeyDown(e) {
@@ -573,7 +578,12 @@ function onKeyUp(e) {
     if (e.keyCode === held.keyCode) {
         window.clearTimeout(held.timer);
         if (!held.sentLongPress) {
-            pressRemoteKey(mapped);
+            if (e.timeStamp - held.downAt >= LONG_PRESS_MS) {
+                sendLongPress(mapped);
+            }
+            else {
+                pressRemoteKey(mapped);
+            }
         }
         held.keyCode = -1;
     }
