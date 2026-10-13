@@ -90,6 +90,8 @@ pub enum EngineError {
     },
     #[error("the Engine did not open its debugging port within {0:?}")]
     DebugPortTimeout(Duration),
+    #[error("other programs held each debugging port the Engine was given: {0:?}")]
+    DebugPortsTaken(Vec<u16>),
     #[error("the Engine exited during startup ({0})")]
     ExitedDuringStartup(String),
     /// Linux only: an off-screen Engine window needs a display, and there is
@@ -521,9 +523,27 @@ const QUIET_START: [&str; 3] = [
     "--test-type",
 ];
 
+/// How many debugging ports a launch tries before giving up (see
+/// `launch_with_ports`).
+const PORT_ATTEMPTS: usize = 3;
+
 pub async fn launch(
     executable: &Path,
     options: &LaunchOptions,
+) -> Result<RunningEngine, EngineError> {
+    let ports = std::iter::from_fn(|| free_port().ok()).take(PORT_ATTEMPTS);
+    launch_with_ports(executable, options, ports).await
+}
+
+/// Launches the Engine on the first of `ports` it gets to keep. A free port
+/// can be taken again before the Engine listens on it, by another Engine or
+/// another server starting at the same time; the Engine then carries on
+/// without a debugging port, and the one found there is someone else's
+/// (#83). So the launch moves on to the next port.
+pub async fn launch_with_ports(
+    executable: &Path,
+    options: &LaunchOptions,
+    ports: impl IntoIterator<Item = u16>,
 ) -> Result<RunningEngine, EngineError> {
     tokio::fs::create_dir_all(&options.user_data_dir)
         .await
@@ -540,8 +560,22 @@ pub async fn launch(
     if options.network_proxy.is_some() {
         turn_off_spellcheck(&options.user_data_dir).map_err(io_err(&options.user_data_dir))?;
     }
-    let debug_port = free_port().map_err(io_err(executable))?;
+    let mut taken = Vec::new();
+    for debug_port in ports {
+        match try_launch_on(executable, options, debug_port).await? {
+            Some(engine) => return Ok(engine),
+            None => taken.push(debug_port),
+        }
+    }
+    Err(EngineError::DebugPortsTaken(taken))
+}
 
+/// `launch` on `debug_port`; `None` when another program has the port.
+async fn try_launch_on(
+    executable: &Path,
+    options: &LaunchOptions,
+    debug_port: u16,
+) -> Result<Option<RunningEngine>, EngineError> {
     let mut command = tokio::process::Command::new(executable);
     command
         .arg(format!(
@@ -654,6 +688,7 @@ pub async fn launch(
     let http = reqwest::Client::new();
     let base = format!("http://127.0.0.1:{debug_port}");
     let started = Instant::now();
+    let pid = child.id();
     loop {
         if let Some(status) = child.try_wait().ok().flatten() {
             // Chromium hands a launch over to the instance already using the data
@@ -680,16 +715,27 @@ pub async fn launch(
             let _ = child.kill().await;
             return Err(EngineError::DebugPortTimeout(STARTUP_TIMEOUT));
         }
-        if let Some((engine_version, page_ws_url)) = discover(&http, &base).await {
+        // Only the Engine's own page: whatever else listens on the port isn't
+        // this Engine, which won't get the port now.
+        let holder = pid.map_or(port_holder::Holder::Ours, |pid| {
+            port_holder::holder(debug_port, pid)
+        });
+        if holder == port_holder::Holder::Other {
+            let _ = child.kill().await;
+            return Ok(None);
+        }
+        if holder == port_holder::Holder::Ours
+            && let Some((engine_version, page_ws_url)) = discover(&http, &base).await
+        {
             let devtools_url = devtools_url(debug_port, &page_ws_url);
-            return Ok(RunningEngine {
+            return Ok(Some(RunningEngine {
                 child,
                 engine_version,
                 debug_port,
                 page_ws_url,
                 devtools_url,
                 display,
-            });
+            }));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -1355,6 +1401,106 @@ mod virtual_display {
     #[cfg(not(target_os = "linux"))]
     pub async fn start() -> Result<VirtualDisplay, String> {
         Err("only Linux uses a virtual display".into())
+    }
+}
+
+/// Who listens on a loopback port, from the system's own socket table: the
+/// Engine's browser process is the one that listens on its debugging port.
+mod port_holder {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Holder {
+        /// Nothing listens on the port yet.
+        Nobody,
+        /// The process `pid` does.
+        Ours,
+        /// Another process does.
+        Other,
+    }
+
+    /// Who listens on 127.0.0.1 (or every address) at `port`, relative to `pid`.
+    #[cfg(windows)]
+    pub fn holder(port: u16, pid: u32) -> Holder {
+        use windows::Win32::NetworkManagement::IpHelper::{
+            GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+        };
+        use windows::Win32::Networking::WinSock::AF_INET;
+
+        let table_of = |buffer: Option<&mut Vec<u32>>, size: &mut u32| {
+            let pointer = buffer.map(|b| b.as_mut_ptr().cast::<core::ffi::c_void>());
+            // SAFETY: `size` describes the buffer, or there is none (a size query).
+            unsafe {
+                GetExtendedTcpTable(
+                    pointer,
+                    size,
+                    false,
+                    u32::from(AF_INET.0),
+                    TCP_TABLE_OWNER_PID_LISTENER,
+                    0,
+                )
+            }
+        };
+        let mut size = 0;
+        table_of(None, &mut size);
+        // u32s, so the rows are aligned; room for listeners added meanwhile.
+        let mut buffer = vec![0u32; (size as usize).div_ceil(4) + 256];
+        let mut size = u32::try_from(buffer.len() * 4).unwrap_or(u32::MAX);
+        if table_of(Some(&mut buffer), &mut size) != 0 {
+            return Holder::Nobody;
+        }
+        let table = buffer.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>();
+        // SAFETY: the call filled the buffer with a table of `dwNumEntries` rows.
+        let rows = unsafe {
+            std::slice::from_raw_parts((*table).table.as_ptr(), (*table).dwNumEntries as usize)
+        };
+        let loopback = u32::from_ne_bytes([127, 0, 0, 1]);
+        match rows.iter().find(|row| {
+            u16::from_be(row.dwLocalPort as u16) == port
+                && (row.dwLocalAddr == loopback || row.dwLocalAddr == 0)
+        }) {
+            None => Holder::Nobody,
+            Some(row) if row.dwOwningPid == pid => Holder::Ours,
+            Some(_) => Holder::Other,
+        }
+    }
+
+    /// Who listens on 127.0.0.1 (or every address) at `port`, relative to `pid`.
+    #[cfg(target_os = "linux")]
+    pub fn holder(port: u16, pid: u32) -> Holder {
+        // A listening socket's inode, then whether it's one of `pid`'s files.
+        let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
+            return Holder::Nobody;
+        };
+        let inode = table.lines().skip(1).find_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let (address, hex_port) = fields.get(1)?.split_once(':')?;
+            let listening = *fields.get(3)? == "0A";
+            let ours = u16::from_str_radix(hex_port, 16).ok()? == port
+                && (address == "0100007F" || address == "00000000");
+            (listening && ours).then(|| fields.get(9).map(|inode| inode.to_string()))?
+        });
+        let Some(inode) = inode else {
+            return Holder::Nobody;
+        };
+        let socket = format!("socket:[{inode}]");
+        let held_by_pid = std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|fd| {
+                std::fs::read_link(fd.path())
+                    .is_ok_and(|target| target.as_os_str() == socket.as_str())
+            });
+        if held_by_pid {
+            Holder::Ours
+        } else {
+            Holder::Other
+        }
+    }
+
+    /// Elsewhere (unsupported platforms), the port is taken to be the Engine's.
+    #[cfg(not(any(windows, target_os = "linux")))]
+    pub fn holder(_port: u16, _pid: u32) -> Holder {
+        Holder::Ours
     }
 }
 
