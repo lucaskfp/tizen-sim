@@ -140,6 +140,58 @@ impl WindowControl<'_> {
         }
     }
 
+    /// Moves the window's top left corner to `left`, `top`.
+    async fn move_to(&self, left: i64, top: i64) {
+        match &self.window_id {
+            Some(id) => {
+                let bounds = json!({ "left": left, "top": top });
+                let params = json!({ "windowId": id, "bounds": bounds });
+                cdp_call(self.ws, None, "Browser.setWindowBounds", params).await;
+            }
+            None => {
+                let move_to = format!("moveTo({left}, {top}); 0");
+                self.session.evaluate(&move_to).await.unwrap();
+            }
+        }
+    }
+
+    /// `[left, top, width, height]` of the display's work area, from
+    /// `Screen`'s own getters: in a page of its own where the Session's page
+    /// reports the TV's screen in their place (M63+).
+    async fn work_area(&self) -> Vec<i64> {
+        const AREA: &str =
+            "['availLeft', 'availTop', 'availWidth', 'availHeight'].map(function (n) {
+          return Object.getOwnPropertyDescriptor(Screen.prototype, n).get.call(screen);
+        })";
+        let area = match &self.window_id {
+            Some(_) => {
+                let params = json!({ "url": "about:blank" });
+                let page = cdp_call(self.ws, None, "Target.createTarget", params).await;
+                let id = page["targetId"].as_str().unwrap();
+                let page_ws = format!("{}/{id}", self.ws.rsplit_once('/').unwrap().0);
+                let params = json!({ "expression": AREA, "returnByValue": true });
+                let area = cdp_call(&page_ws, None, "Runtime.evaluate", params).await;
+                let params = json!({ "targetId": id });
+                cdp_call(self.ws, None, "Target.closeTarget", params).await;
+                area["result"]["value"].clone()
+            }
+            None => self.session.evaluate(AREA).await.unwrap(),
+        };
+        serde_json::from_value(area).unwrap()
+    }
+
+    /// `[left, top]` of the whole window.
+    async fn position(&self) -> Value {
+        match &self.window_id {
+            Some(id) => {
+                let params = json!({ "windowId": id });
+                let window = cdp_call(self.ws, None, "Browser.getWindowBounds", params).await;
+                json!([window["bounds"]["left"], window["bounds"]["top"]])
+            }
+            None => self.session.evaluate("[screenX, screenY]").await.unwrap(),
+        }
+    }
+
     /// `[width, height]` of the whole window.
     async fn size(&self) -> Value {
         match &self.window_id {
@@ -191,6 +243,58 @@ async fn a_resized_window_is_snapped_to_the_apps_aspect() {
     }
     assert_eq!(size[0], 800, "{size}");
     assert!(size[1].as_f64().unwrap() < 600.0, "{size}");
+    t.session.stop().await;
+}
+
+#[tokio::test]
+async fn a_snapped_window_stays_within_the_work_area() {
+    if std::env::var_os("TIZEN_SIM_TEST_HEADED").is_none() {
+        // Only a window on a display has a work area to keep to.
+        return;
+    }
+    let t = start("screen");
+    t.session.wait_until_loaded().await.unwrap();
+    let ws = debugger_url(&t.session).await;
+    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await;
+    if window.is_err() && support::profile().version == "3.0" {
+        // M47 centers the App instead of snapping the window.
+        return;
+    }
+    let window = WindowControl {
+        session: &t.session,
+        ws: &ws,
+        window_id: window.ok().map(|window| window["windowId"].clone()),
+    };
+    let area = window.work_area().await;
+    let right = area[0] + area[2];
+    // Small and near the work area's right edge (M56 doesn't move it quite
+    // where asked), snapped to the App's 16:9.
+    window.move_to(right - 900, area[1] + 10).await;
+    window.resize(600, 380).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let left = window.position().await[0].as_i64().unwrap();
+    let width = window.size().await[0].as_i64().unwrap();
+    // Made taller, so its width follows: past the edge, whatever the frame.
+    let height = (right - left + 300) * 9 / 16;
+    assert!(height < area[3] - 20, "no room to try in {area:?}");
+    window.resize(width as u32, height as u32).await;
+    // The new size, then the snapped one.
+    let (mut size, mut resized) = (Value::Null, false);
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        size = window.size().await;
+        resized |= size == json!([width, height]);
+        if resized && size != json!([width, height]) {
+            break;
+        }
+    }
+    assert!(resized, "never {width}x{height}: {size}");
+    assert_ne!(size, json!([width, height]), "not snapped");
+    let position = window.position().await;
+    assert!(
+        position[0].as_i64().unwrap() + size[0].as_i64().unwrap() <= right,
+        "{position} {size} past the work area {area:?}"
+    );
     t.session.stop().await;
 }
 

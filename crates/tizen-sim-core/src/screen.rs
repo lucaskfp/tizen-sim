@@ -19,8 +19,9 @@
 //!   nothing) nor its `positionX`/`positionY` (they only move `screenX`/
 //!   `screenY`) shift it right or down (measured on M56, M63 and M130,
 //!   #57, #65). So elsewhere the window is snapped to the App's aspect once
-//!   the user resizes it. A maximized or full screen window can't be, and
-//!   keeps the App at the top left.
+//!   the user resizes it: once its size stops changing and the mouse button
+//!   is up, and no further than its display's work area (#66). A maximized,
+//!   full screen or tiled window isn't, and keeps the App at the top left.
 //!
 //! Old Engines lack some of the protocol used here, so each part has a
 //! fallback, measured on M47 (protocol 1.1):
@@ -73,6 +74,12 @@ const RESIZE_POLL: Duration = Duration::from_millis(500);
 /// before it is snapped: rounding, such as the GUI's 16:9 box, is left alone.
 const SNAP_TOLERANCE: f64 = 2.0;
 
+/// How far, in CSS px, a window's bounds may start before its work area and
+/// the window still be on it: on Windows, the `Browser` domain counts the
+/// invisible resize borders in them (a maximized M130 window is at -8,-8,
+/// measured).
+const INVISIBLE_BORDER: f64 = 8.0;
+
 /// The scale that fits a `screen`-sized App into a `content`-sized window
 /// area without cropping, up or down.
 pub(crate) fn fit_scale(content: (f64, f64), screen: (u32, u32)) -> f64 {
@@ -97,8 +104,14 @@ fn centered(content: (f64, f64), screen: (u32, u32)) -> (f64, f64) {
 /// The content area a window resized from `before` to `after` is snapped to,
 /// so it holds the App with no leftover space; `None` when it already does.
 /// The side the user dragged is kept and the other follows; when both
-/// changed, the window shrinks around the App.
-fn snap(before: (f64, f64), after: (f64, f64), screen: (u32, u32)) -> Option<(f64, f64)> {
+/// changed, the window shrinks around the App. It grows no larger than its
+/// `room` (see `WorkArea::room`), unless the user made it larger already.
+fn snap(
+    before: (f64, f64),
+    after: (f64, f64),
+    screen: (u32, u32),
+    room: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
     if after.0 < 1.0 || after.1 < 1.0 {
         return None;
     }
@@ -107,14 +120,89 @@ fn snap(before: (f64, f64), after: (f64, f64), screen: (u32, u32)) -> Option<(f6
     if after.0 - width * scale <= SNAP_TOLERANCE && after.1 - height * scale <= SNAP_TOLERANCE {
         return None;
     }
-    let target = if after.1 == before.1 {
+    let shrunk = (width * scale, height * scale);
+    let mut target = if after.1 == before.1 {
         (after.0, after.0 * height / width)
     } else if after.0 == before.0 {
         (after.1 * width / height, after.1)
     } else {
-        (width * scale, height * scale)
+        shrunk
     };
+    if let Some(room) = room {
+        // Shrinking around the App never grows a side, so it is the least
+        // the room can hold it to.
+        let bounds = (
+            target.0.min(room.0.max(shrunk.0)),
+            target.1.min(room.1.max(shrunk.1)),
+        );
+        let scale = fit_scale(bounds, screen);
+        target = (width * scale, height * scale);
+    }
     Some((target.0.round(), target.1.round()))
+}
+
+/// The part of a display windows are maximized to: all of it but the
+/// taskbar, in screen coordinates of CSS px.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct WorkArea {
+    origin: (f64, f64),
+    size: (f64, f64),
+}
+
+impl WorkArea {
+    /// Whether a window of `outer` size spans it, in either direction:
+    /// maximized, full screen, or tiled, such as an Aero Snap half. Measured
+    /// on M56 on Windows: a maximized window is exactly the work area, and
+    /// `resizeTo` would restore it. That a tile spans it exactly is
+    /// **unverified**; a quarter tile doesn't, and is snapped.
+    fn spanned_by(&self, outer: (f64, f64)) -> bool {
+        outer.0 >= self.size.0 - SNAP_TOLERANCE || outer.1 >= self.size.1 - SNAP_TOLERANCE
+    }
+
+    /// The largest content area a window at `position` (its outer top left)
+    /// with `frame` can have without passing the work area's right or bottom
+    /// edge; `None` when the window isn't on it, such as on another display.
+    /// It stops short of the edge by more than `spanned_by` allows, so a
+    /// window grown to it isn't then taken for a tile.
+    fn room(&self, position: (f64, f64), frame: (f64, f64)) -> Option<(f64, f64)> {
+        let end = (self.origin.0 + self.size.0, self.origin.1 + self.size.1);
+        let within = |from: f64, to: f64, at: f64| (from - INVISIBLE_BORDER..to).contains(&at);
+        let short = 2.0 * SNAP_TOLERANCE;
+        (within(self.origin.0, end.0, position.0) && within(self.origin.1, end.1, position.1))
+            .then_some((
+                end.0 - position.0 - frame.0 - short,
+                end.1 - position.1 - frame.1 - short,
+            ))
+    }
+}
+
+/// Whether the primary mouse button is held, as it is while the user drags a
+/// window's edge, from the button's state on the whole desktop. Only known on
+/// Windows (`GetAsyncKeyState`, which reads the physical button: the primary
+/// one is the right when they are swapped); elsewhere taken as released. That
+/// it reads held during a drag of an Engine window's edge is **unverified**.
+fn primary_button_held() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+        // SAFETY: both only read input state and system metrics.
+        unsafe {
+            let primary = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+                VK_RBUTTON
+            } else {
+                VK_LBUTTON
+            };
+            // The high bit is set while the button is down.
+            GetAsyncKeyState(i32::from(primary.0)) < 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// Whether an Engine, by its `/json/version` browser name, draws the App at
@@ -127,13 +215,6 @@ pub(crate) fn draws_at_offset(engine_version: &str) -> bool {
         .and_then(|(_, version)| version.split('.').next())
         .and_then(|major| major.parse::<u32>().ok());
     milestone.is_some_and(|milestone| milestone <= 47)
-}
-
-/// Whether a window of `outer` size fills its display's work area, `avail`:
-/// it is maximized or full screen. Measured on M56: a maximized window is
-/// exactly the work area, and `resizeTo` would restore it.
-fn fills_screen(outer: (f64, f64), avail: (f64, f64)) -> bool {
-    outer.0 >= avail.0 && outer.1 >= avail.1
 }
 
 /// How the App is drawn in the window's content area.
@@ -240,26 +321,49 @@ impl Screen {
 
 /// How the Engine window's size is learned.
 enum WindowSource {
-    /// From the `Browser` domain, by window id.
-    Browser(Value),
-    /// From the page, on Engines without the `Browser` domain.
-    Page,
+    /// From the `Browser` domain, by window id, with the work area of the
+    /// display it opened on: from M63 on, the page reports the TV's screen
+    /// in its place once the metrics override is set (measured on M63 and
+    /// M130), so it can only be measured before. Moved to another display,
+    /// the window is measured against this one's.
+    Browser(Value, Option<WorkArea>),
+    /// From the page, on Engines without the `Browser` domain, which keep
+    /// reporting the display's work area (M56), while the window is
+    /// `on_display`.
+    Page { on_display: bool },
 }
 
 /// The Engine window as last measured.
 struct Window {
     /// Its content area.
     content: (f64, f64),
-    /// Whether it can be resized: neither maximized nor full screen.
+    /// Whether it can be resized: neither maximized, full screen nor tiled.
     resizable: bool,
+    /// How large its content area can grow (`WorkArea::room`).
+    room: Option<(f64, f64)>,
+}
+
+/// The window's outer size and position, read from the page, and its
+/// display's work area, `None` if the Engine doesn't report one.
+fn page_window(page: &Value) -> ((f64, f64), (f64, f64), Option<WorkArea>) {
+    let number = |i: usize| page[i].as_f64();
+    let pair = |i: usize| (number(i).unwrap_or(0.0), number(i + 1).unwrap_or(0.0));
+    let area = match (number(3), number(4), number(5), number(6)) {
+        (Some(width), Some(height), Some(left), Some(top)) => Some(WorkArea {
+            origin: (left, top),
+            size: (width, height),
+        }),
+        _ => None,
+    };
+    (pair(0), pair(7), area)
 }
 
 impl WindowSource {
     /// The window, given its `frame`; `None` while it is minimized (the App
     /// is hidden), when the App keeps its scale for when it's back.
     async fn window(&self, cdp: &Cdp, frame: (f64, f64)) -> Result<Option<Window>, CdpError> {
-        let (width, height, resizable) = match self {
-            WindowSource::Browser(window_id) => {
+        let (outer, position, area, normal) = match self {
+            WindowSource::Browser(window_id, area) => {
                 let window = cdp
                     .call("Browser.getWindowBounds", json!({ "windowId": window_id }))
                     .await?;
@@ -267,32 +371,34 @@ impl WindowSource {
                 if bounds["windowState"] == "minimized" {
                     return Ok(None);
                 }
-                let normal = bounds["windowState"] == "normal";
-                (bounds["width"].as_f64(), bounds["height"].as_f64(), normal)
+                let number = |name: &str| bounds[name].as_f64().unwrap_or(0.0);
+                (
+                    (number("width"), number("height")),
+                    (number("left"), number("top")),
+                    *area,
+                    bounds["windowState"] == "normal",
+                )
             }
-            WindowSource::Page => {
-                let outer = cdp.evaluate(PAGE_WINDOW).await?;
-                if outer[2] == true {
+            WindowSource::Page { on_display } => {
+                let page = cdp.evaluate(PAGE_WINDOW).await?;
+                if page[2] == true {
                     return Ok(None);
                 }
-                let size = |i: usize| outer[i].as_f64();
-                // A work area that can't be read is taken as filled: the
-                // window is left alone rather than pulled out of maximized.
-                let filled = match (size(0), size(1), size(3), size(4)) {
-                    (Some(w), Some(h), Some(avail_w), Some(avail_h)) => {
-                        fills_screen((w, h), (avail_w, avail_h))
-                    }
-                    _ => true,
-                };
-                (size(0), size(1), !filled)
+                let (outer, position, area) = page_window(&page);
+                if *on_display {
+                    // A work area that can't be read is taken as spanned:
+                    // the window is left alone rather than pulled out of
+                    // maximized.
+                    (outer, position, area, area.is_some())
+                } else {
+                    (outer, position, None, true)
+                }
             }
         };
         Ok(Some(Window {
-            content: (
-                width.unwrap_or(0.0) - frame.0,
-                height.unwrap_or(0.0) - frame.1,
-            ),
-            resizable,
+            content: (outer.0 - frame.0, outer.1 - frame.1),
+            resizable: normal && !area.is_some_and(|area| area.spanned_by(outer)),
+            room: area.and_then(|area| area.room(position, frame)),
         }))
     }
 
@@ -310,7 +416,7 @@ impl WindowSource {
             (content.1 + frame.1).round() as i64,
         );
         match self {
-            WindowSource::Browser(window_id) => {
+            WindowSource::Browser(window_id, _) => {
                 cdp.call(
                     "Browser.setWindowBounds",
                     json!({
@@ -321,7 +427,7 @@ impl WindowSource {
                 .await?;
             }
             // An `--app` window may resize itself (measured on M47 and M56).
-            WindowSource::Page => {
+            WindowSource::Page { .. } => {
                 cdp.evaluate(&format!("resizeTo({width}, {height}); 0"))
                     .await?;
             }
@@ -330,15 +436,17 @@ impl WindowSource {
     }
 }
 
-/// The window's outer size, whether the page is hidden, and its display's
-/// work area, from the page. The work area comes from `Screen`'s own getters:
-/// the Shims report the TV's screen in its place.
+/// The window's outer size, whether the page is hidden, its display's work
+/// area (size, then origin) and the window's position, from the page (see
+/// `page_window`). The work area comes from `Screen`'s own getters: the
+/// Shims report the TV's screen in its place.
 const PAGE_WINDOW: &str = "(function () {
   function real(name) {
     var own = Object.getOwnPropertyDescriptor(Screen.prototype, name);
     return own && own.get ? own.get.call(screen) : screen[name];
   }
-  return [outerWidth, outerHeight, document.hidden, real('availWidth'), real('availHeight')];
+  return [outerWidth, outerHeight, document.hidden, real('availWidth'), real('availHeight'),
+    real('availLeft'), real('availTop'), screenX, screenY];
 })()";
 
 /// The Engine's page target: its id (the last part of its debugging
@@ -355,8 +463,8 @@ pub(crate) struct PageTarget<'a> {
 ///
 /// Only the oldest Engines can draw the App off the window's top left
 /// (`draws_at_offset`); for the others the window is snapped to the App's
-/// aspect once the user has resized it, while it is neither maximized nor
-/// full screen (#57, #65).
+/// aspect once the user has resized it, while it is neither maximized, full
+/// screen nor tiled (#57, #65, #66).
 pub(crate) async fn set_up(
     cdp: &Arc<Cdp>,
     target: PageTarget<'_>,
@@ -388,10 +496,28 @@ pub(crate) async fn set_up(
         .call("Browser.getWindowForTarget", window_for_target)
         .await
     {
-        Ok(window) => WindowSource::Browser(window["windowId"].clone()),
+        Ok(window) => {
+            // A headless Engine's screen is virtual, and on Linux smaller
+            // than its window (measured on M130): no work area to keep to.
+            let area = if headed {
+                match cdp.evaluate(PAGE_WINDOW).await {
+                    Ok(page) => {
+                        let (_, _, area) = page_window(&page);
+                        area
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "the display's work area is unknown");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            WindowSource::Browser(window["windowId"].clone(), area)
+        }
         Err(error) => {
             tracing::debug!(%error, "no Browser domain; the window is measured from the page");
-            WindowSource::Page
+            WindowSource::Page { on_display: headed }
         }
     };
     // A window that opens maximized or full screen is left so.
@@ -428,7 +554,7 @@ pub(crate) async fn set_up(
                 Err(CdpError::Closed | CdpError::Connect(_)) => return,
                 // The Browser domain fails once the Engine is going; the page
                 // also fails while it navigates.
-                Err(_) if matches!(source, WindowSource::Browser(_)) => return,
+                Err(_) if matches!(source, WindowSource::Browser(..)) => return,
                 Err(_) => continue,
             };
             let now = window.content;
@@ -439,17 +565,24 @@ pub(crate) async fn set_up(
                 }
                 continue;
             }
-            if now == settled {
+            // A user who pauses mid-drag still holds the button.
+            if now == settled || primary_button_held() {
                 continue;
             }
             let before = std::mem::replace(&mut settled, now);
             if draws_at_offset || !window.resizable {
                 continue;
             }
-            if let Some(snapped) = snap(before, now, resolution.size())
-                && let Err(error) = source.resize(&cdp, frame, snapped).await
-            {
-                tracing::debug!(%error, "could not snap the Engine window to the App");
+            if let Some(snapped) = snap(before, now, resolution.size(), window.room) {
+                match source.resize(&cdp, frame, snapped).await {
+                    // Settled there already: the user may resize it again
+                    // before the next poll sees it, and that resize starts
+                    // from the snapped size.
+                    Ok(()) => settled = snapped,
+                    Err(error) => {
+                        tracing::debug!(%error, "could not snap the Engine window to the App");
+                    }
+                }
             }
         }
     });
@@ -590,22 +723,25 @@ mod tests {
 
     const UHD: (u32, u32) = AppResolution::Uhd.size();
 
+    /// No limit on how far a window may grow.
+    const ANY_ROOM: Option<(f64, f64)> = None;
+
     #[test]
     fn a_window_already_at_the_apps_aspect_is_not_snapped() {
-        assert_eq!(snap((1280.0, 720.0), (960.0, 540.0), UHD), None);
+        assert_eq!(snap((1280.0, 720.0), (960.0, 540.0), UHD, ANY_ROOM), None);
         // Off by a pixel or two from rounding, such as the GUI's 16:9 box.
-        assert_eq!(snap((1280.0, 720.0), (961.0, 540.0), UHD), None);
-        assert_eq!(snap((1280.0, 720.0), (960.0, 542.0), UHD), None);
+        assert_eq!(snap((1280.0, 720.0), (961.0, 540.0), UHD, ANY_ROOM), None);
+        assert_eq!(snap((1280.0, 720.0), (960.0, 542.0), UHD, ANY_ROOM), None);
     }
 
     #[test]
     fn a_window_resized_by_its_width_follows_with_its_height() {
         assert_eq!(
-            snap((1280.0, 720.0), (1600.0, 720.0), UHD),
+            snap((1280.0, 720.0), (1600.0, 720.0), UHD, ANY_ROOM),
             Some((1600.0, 900.0))
         );
         assert_eq!(
-            snap((1280.0, 720.0), (960.0, 720.0), UHD),
+            snap((1280.0, 720.0), (960.0, 720.0), UHD, ANY_ROOM),
             Some((960.0, 540.0))
         );
     }
@@ -613,11 +749,11 @@ mod tests {
     #[test]
     fn a_window_resized_by_its_height_follows_with_its_width() {
         assert_eq!(
-            snap((1280.0, 720.0), (1280.0, 900.0), UHD),
+            snap((1280.0, 720.0), (1280.0, 900.0), UHD, ANY_ROOM),
             Some((1600.0, 900.0))
         );
         assert_eq!(
-            snap((1280.0, 720.0), (1280.0, 540.0), UHD),
+            snap((1280.0, 720.0), (1280.0, 540.0), UHD, ANY_ROOM),
             Some((960.0, 540.0))
         );
     }
@@ -625,33 +761,123 @@ mod tests {
     #[test]
     fn a_window_resized_both_ways_shrinks_to_the_app() {
         assert_eq!(
-            snap((1280.0, 720.0), (800.0, 600.0), UHD),
+            snap((1280.0, 720.0), (800.0, 600.0), UHD, ANY_ROOM),
             Some((800.0, 450.0))
         );
         assert_eq!(
-            snap((1280.0, 720.0), (1500.0, 661.0), UHD),
+            snap((1280.0, 720.0), (1500.0, 661.0), UHD, ANY_ROOM),
             Some((1175.0, 661.0))
         );
         // Whole pixels.
         assert_eq!(
-            snap((1280.0, 720.0), (1001.0, 1000.0), UHD),
+            snap((1280.0, 720.0), (1001.0, 1000.0), UHD, ANY_ROOM),
             Some((1001.0, 563.0))
         );
     }
 
     #[test]
-    fn an_empty_window_is_not_snapped() {
-        assert_eq!(snap((1280.0, 720.0), (0.0, 0.0), UHD), None);
+    fn a_snapped_window_grows_no_further_than_its_room() {
+        // Widened to 1600: its height would follow to 900, but only 800 fit
+        // below it, so both sides stop there.
+        assert_eq!(
+            snap((1280.0, 720.0), (1600.0, 720.0), UHD, Some((3000.0, 800.0))),
+            Some((1422.0, 800.0))
+        );
+        // Made taller with too little room to its right.
+        assert_eq!(
+            snap(
+                (1280.0, 720.0),
+                (1280.0, 900.0),
+                UHD,
+                Some((1400.0, 2000.0))
+            ),
+            Some((1400.0, 788.0))
+        );
+        // Room enough: as without a limit.
+        assert_eq!(
+            snap((1280.0, 720.0), (1600.0, 720.0), UHD, Some((1600.0, 900.0))),
+            Some((1600.0, 900.0))
+        );
     }
 
     #[test]
-    fn a_maximized_or_full_screen_window_fills_the_screen() {
-        // Measured on M56 on a 3440x1440 display with a 48px taskbar.
-        assert!(fills_screen((3440.0, 1392.0), (3440.0, 1392.0)));
-        assert!(fills_screen((3440.0, 1440.0), (3440.0, 1392.0)));
-        assert!(!fills_screen((1296.0, 759.0), (3440.0, 1392.0)));
-        // As wide as the screen, but not as tall.
-        assert!(!fills_screen((3440.0, 759.0), (3440.0, 1392.0)));
+    fn a_window_already_past_its_room_only_shrinks_to_the_app() {
+        // The user left it partly off the screen: the App's 16:9 within the
+        // size they chose, never larger.
+        assert_eq!(
+            snap((1280.0, 720.0), (1600.0, 720.0), UHD, Some((500.0, 300.0))),
+            Some((1280.0, 720.0))
+        );
+    }
+
+    #[test]
+    fn an_empty_window_is_not_snapped() {
+        assert_eq!(snap((1280.0, 720.0), (0.0, 0.0), UHD, ANY_ROOM), None);
+    }
+
+    /// The work area measured on M56 on a 3440x1440 display with a 48px
+    /// taskbar.
+    const WIDE: WorkArea = WorkArea {
+        origin: (0.0, 0.0),
+        size: (3440.0, 1392.0),
+    };
+
+    #[test]
+    fn a_maximized_full_screen_or_tiled_window_spans_the_work_area() {
+        // Maximized: measured on M56.
+        assert!(WIDE.spanned_by((3440.0, 1392.0)));
+        // Full screen.
+        assert!(WIDE.spanned_by((3440.0, 1440.0)));
+        // A half or a column: as tall as the work area, or as wide.
+        assert!(WIDE.spanned_by((1720.0, 1392.0)));
+        assert!(WIDE.spanned_by((3440.0, 696.0)));
+        assert!(!WIDE.spanned_by((1296.0, 759.0)));
+        // Within rounding of it.
+        assert!(WIDE.spanned_by((1720.0, 1391.0)));
+        assert!(!WIDE.spanned_by((1720.0, 1380.0)));
+    }
+
+    #[test]
+    fn a_window_has_room_up_to_the_work_areas_right_and_bottom_edges() {
+        // At 10,10 with a 16x39 frame.
+        assert_eq!(
+            WIDE.room((10.0, 10.0), (16.0, 39.0)),
+            Some((3410.0, 1339.0))
+        );
+        // A work area that doesn't start at 0,0: a display to the left of
+        // the primary one, with a taskbar at the top.
+        let left = WorkArea {
+            origin: (-1920.0, 40.0),
+            size: (1920.0, 1040.0),
+        };
+        assert_eq!(
+            left.room((-1000.0, 100.0), (0.0, 0.0)),
+            Some((996.0, 976.0))
+        );
+    }
+
+    #[test]
+    fn a_window_grown_to_its_room_is_not_taken_for_a_tile() {
+        // Flush with the work area's top, as tall as it may grow.
+        let room = WIDE.room((10.0, 0.0), (16.0, 39.0)).unwrap();
+        assert!(!WIDE.spanned_by((room.0 + 16.0, room.1 + 39.0)));
+    }
+
+    #[test]
+    fn a_window_whose_invisible_borders_start_before_the_work_area_is_on_it() {
+        // Flush with the work area's left edge, on Windows from M63 on.
+        assert_eq!(
+            WIDE.room((-7.0, 10.0), (16.0, 39.0)),
+            Some((3427.0, 1339.0))
+        );
+    }
+
+    #[test]
+    fn a_window_off_the_work_area_has_no_known_room() {
+        // On another display than the one measured.
+        assert_eq!(WIDE.room((3500.0, 10.0), (16.0, 39.0)), None);
+        assert_eq!(WIDE.room((-1000.0, 10.0), (16.0, 39.0)), None);
+        assert_eq!(WIDE.room((10.0, 1400.0), (16.0, 39.0)), None);
     }
 
     #[test]
