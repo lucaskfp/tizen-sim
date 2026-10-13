@@ -169,7 +169,9 @@ async fn a_file_reported_again_unchanged_does_not_reload_again() {
     let mut t = start_folder(folder.path(), |_| {});
     t.session.wait_until_loaded().await.unwrap();
     write(folder.path(), "app.js", "window.scriptVersion = 2;\n");
-    expect_event(&mut t.events, 10, |e| {
+    // The first reload right after load can take seconds while the other
+    // tests' Engines start on a loaded runner (#95), as the others allow.
+    expect_event(&mut t.events, 30, |e| {
         is_hot_reload(e, |h| matches!(h, HotReload::Reloaded))
     })
     .await;
