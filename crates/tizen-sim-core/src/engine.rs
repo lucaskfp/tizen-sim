@@ -742,11 +742,16 @@ async fn discover(http: &reqwest::Client, base: &str) -> Option<(String, String)
     ))
 }
 
+/// A page target's id: the last part of its debugging address.
+pub(crate) fn page_id(page_ws_url: &str) -> &str {
+    page_ws_url.rsplit('/').next().unwrap_or_default()
+}
+
 /// The bundled inspector's address for a page target. `/json/list` gives it
 /// as `devtoolsFrontendUrl`, but with `localhost`, which isn't the origin the
 /// Engine allows (see `launch`).
 fn devtools_url(debug_port: u16, page_ws_url: &str) -> String {
-    let page = page_ws_url.rsplit('/').next().unwrap_or_default();
+    let page = page_id(page_ws_url);
     format!(
         "http://127.0.0.1:{debug_port}/devtools/inspector.html?ws=127.0.0.1:{debug_port}/devtools/page/{page}"
     )

@@ -1024,7 +1024,11 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
             .await
             .map_err(|e| e.to_string())?;
     }
-    let screen = screen::set_up(&cdp, config.resolution, !config.headless)
+    let target = screen::PageTarget {
+        id: engine::page_id(&engine.page_ws_url),
+        engine_version: &engine.engine_version,
+    };
+    let screen = screen::set_up(&cdp, target, config.resolution, !config.headless)
         .await
         .map_err(|e| format!("could not set up the TV screen: {e}"))?;
     let _ = inner.screen.set(screen);

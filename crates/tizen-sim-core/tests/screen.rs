@@ -88,7 +88,7 @@ async fn the_app_is_laid_out_at_1920x1080_whatever_the_window_size() {
 
     let ws = debugger_url(&t.session).await;
     // M47 takes one debugging client per page, the Session's.
-    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", json!({})).await;
+    let window = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await;
     if let Ok(window) = window {
         cdp_call(
             &ws,
@@ -109,6 +109,57 @@ async fn the_app_is_laid_out_at_1920x1080_whatever_the_window_size() {
     );
     let shot = t.session.screenshot().await.unwrap();
     assert_eq!(png_size(&shot), (1920, 1080));
+    // The App's own corners, wherever the Engine drew it in the window (#57).
+    // (Not black: the test's debugging client leaving undoes that on M130.)
+    assert_eq!(pixel(&shot, 50, 50), RED);
+    assert_ne!(pixel(&shot, 150, 50), RED);
+    assert_ne!(pixel(&shot, 1910, 1070), RED);
+    t.session.stop().await;
+}
+
+/// `Browser.getWindowForTarget`'s parameters for the page at `ws_url`.
+fn target(ws_url: &str) -> Value {
+    json!({ "targetId": ws_url.rsplit('/').next().unwrap() })
+}
+
+#[tokio::test]
+async fn a_resized_window_is_snapped_to_the_apps_aspect() {
+    let t = start("screen");
+    t.session.wait_until_loaded().await.unwrap();
+    let ws = debugger_url(&t.session).await;
+    let Ok(window) = try_cdp_call(&ws, None, "Browser.getWindowForTarget", target(&ws)).await
+    else {
+        // Engines without the Browser domain (M47, M56) can't be resized;
+        // M47 centers the App instead (see the test above).
+        return;
+    };
+    let window_id = &window["windowId"];
+    cdp_call(
+        &ws,
+        None,
+        "Browser.setWindowBounds",
+        json!({ "windowId": window_id, "bounds": { "width": 800, "height": 600 } }),
+    )
+    .await;
+    // Too tall for the App's 16:9 by both sides changing: the window keeps
+    // its width and loses the leftover height once it settles.
+    let mut bounds = Value::Null;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let window = cdp_call(
+            &ws,
+            None,
+            "Browser.getWindowBounds",
+            json!({ "windowId": window_id }),
+        )
+        .await;
+        bounds = window["bounds"].clone();
+        if bounds["height"] != 600 {
+            break;
+        }
+    }
+    assert_eq!(bounds["width"], 800, "{bounds}");
+    assert!(bounds["height"].as_f64().unwrap() < 600.0, "{bounds}");
     t.session.stop().await;
 }
 

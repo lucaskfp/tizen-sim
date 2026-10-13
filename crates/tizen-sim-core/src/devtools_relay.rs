@@ -119,7 +119,7 @@ impl DevtoolsRelay {
     /// The bundled inspector's address on the Engine's debugging port, with
     /// its WebSocket pointed at the relay.
     pub(crate) fn inspector_url(&self, debug_port: u16, page_ws_url: &str) -> String {
-        let page = page_ws_url.rsplit('/').next().unwrap_or_default();
+        let page = crate::engine::page_id(page_ws_url);
         format!(
             "http://127.0.0.1:{debug_port}/devtools/inspector.html?ws={}/devtools/page/{page}",
             self.addr
