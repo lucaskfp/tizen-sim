@@ -36,7 +36,20 @@ A Tizen TV runs your App on an old, fixed version of Chromium, with its own plat
 
 ## Getting started
 
-There are no prebuilt releases yet, so build from source. You need:
+Download the latest release from [GitHub Releases](https://github.com/lucaskfp/tizen-sim/releases):
+
+| Platform    | GUI                                                   | CLI                                    |
+| ----------- | ----------------------------------------------------- | -------------------------------------- |
+| Windows x64 | `tizen-sim_<version>_x64-setup.exe` (or the `.msi`)   | `tizen-sim-cli-<version>-windows-x64.zip` |
+| Linux x64   | `tizen-sim_<version>_amd64.AppImage` (or the `.deb`)  | `tizen-sim-cli-<version>-linux-x64.tar.gz` |
+
+- **Windows.** The installers aren't code-signed yet, so SmartScreen warns about an unknown publisher on first run: choose *More info*, then *Run anyway*.
+- **Linux.** Install the system packages in [docs/linux.md](docs/linux.md) for the Engines you use.
+- Engines are downloaded to `~/.tizen-sim/engines` the first time a Version Profile is used; set `TIZEN_SIM_HOME` to keep tizen-sim's data elsewhere.
+
+### Building from source
+
+You need:
 
 - [Rust](https://rustup.rs) (stable). The CLI needs nothing else.
 - [Node.js](https://nodejs.org) 24, for the GUI or for changing the Shims.
@@ -48,7 +61,7 @@ cd tizen-sim
 cargo build --release -p tizen-sim
 ```
 
-The CLI binary is `target/release/tizen-sim`. Engines are downloaded to `~/.tizen-sim/engines` the first time a Version Profile is used; set `TIZEN_SIM_HOME` to keep tizen-sim's data elsewhere.
+The CLI binary is `target/release/tizen-sim`. The GUI's installers come from `npx tauri build` in `crates/tizen-sim-gui`.
 
 ### The CLI
 
@@ -208,4 +221,4 @@ The repo is set up for coding agents. [AGENTS.md](AGENTS.md) is their entry poin
 
 ## License
 
-Licensed under either of MIT or Apache-2.0, at your option, as declared in `Cargo.toml`.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
