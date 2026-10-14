@@ -7,8 +7,14 @@ Releases are cut by [release-please](https://github.com/googleapis/release-pleas
    - `fix`, `perf` and `revert` bump 0.0.**x**;
    - `docs`, `ci`, `build`, `test`, `refactor` and `chore` don't bump the version.
 2. **To release, merge that pull request.** CI doesn't run on it, since GitHub doesn't trigger workflows for what a workflow's token creates, and it only changes versions and the changelog. Merge it with the admin bypass (`gh pr merge <n> --squash --admin`). release-please then tags `v<version>` and drafts the GitHub release, with the changelog as notes.
-3. **`release.yml` builds and attaches** the GUI's installers (NSIS and MSI, AppImage and `.deb`) and the CLI's archives, in about 20 minutes.
-4. **Review the draft and publish it** on the [Releases](https://github.com/lucaskfp/tizen-sim/releases) page, or with `gh release edit v<version> --draft=false`.
+3. **`release.yml` builds and attaches** the GUI's installers (NSIS and MSI, AppImage and `.deb`) and the CLI's archives, in about 20 minutes. Each installer is signed for the GUI's updater (a `.sig` beside it), and `latest.json` lists them.
+4. **Review the draft and publish it** on the [Releases](https://github.com/lucaskfp/tizen-sim/releases) page, or with `gh release edit v<version> --draft=false`. Publishing is what offers the release to installed GUIs: they read `latest.json` from the latest published release.
+
+## The updater's signing key
+
+The installers are signed with a key pair of the updater's own (minisign, not Windows code signing). The public key is in `crates/tizen-sim-gui/tauri.conf.json`; the private key, which has no password, is the repo secret `TAURI_SIGNING_PRIVATE_KEY`, with a backup kept by the maintainer. An installed GUI only takes an update signed with the private key that matches its public key, so a lost private key means every installed copy has to be updated by hand once, to a version with a new public key.
+
+Local `npx tauri build` runs don't sign: the updater artifacts are only turned on in `release.yml` (`createUpdaterArtifacts`).
 
 ## By hand
 

@@ -271,6 +271,57 @@ test("a failed command is shown", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("invalid dev server URL");
 });
 
+/** What the updater reports when the latest release is newer than the GUI. */
+const NEWER_RELEASE = { rid: 7, currentVersion: "0.2.0", version: "0.3.0", rawJson: {} };
+
+test("a newer release is offered, and taking it installs it and restarts the GUI", async () => {
+  const invoked = rustSide({ "plugin:updater|check": NEWER_RELEASE });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /update to 0\.3\.0/i }));
+
+  await waitFor(() => expect(invoked.map((i) => i.cmd)).toContain("plugin:process|restart"));
+  const install = invoked.find((i) => i.cmd === "plugin:updater|download_and_install");
+  expect(install?.args).toMatchObject({ rid: 7 });
+});
+
+test("without a newer release, or when the check fails, no update is offered", async () => {
+  rustSide({ "plugin:updater|check": null });
+  const { unmount } = render(<App />);
+  await waitFor(() => expect(screen.getByText("No App open")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /update to/i })).not.toBeInTheDocument();
+  unmount();
+
+  mockIPC(
+    (cmd) => {
+      if (cmd === "plugin:updater|check") throw "could not fetch a valid release JSON";
+      return [];
+    },
+    { shouldMockEvents: true },
+  );
+  render(<App />);
+  await waitFor(() => expect(screen.getByText("No App open")).toBeInTheDocument());
+  // Offline, the GUI works as before: a failed check isn't a problem to show.
+  expect(screen.queryByRole("button", { name: /update to/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("a failed update is shown", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "plugin:updater|check") return NEWER_RELEASE;
+      if (cmd === "plugin:updater|download_and_install") throw "the signature doesn't match";
+      return [];
+    },
+    { shouldMockEvents: true },
+  );
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /update to 0\.3\.0/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("the signature doesn't match");
+});
+
 /** Has the webview report a monitor of this size until the test ends. */
 function monitor(width: number, height: number) {
   for (const [name, value] of Object.entries({ width, height })) {
