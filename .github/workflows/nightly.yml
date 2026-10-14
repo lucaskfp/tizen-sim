@@ -47,6 +47,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.runner }}
+          # Dispatched on another branch, it only reads main's (see ci.yml).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/cache@v6
         with:
           path: ~/.tizen-sim/engines
