@@ -133,6 +133,9 @@ export function App() {
         </Button>
 
         <div className="ml-auto flex items-center gap-2 text-sm">
+          <span title="Installed version" className="text-muted-foreground">
+            tizen-sim {__TIZEN_SIM_VERSION__}
+          </span>
           <UpdateButton onError={showProblem} />
           {view.appId && <span className="font-medium">{view.appId}</span>}
           {view.adopted && <Badge variant="outline">Started from the CLI</Badge>}
