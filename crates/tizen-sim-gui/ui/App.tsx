@@ -22,8 +22,11 @@ type Panel = "devServer" | "sessions" | null;
 
 const PANEL_ID = "session-panel";
 
+/** A tab of the Log/Network/Diagnostics panel. */
+type SessionPanelTab = "log" | "network" | "diagnostics";
+
 /** The session panel's tabs, each labelled with what it lists. */
-const PANEL_TABS: { value: string; label: (view: SessionView) => string }[] = [
+const SESSION_PANEL_TABS: { value: SessionPanelTab; label: (view: SessionView) => string }[] = [
   { value: "log", label: () => "Log" },
   { value: "network", label: (view) => `Network (${view.network.length})` },
   { value: "diagnostics", label: (view) => `Diagnostics (${view.diagnostics.length})` },
@@ -41,7 +44,7 @@ export function App() {
   const sessionPanel = usePanelLayout();
   const splitArea = useRef<HTMLElement>(null);
   /** The session panel's open tab. */
-  const [tab, setTab] = useState("log");
+  const [tab, setTab] = useState<SessionPanelTab>("log");
   const panelHeader = useRef<HTMLDivElement>(null);
   const panelTabs = useRef<HTMLDivElement>(null);
   const dockButton = useRef<HTMLButtonElement>(null);
@@ -182,7 +185,7 @@ export function App() {
           <Tabs
             id={PANEL_ID}
             value={tab}
-            onValueChange={setTab}
+            onValueChange={(value) => setTab(value as SessionPanelTab)}
             // Grows no further than its share, but gives up the splitter's pixel when the screen is at its
             // minimum; never below MIN_PANEL_PX (panelLayout.ts).
             className={cn("min-h-0 min-w-0 shrink grow-0 gap-0 overflow-hidden", dockedBottom ? "min-h-30" : "min-w-30")}
@@ -196,7 +199,7 @@ export function App() {
                 aria-hidden={!tabsFit || undefined}
                 className={cn("shrink-0", !tabsFit && "invisible absolute")}
               >
-                {PANEL_TABS.map(({ value, label }) => (
+                {SESSION_PANEL_TABS.map(({ value, label }) => (
                   <TabsTrigger key={value} value={value}>
                     {label(view)}
                   </TabsTrigger>
@@ -208,9 +211,9 @@ export function App() {
                   aria-controls={PANEL_ID}
                   className="h-8 min-w-0 rounded-md border bg-background px-2 text-sm"
                   value={tab}
-                  onChange={(e) => setTab(e.target.value)}
+                  onChange={(e) => setTab(e.target.value as SessionPanelTab)}
                 >
-                  {PANEL_TABS.map(({ value, label }) => (
+                  {SESSION_PANEL_TABS.map(({ value, label }) => (
                     <option key={value} value={value}>
                       {label(view)}
                     </option>

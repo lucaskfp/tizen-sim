@@ -1,3 +1,4 @@
+// Whether a row's items fit on it, for layouts that change shape rather than wrap.
 import { type RefObject, useLayoutEffect, useState } from "react";
 
 /**
