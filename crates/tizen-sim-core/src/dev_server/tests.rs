@@ -196,6 +196,31 @@ async fn module_scripts_raise_a_diagnostic_once_on_an_engine_without_es_modules(
     server.stop().await;
 }
 
+/// The web engine specifications say Tizen 5.0 TVs lack Module objects,
+/// though their M63 Engine runs module scripts.
+#[tokio::test]
+async fn module_scripts_raise_a_diagnostic_where_the_tvs_lack_es_modules() {
+    let (bridge, mut messages) = mpsc::unbounded_channel();
+    let setup = ServerSetup {
+        data: json!({}),
+        token: "token".into(),
+        profile: VersionProfile::find("5.0").unwrap(),
+        access_policy: crate::app::AccessPolicy::Warp(vec![]),
+        sandbox_dir: std::env::temp_dir().join("tizen-sim-test-sandbox"),
+    };
+    let files = AppFiles::Bundler(start_bundler().await);
+    let server = DevServer::start(&files, setup, bridge).await.unwrap();
+    get_text(&server, "/").await;
+    let message = messages.try_recv().expect("a Diagnostic");
+    assert_eq!(message.params["code"], "es-modules-unsupported");
+    let text = message.params["message"].as_str().unwrap();
+    assert!(
+        text.contains("Tizen 5.0") && text.contains("unverified"),
+        "{text}"
+    );
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn module_scripts_are_fine_on_an_engine_with_es_modules() {
     let (server, mut messages) = start_proxy(&start_bundler().await, ES_MODULES_MILESTONE).await;

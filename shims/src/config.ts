@@ -28,6 +28,8 @@ interface ProfileConfig {
   apis: { absent: string[]; deprecated: string[] };
   // The media formats these TVs play (see media.ts); null when unknown.
   media: MediaConfig | null;
+  // Web features these TVs lack, and what of each to delete (see features.ts).
+  webFeatures: { name: string; paths: string[] }[];
 }
 
 interface MediaConfig {

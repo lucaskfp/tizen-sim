@@ -10,6 +10,7 @@ use crate::profile::VersionProfile;
 use crate::proxy;
 use crate::sandbox::Sandbox;
 use crate::shim::{self, BOOTSTRAP_PATH, BRIDGE_PATH, SANDBOX_PATH};
+use crate::web_features::WebFeatureCatalog;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
 use axum::http::{Method, StatusCode, header};
@@ -279,19 +280,35 @@ fn add_csp(state: &ServerState, headers: &mut header::HeaderMap) {
 
 /// Injects the bootstrap into an HTML document. First, once per Session,
 /// raises a Diagnostic if the document only starts on Engines with ES modules
-/// and the Session's Engine predates them, as a bundler's dev output does.
+/// and the Session's TVs lack them, as a bundler's dev output does: their
+/// Engine predates ES modules, or the web engine specifications list Module
+/// objects as missing on them (Tizen 5.0, whose M63 Engine runs modules).
 fn rewrite_document(state: &ServerState, html: &[u8]) -> Vec<u8> {
-    if state.profile.milestone < ES_MODULES_MILESTONE
+    let engine_lacks = state.profile.milestone < ES_MODULES_MILESTONE;
+    let page_says_lacking =
+        WebFeatureCatalog::bundled().lacks(&state.profile.version, "Module objects");
+    if (engine_lacks || page_says_lacking)
         && needs_es_modules(html)
         && !state.modules_diagnosed.swap(true, Ordering::SeqCst)
     {
-        let message = format!(
-            "The App loads its scripts as ES modules (<script type=\"module\">), which the \
-             Engine of Tizen {} TVs (Chromium M{}) ignores, so they never run and the App \
-             doesn't start. Serve a legacy build for this Version Profile instead, e.g. with \
-             @vitejs/plugin-legacy or a non-module bundle transpiled to ES5.",
-            state.profile.version, state.profile.milestone
-        );
+        let message = if engine_lacks {
+            format!(
+                "The App loads its scripts as ES modules (<script type=\"module\">), which the \
+                 Engine of Tizen {} TVs (Chromium M{}) ignores, so they never run and the App \
+                 doesn't start. Serve a legacy build for this Version Profile instead, e.g. with \
+                 @vitejs/plugin-legacy or a non-module bundle transpiled to ES5.",
+                state.profile.version, state.profile.milestone
+            )
+        } else {
+            format!(
+                "The App loads its scripts as ES modules (<script type=\"module\">). Samsung's \
+                 web engine specifications list Module objects as unsupported on Tizen {} TVs, \
+                 though their engine is Chromium M{}, which runs them, as this Engine does. \
+                 Whether those TVs run module scripts is unverified; to be safe, serve a legacy \
+                 build for this Version Profile, e.g. with @vitejs/plugin-legacy.",
+                state.profile.version, state.profile.milestone
+            )
+        };
         let _ = state.bridge.send(BridgeMessage {
             method: "diagnostic".into(),
             params: json!({ "code": "es-modules-unsupported", "message": message }),
