@@ -4,6 +4,8 @@ An open-source desktop simulator for **Samsung Tizen TV web apps**, built as a r
 
 A Tizen TV runs your App on an old, fixed version of Chromium, with its own platform APIs, remote control, network rules and video layering. tizen-sim runs your App on the **same Chromium milestone the target TV generation ships** and reproduces what that TV's platform does to it. What you see on the desktop is what you'd see on the TV, without deploying to a device for every change.
 
+![The tizen-sim GUI running a demo App on the Tizen 5.0 Engine (Chromium M63), with the on-screen remote on the left and the Session log below the TV screen](docs/images/gui.png)
+
 - **The TV's browser engine.** Each Version Profile pins the Chromium build its TVs ship, downloaded on first use: Chromium M47 for Tizen 3.0 (2017 TVs) up to Chromium M130 for Tizen 10.0 (2026 TVs).
 - **Platform APIs.** `tizen.*` and `webapis.*` Shims behave as documented, including their errors and privilege checks: calling an API without the privilege your `config.xml` declares throws `SecurityError`, as on the TV.
 - **The remote control.** Remote Keys arrive the way the TV delivers them, with `tizen.tvinputdevice` registration. The platform's own key handling is included, for example holding Back terminates the App.
