@@ -26,6 +26,18 @@ interface ProfileConfig {
   remoteKeys: RemoteKeyConfig[];
   // API members these TVs lack or deprecate (see availability.ts).
   apis: { absent: string[]; deprecated: string[] };
+  // The media formats these TVs play (see media.ts); null when unknown.
+  media: MediaConfig | null;
+}
+
+interface MediaConfig {
+  year: number;
+  // The specification page, under developer.samsung.com/smarttv/develop/.
+  page: string;
+  modelGroups: string[];
+  formats: { containers: string[]; codecs: string[]; music: boolean }[];
+  // A codec only some model groups list, with those groups.
+  someModels: { [codec: string]: string[] };
 }
 
 interface SimConfig {

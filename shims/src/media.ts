@@ -1,44 +1,134 @@
 // Media formats a TV plays and the Engine doesn't: the
 // `media-format-unsupported` Diagnostic.
 //
-// Every year's TV video specifications list H.264 and AAC in MP4 (TV
-// specifications/media-specifications/<year>-tv-video-specifications.html,
-// 2017 to 2026). The Engines up to Tizen 8.0 are Chromium snapshots, built
-// without those codecs: they answer "" to canPlayType, false to
-// MediaSource.isTypeSupported, and fail such a stream with
-// MEDIA_ERR_SRC_NOT_SUPPORTED (measured on every Windows Engine, #105). Their answers
-// are left as they are, since the stream can't play anyway; the Diagnostic
-// tells the developer a TV would play it.
+// What each Version Profile's TVs play comes from Samsung's TV video
+// specifications for that year, one table per model group, and the Music
+// table of the media specifications index (config.profile.media, from
+// crates/tizen-sim-core/data/media.toml). The Engines up to Tizen 8.0 are
+// Chromium snapshots, built without H.264, AAC, HEVC or Dolby audio, and no
+// Engine plays MPEG-TS, AC-3 or E-AC-3 (measured on every Windows Engine,
+// #105). The Engine's own answers are left as they are, since the stream
+// can't play anyway; the Diagnostic tells the developer a TV would play it.
 //
-// Only H.264, AAC and MP4 itself are recognised. Other formats a TV lists,
-// such as HEVC, AC-3 and MPEG-TS, aren't checked yet. A failed stream counts as MP4 by its <source type> or its
-// URL's extension; one served under another name goes unreported.
+// - canPlayType, MediaSource.isTypeSupported and addSourceBuffer: the type
+//   names the container and codecs. Which formats a TV's MSE takes is
+//   documented only for H.264 (up to FHD) and WebM VP9, so for others the
+//   Diagnostic says that is unverified.
+// - A <video>, <audio> or <source> that fails with MEDIA_ERR_SRC_NOT_SUPPORTED:
+//   the format comes from its <source type> or its URL's extension; a stream
+//   served under another name goes unreported.
+// - AVPlay: its streams too, and the adaptive streaming formats AVPlay plays
+//   on a TV (TV guides/multimedia/adaptive-streaming.html): MPEG-DASH (.mpd),
+//   Smooth Streaming (.ism/Manifest) and HLS (.m3u8).
+// - Only formats the year lists count, and only those a type can name: the
+//   containers and codecs below. A format only some model groups list says so.
 
-/** The MP4 MIME types, and the file extensions that stand for them. */
-var MP4_TYPES = ["video/mp4", "audio/mp4", "video/x-m4v", "audio/x-m4a"];
-var MP4_EXTENSIONS: { [extension: string]: string } = { mp4: "video/mp4", m4v: "video/mp4", m4a: "audio/mp4" };
+/** Containers by MIME type; the first type of each is how the Engine is asked about it. */
+var CONTAINER_TYPES: { [container: string]: string[] } = {
+  MP4: ["video/mp4", "audio/mp4", "video/x-m4v", "audio/x-m4a"],
+  MOV: ["video/quicktime"],
+  "3GP": ["video/3gpp", "audio/3gpp", "video/3gpp2", "audio/3gpp2"],
+  MKV: ["video/x-matroska", "audio/x-matroska", "video/matroska", "audio/matroska"],
+  "MPEG-TS": ["video/mp2t"],
+  AVI: ["video/x-msvideo", "video/avi", "video/msvideo"],
+  ASF: ["video/x-ms-asf", "video/x-ms-wmv", "application/vnd.ms-asf"],
+  FLV: ["video/x-flv"],
+  "MPEG-PS": ["video/mpeg"],
+  WebM: ["video/webm", "audio/webm"],
+  MP3: ["audio/mpeg", "audio/mp3"],
+  AAC: ["audio/aac", "audio/aacp", "audio/x-aac"],
+  FLAC: ["audio/flac", "audio/x-flac"],
+  Ogg: ["audio/ogg"],
+  WAV: ["audio/wav", "audio/wave", "audio/x-wav"],
+  WMA: ["audio/x-ms-wma"],
+};
+
+/** Containers by file extension, for a failed stream with no type. */
+var CONTAINER_EXTENSIONS: { [extension: string]: string } = {
+  mp4: "MP4", m4v: "MP4", m4a: "MP4", mov: "MOV", "3gp": "3GP", "3g2": "3GP", mkv: "MKV",
+  ts: "MPEG-TS", tp: "MPEG-TS", trp: "MPEG-TS", m2ts: "MPEG-TS", mts: "MPEG-TS", avi: "AVI",
+  asf: "ASF", wmv: "ASF", flv: "FLV", mpg: "MPEG-PS", mpeg: "MPEG-PS", webm: "WebM",
+  mp3: "MP3", aac: "AAC", flac: "FLAC", ogg: "Ogg", oga: "Ogg", wav: "WAV", wma: "WMA",
+};
 
 /**
- * A codec a TV decodes in MP4: its RFC 6381 prefixes, and a type the Engine
- * is asked about to learn whether it has the codec.
+ * Codecs: their RFC 6381 identifiers (one ending in "." matches as a prefix;
+ * the others alone or followed by "."), and a type that asks the Engine about
+ * the codec alone. Order matters: HE-AAC and MP3 before AAC.
  */
-var TV_CODECS = [
-  { name: "H.264", prefixes: ["avc1.", "avc3."], probe: 'video/mp4; codecs="avc1.42E01E"' },
-  { name: "AAC", prefixes: ["mp4a."], probe: 'audio/mp4; codecs="mp4a.40.2"' },
+var CODECS = [
+  { name: "H.264", ids: ["avc1.", "avc3."], probe: 'video/mp4; codecs="avc1.42E01E"' },
+  { name: "HEVC", ids: ["hev1.", "hvc1."], probe: 'video/mp4; codecs="hev1.1.6.L93.B0"' },
+  { name: "AV1", ids: ["av01."], probe: 'video/mp4; codecs="av01.0.05M.08"' },
+  { name: "VP8", ids: ["vp8"], probe: 'video/webm; codecs="vp8"' },
+  { name: "VP9", ids: ["vp9", "vp09."], probe: 'video/webm; codecs="vp9"' },
+  { name: "MPEG-4 Part 2", ids: ["mp4v.20"], probe: 'video/mp4; codecs="mp4v.20.8"' },
+  { name: "HE-AAC", ids: ["mp4a.40.5", "mp4a.40.29"], probe: 'audio/mp4; codecs="mp4a.40.5"' },
+  { name: "MP3", ids: ["mp3", "mp4a.69", "mp4a.6b", "mp4a.40.34"], probe: "audio/mpeg" },
+  { name: "AAC", ids: ["mp4a.40.", "mp4a.66", "mp4a.67", "mp4a.68"], probe: 'audio/mp4; codecs="mp4a.40.2"' },
+  { name: "AC-3", ids: ["ac-3", "mp4a.a5"], probe: 'audio/mp4; codecs="ac-3"' },
+  { name: "E-AC-3", ids: ["ec-3", "mp4a.a6"], probe: 'audio/mp4; codecs="ec-3"' },
+  { name: "AC-4", ids: ["ac-4"], probe: 'audio/mp4; codecs="ac-4.02.01.01"' },
+  { name: "MPEG-H", ids: ["mhm1", "mha1"], probe: 'audio/mp4; codecs="mhm1.0x0D"' },
+  { name: "Opus", ids: ["opus"], probe: 'audio/webm; codecs="opus"' },
+  { name: "Vorbis", ids: ["vorbis"], probe: 'audio/webm; codecs="vorbis"' },
+  { name: "DTS", ids: ["dtsc", "dtse", "dtsh", "dtsl", "dtsx"], probe: 'audio/mp4; codecs="dtsc"' },
+  { name: "FLAC", ids: ["flac"], probe: "audio/flac" },
+  { name: "LPCM", ids: ["1"], probe: 'audio/wav; codecs="1"' },
+  { name: "WMA", ids: [], probe: "audio/x-ms-wma" },
+];
+
+/** AVPlay's adaptive streaming formats, by how their URLs end. */
+var ADAPTIVE_FORMATS = [
+  { name: "MPEG-DASH", pattern: /\.mpd$/i },
+  { name: "Smooth Streaming", pattern: /\.ism\/manifest$/i },
+  { name: "HLS", pattern: /\.m3u8$/i },
 ];
 
 var nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
 var reported: { [key: string]: boolean } = {};
 
-/** An MP4 format, with the codecs it names (none when only the container is known). */
-interface TvFormat {
+/** A container and the codecs a type names (none when it names only the container). */
+interface NamedFormat {
+  container: string;
   codecs: string[];
 }
 
-/** The format `mime` names, or null when it isn't MP4 or names a codec not recognised here. */
-function tvFormat(mime: string): TvFormat | null {
+function engineCanPlay(mime: string): boolean {
+  return nativeCanPlayType.call(document.createElement("video"), mime) !== "";
+}
+
+function containerOf(mime: string): string | null {
+  var type = mime.replace(/\s/g, "").toLowerCase();
+  for (var container in CONTAINER_TYPES) {
+    if (CONTAINER_TYPES.hasOwnProperty(container) && CONTAINER_TYPES[container].indexOf(type) >= 0) {
+      return container;
+    }
+  }
+  return null;
+}
+
+function codecNamed(id: string): string | null {
+  var lowered = id.toLowerCase();
+  for (var i = 0; i < CODECS.length; i++) {
+    for (var j = 0; j < CODECS[i].ids.length; j++) {
+      var known = CODECS[i].ids[j];
+      var matches = known.charAt(known.length - 1) === "."
+        ? lowered.indexOf(known) === 0
+        : lowered === known || lowered.indexOf(known + ".") === 0;
+      if (matches) {
+        return CODECS[i].name;
+      }
+    }
+  }
+  return null;
+}
+
+/** The format a MIME type names, or null when it names something not recognised here. */
+function namedFormat(mime: string): NamedFormat | null {
   var parts = String(mime).split(";");
-  if (MP4_TYPES.indexOf(parts[0].replace(/\s/g, "").toLowerCase()) < 0) {
+  var container = containerOf(parts[0]);
+  if (!container) {
     return null;
   }
   var codecs: string[] = [];
@@ -47,9 +137,9 @@ function tvFormat(mime: string): TvFormat | null {
     if (!parameter) {
       continue;
     }
-    var listed = parameter[1].split(",");
-    for (var j = 0; j < listed.length; j++) {
-      var name = codecName(listed[j].replace(/\s/g, ""));
+    var ids = parameter[1].split(",");
+    for (var j = 0; j < ids.length; j++) {
+      var name = codecNamed(ids[j].replace(/\s/g, ""));
       if (!name) {
         return null;
       }
@@ -58,83 +148,205 @@ function tvFormat(mime: string): TvFormat | null {
       }
     }
   }
-  return { codecs: codecs };
+  return { container: container, codecs: codecs };
 }
 
-function codecName(codec: string): string | null {
-  for (var i = 0; i < TV_CODECS.length; i++) {
-    for (var j = 0; j < TV_CODECS[i].prefixes.length; j++) {
-      if (codec.toLowerCase().indexOf(TV_CODECS[i].prefixes[j]) === 0) {
-        return TV_CODECS[i].name;
-      }
+/** The codecs the year lists in `container`. */
+function codecsListedIn(container: string): string[] {
+  var formats = config.profile.media!.formats;
+  var codecs: string[] = [];
+  for (var i = 0; i < formats.length; i++) {
+    if (formats[i].containers.indexOf(container) >= 0) {
+      codecs = codecs.concat(formats[i].codecs);
     }
   }
-  return null;
+  return codecs;
+}
+
+/** The model groups that list `codec`, or null when every group does. */
+function groupsListing(codec: string): string[] | null {
+  var some = config.profile.media!.someModels;
+  return some.hasOwnProperty(codec) ? some[codec] : null;
 }
 
 /**
- * The codecs of `format` the Engine lacks; for a bare container, those of
- * H.264 and AAC it lacks.
+ * Which of the year's model groups play `format`: "all", the groups, or null
+ * when no model does. Every codec it names must be listed in its container; a
+ * bare container plays on the models that play any codec in it.
  */
-function missingCodecs(format: TvFormat): string[] {
+function modelsPlaying(format: NamedFormat): "all" | string[] | null {
+  var listed = codecsListedIn(format.container);
+  if (!listed.length) {
+    return null;
+  }
+  var codecs = format.codecs.length ? format.codecs : listed;
+  var models: "all" | string[] = format.codecs.length ? "all" : [];
+  for (var i = 0; i < codecs.length; i++) {
+    if (listed.indexOf(codecs[i]) < 0) {
+      return null;
+    }
+    var groups = groupsListing(codecs[i]);
+    if (format.codecs.length) {
+      if (groups) {
+        models = models === "all" ? groups : intersect(models as string[], groups);
+      }
+    } else if (!groups) {
+      return "all";
+    } else {
+      models = union(models as string[], groups);
+    }
+  }
+  return models;
+}
+
+function intersect(a: string[], b: string[]): string[] {
+  var both: string[] = [];
+  for (var i = 0; i < a.length; i++) {
+    if (b.indexOf(a[i]) >= 0) {
+      both.push(a[i]);
+    }
+  }
+  return both;
+}
+
+function union(a: string[], b: string[]): string[] {
+  var either = a.slice();
+  for (var i = 0; i < b.length; i++) {
+    if (either.indexOf(b[i]) < 0) {
+      either.push(b[i]);
+    }
+  }
+  return either;
+}
+
+/** What the Engine lacks of `codecs` in `container`: the container itself, or the codecs. */
+function engineLacks(container: string, codecs: string[]): string[] {
+  if (!engineCanPlay(CONTAINER_TYPES[container][0])) {
+    return [container];
+  }
   var missing: string[] = [];
-  for (var i = 0; i < TV_CODECS.length; i++) {
-    var codec = TV_CODECS[i];
-    var used = !format.codecs.length || format.codecs.indexOf(codec.name) >= 0;
-    if (used && nativeCanPlayType.call(document.createElement("video"), codec.probe) === "") {
-      missing.push(codec.name);
+  for (var i = 0; i < CODECS.length; i++) {
+    if (codecs.indexOf(CODECS[i].name) >= 0 && !engineCanPlay(CODECS[i].probe)) {
+      missing.push(CODECS[i].name);
     }
   }
   return missing;
 }
 
+function formatName(format: NamedFormat): string {
+  return format.codecs.length ? format.codecs.join("/") + " in " + format.container : format.container;
+}
+
+/** "a, b and c" */
+function inWords(names: string[]): string {
+  return names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0];
+}
+
+/** "the Engine of this Version Profile (Chromium M108) has no X" */
+function engineHasNo(missing: string[]): string {
+  return "the Engine of this Version Profile (Chromium M" + config.profile.milestone + ")" +
+    (missing.length ? " has no " + inWords(missing) : " can't play it");
+}
+
+function sourcePage(): string {
+  return " (TV " + config.profile.media!.page + ")";
+}
+
+var CHECK_ELSEWHERE = " Check it on a TV, or on a Version Profile whose Engine plays it.";
+
+/** Raises the Diagnostic once per `key`. */
+function report(key: string, message: string) {
+  if (!reported[key]) {
+    reported[key] = true;
+    raiseDiagnostic("media-format-unsupported", message);
+  }
+}
+
 /**
- * Raises the Diagnostic if the Engine lacks a codec of `format`, once per
- * format and `source`: the API the App called, or the stream's URL.
- * `attempt` says what the App did.
+ * For a type the Engine refused: reports it if the year's TVs play it.
+ * `attempt` says what the App did; `source` is the API or the stream's URL.
  */
-function reportUnplayable(format: TvFormat, attempt: string, source: string) {
-  var missing = missingCodecs(format);
-  var key = source + " " + format.codecs.join("/");
-  if (!missing.length || reported[key]) {
+function reportRefusedType(mime: string, attempt: string, source: string) {
+  if (!config.profile.media) {
     return;
   }
-  reported[key] = true;
-  var engine = "the Engine of this Version Profile (Chromium M" + config.profile.milestone + ") has no " +
-    missing.join(" and ") + ". A Tizen " + config.profile.version + " TV plays ";
-  raiseDiagnostic(
-    "media-format-unsupported",
-    attempt + ": " + engine +
-      (format.codecs.length
-        ? format.codecs.join("/") + " in MP4. Check this stream on a TV, or on a Version Profile whose Engine plays it."
-        : "H.264 and AAC in MP4, so if this stream uses them, check it on a TV or on a Version Profile whose Engine plays it."),
+  var format = namedFormat(mime);
+  var models = format ? modelsPlaying(format) : null;
+  if (!format || !models) {
+    return;
+  }
+  var name = formatName(format);
+  var version = config.profile.version;
+  var tvs = models === "all"
+    ? "Tizen " + version + " TVs play " + name
+    : "Only some Tizen " + version + " TV models (" + models.length + " of " +
+      config.profile.media!.modelGroups.length + " model groups) play " + name;
+  // The MSE section documents H.264 and WebM VP9 only.
+  var documentedForMse = format.codecs.length > 0 && !(format.codecs.join(",") + ",").replace(/(H\.264|AAC|VP9),/g, "");
+  var mse = source === "isTypeSupported" || source === "addSourceBuffer";
+  report(
+    source + " " + name,
+    attempt + ": " + engineHasNo(engineLacks(format.container, format.codecs)) + ". " + tvs + sourcePage() + "." +
+      (mse && !documentedForMse ? " Whether a TV's MSE takes it is unverified." : "") + CHECK_ELSEWHERE,
   );
 }
 
-/** A media URL's MP4 type, from its file extension. */
-function mp4TypeOf(url: string): string | null {
+/** For a <video>, <audio> or <source> that failed (AVPlay's too): reports a format the Engine can't play. */
+function reportMediaError(element: HTMLElement) {
+  if (!config.profile.media) {
+    return;
+  }
+  var url = (element as any).currentSrc || (element as any).src || "";
+  var mime = element instanceof HTMLSourceElement ? element.type : "";
+  if (mime) {
+    reportRefusedType(mime, "The Engine can't play " + url, url);
+    return;
+  }
   var path = String(url).split(/[?#]/)[0];
   var extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  return MP4_EXTENSIONS.hasOwnProperty(extension) ? MP4_EXTENSIONS[extension] : null;
+  var container = CONTAINER_EXTENSIONS.hasOwnProperty(extension) ? CONTAINER_EXTENSIONS[extension] : null;
+  if (!container || !modelsPlaying({ container: container, codecs: [] })) {
+    return;
+  }
+  // The stream's codecs are unknown: name those of the year's the Engine lacks.
+  var missing = engineLacks(container, codecsListedIn(container));
+  if (!missing.length) {
+    return;
+  }
+  var lacksContainer = missing[0] === container;
+  report(
+    url,
+    "The Engine can't play " + url + ": " + engineHasNo(missing) + ". Tizen " + config.profile.version + " TVs play " +
+      (lacksContainer ? container : inWords(missing) + " in " + container) + sourcePage() +
+      (lacksContainer ? "." + CHECK_ELSEWHERE : ", so if this stream uses them, check it on a TV, or on a Version Profile whose Engine plays it."),
+  );
 }
 
-/** For a <video>, <audio> or <source> that failed (AVPlay's too): reports an MP4 stream the Engine can't decode. */
-function reportMediaError(element: HTMLElement) {
-  var url = (element as any).currentSrc || (element as any).src || "";
-  var mime = (element instanceof HTMLSourceElement && element.type) || mp4TypeOf(url);
-  var format = mime ? tvFormat(mime) : null;
-  if (format) {
-    reportUnplayable(format, "The Engine can't play " + url, url);
+/** For an AVPlay stream the Engine didn't play: reports an adaptive streaming format AVPlay plays on a TV. */
+function reportAdaptiveStream(url: string) {
+  var path = String(url).split(/[?#]/)[0];
+  for (var i = 0; i < ADAPTIVE_FORMATS.length; i++) {
+    var name = ADAPTIVE_FORMATS[i].name;
+    if (ADAPTIVE_FORMATS[i].pattern.test(path)) {
+      report(
+        url,
+        "AVPlay can't play " + url + " here: " + engineHasNo([name]) + ", so the Video Plane shows a test pattern. " +
+          "On a TV AVPlay plays " + name + " (TV guides/multimedia/adaptive-streaming.html). Check it on a TV.",
+      );
+      return;
+    }
   }
 }
 
 function installMediaChecks() {
+  if (!config.profile.media) {
+    return;
+  }
   // canPlayType and isTypeSupported: an App deciding what to play.
   HTMLMediaElement.prototype.canPlayType = function (this: HTMLMediaElement, mime: string) {
     var answer = nativeCanPlayType.call(this, mime);
-    var format = answer === "" ? tvFormat(mime) : null;
-    if (format) {
-      reportUnplayable(format, "canPlayType('" + mime + "') answered \"\"", "canPlayType");
+    if (answer === "") {
+      reportRefusedType(mime, "canPlayType('" + mime + "') answered \"\"", "canPlayType");
     }
     return answer;
   };
@@ -143,9 +355,8 @@ function installMediaChecks() {
     var nativeIsTypeSupported = MediaSourceClass.isTypeSupported;
     MediaSourceClass.isTypeSupported = function (mime: string) {
       var answer = nativeIsTypeSupported.call(MediaSourceClass, mime);
-      var format = answer ? null : tvFormat(mime);
-      if (format) {
-        reportUnplayable(format, "MediaSource.isTypeSupported('" + mime + "') answered false", "isTypeSupported");
+      if (!answer) {
+        reportRefusedType(mime, "MediaSource.isTypeSupported('" + mime + "') answered false", "isTypeSupported");
       }
       return answer;
     };
@@ -154,10 +365,7 @@ function installMediaChecks() {
       try {
         return nativeAddSourceBuffer.call(this, mime);
       } catch (e) {
-        var format = tvFormat(mime);
-        if (format) {
-          reportUnplayable(format, "MediaSource.addSourceBuffer('" + mime + "') failed", "addSourceBuffer");
-        }
+        reportRefusedType(mime, "MediaSource.addSourceBuffer('" + mime + "') failed", "addSourceBuffer");
         throw e;
       }
     };

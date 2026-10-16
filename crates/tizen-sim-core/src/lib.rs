@@ -12,6 +12,7 @@ mod elf_exports;
 pub mod engine;
 mod es_modules;
 pub mod home;
+pub mod media;
 pub mod network;
 pub mod profile;
 mod proxy;
