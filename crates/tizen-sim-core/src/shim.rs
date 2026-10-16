@@ -76,6 +76,7 @@ pub fn session_data(
             "remoteKeys": remote_keys,
             "apis": crate::apis::ApiCatalog::bundled().for_version(&profile.version),
             "media": crate::media::MediaCatalog::bundled().for_version(&profile.version),
+            "webFeatures": crate::web_features::WebFeatureCatalog::bundled().removed_on(&profile.version),
         },
     })
 }

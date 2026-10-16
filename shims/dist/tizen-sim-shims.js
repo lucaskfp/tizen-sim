@@ -3034,6 +3034,47 @@ function formatTime(ms) {
         }
     }
 })();
+function removeMissingFeatures() {
+    var missing = config.profile.webFeatures;
+    for (var i = 0; i < missing.length; i++) {
+        for (var j = 0; j < missing[i].paths.length; j++) {
+            removePath(missing[i].paths[j]);
+        }
+    }
+}
+function removePath(path) {
+    var parts = path.split(".");
+    var owner = window;
+    for (var i = 0; i < parts.length - 1; i++) {
+        owner = owner[parts[i]];
+        if (owner == null) {
+            return;
+        }
+    }
+    var last = parts[parts.length - 1];
+    if (last.charAt(last.length - 1) === "*") {
+        var prefix = last.slice(0, -1);
+        var names = Object.getOwnPropertyNames(owner);
+        for (var k = 0; k < names.length; k++) {
+            if (names[k].indexOf(prefix) === 0) {
+                deleteMember(owner, names[k]);
+            }
+        }
+        return;
+    }
+    for (var level = owner; level; level = Object.getPrototypeOf(level)) {
+        deleteMember(level, last);
+    }
+}
+function deleteMember(owner, name) {
+    if (Object.prototype.hasOwnProperty.call(owner, name)) {
+        try {
+            delete owner[name];
+        }
+        catch (e) {
+        }
+    }
+}
 window.tizen = {
     WebAPIException: WebAPIException,
     WebAPIError: WebAPIError,
@@ -3045,4 +3086,5 @@ window.tizen = {
 warnOnDeprecated("tizen");
 installMediaChecks();
 config.installWebapis = installWebapis;
+removeMissingFeatures();
 })();
