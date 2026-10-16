@@ -63,6 +63,7 @@ When the generic Tizen docs and the Samsung TV guides disagree, the TV guide des
 | AVPlay | `guides/multimedia/media-playback/using-avplay.html` |
 | Video/audio elements, adaptive streaming | `guides/multimedia/media-playback/using-video-elements.html`, `guides/multimedia/adaptive-streaming.html` |
 | Certification test cases (App requirements are out of scope; read it only for platform facts it states, e.g. what the Exit key does) | `development-checklist/mandatory-features.html`, `development-checklist/common.html` |
+| Media formats per TV year (containers, codecs, MSE limits) | `specifications/media-specifications.html`, per year at `specifications/media-specifications/<year>-tv-video-specifications.html` |
 | Web engine (Chromium milestone) per TV year | `specifications/web-engine-specifications.html` |
 | General specs (app resolution) | `specifications/general-specifications.html` |
 | Samsung Product API (`webapis.*`) | `api-references/samsung-product-api-references.html`, modules at `api-references/samsung-product-api-references/<module>-api.html` |

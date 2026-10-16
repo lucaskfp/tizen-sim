@@ -259,7 +259,7 @@ pub fn has_xvfb() -> bool {
         .is_ok()
 }
 
-/// The RGB colour of a pixel of a PNG screenshot.
+/// Whether two colours are about the same.
 pub fn near(actual: [u8; 3], expected: [u8; 3]) -> bool {
     actual
         .iter()
@@ -280,6 +280,7 @@ pub async fn eventually_pixel(session: &Session, x: u32, y: u32, expected: [u8; 
     panic!("the screen at ({x}, {y}) never became {expected:?}; last {last:?}");
 }
 
+/// The RGB colour of a pixel of a PNG screenshot.
 pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().unwrap();

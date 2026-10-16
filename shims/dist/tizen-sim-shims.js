@@ -2015,17 +2015,11 @@ function installWebapis() {
 var MP4_TYPES = ["video/mp4", "audio/mp4", "video/x-m4v", "audio/x-m4a"];
 var MP4_EXTENSIONS = { mp4: "video/mp4", m4v: "video/mp4", m4a: "audio/mp4" };
 var TV_CODECS = [
-    { prefix: "avc1.", name: "H.264" },
-    { prefix: "avc3.", name: "H.264" },
-    { prefix: "mp4a.", name: "AAC" },
+    { name: "H.264", prefixes: ["avc1.", "avc3."], probe: 'video/mp4; codecs="avc1.42E01E"' },
+    { name: "AAC", prefixes: ["mp4a."], probe: 'audio/mp4; codecs="mp4a.40.2"' },
 ];
-var H264_PROBE = 'video/mp4; codecs="avc1.42E01E"';
-var AAC_PROBE = 'audio/mp4; codecs="mp4a.40.2"';
 var nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
 var reported = {};
-function engineCanPlay(mime) {
-    return nativeCanPlayType.call(document.createElement("video"), mime) !== "";
-}
 function tvFormat(mime) {
     var parts = String(mime).split(";");
     if (MP4_TYPES.indexOf(parts[0].replace(/\s/g, "").toLowerCase()) < 0) {
@@ -2048,36 +2042,42 @@ function tvFormat(mime) {
             }
         }
     }
-    return codecs.length ? codecs.join("/") + " in MP4" : "MP4";
+    return { codecs: codecs };
 }
 function codecName(codec) {
     for (var i = 0; i < TV_CODECS.length; i++) {
-        if (codec.toLowerCase().indexOf(TV_CODECS[i].prefix) === 0) {
-            return TV_CODECS[i].name;
+        for (var j = 0; j < TV_CODECS[i].prefixes.length; j++) {
+            if (codec.toLowerCase().indexOf(TV_CODECS[i].prefixes[j]) === 0) {
+                return TV_CODECS[i].name;
+            }
         }
     }
     return null;
 }
-function missingCodecs() {
+function missingCodecs(format) {
     var missing = [];
-    if (!engineCanPlay(H264_PROBE)) {
-        missing.push("H.264");
+    for (var i = 0; i < TV_CODECS.length; i++) {
+        var codec = TV_CODECS[i];
+        var used = !format.codecs.length || format.codecs.indexOf(codec.name) >= 0;
+        if (used && nativeCanPlayType.call(document.createElement("video"), codec.probe) === "") {
+            missing.push(codec.name);
+        }
     }
-    if (!engineCanPlay(AAC_PROBE)) {
-        missing.push("AAC");
-    }
-    return missing.join(" and ");
+    return missing;
 }
-function reportUnplayable(format, what, key) {
-    var missing = missingCodecs();
-    if (!missing || reported[key + " " + format]) {
+function reportUnplayable(format, attempt, source) {
+    var missing = missingCodecs(format);
+    var key = source + " " + format.codecs.join("/");
+    if (!missing.length || reported[key]) {
         return;
     }
-    reported[key + " " + format] = true;
-    raiseDiagnostic("media-format-unsupported", what + ": the Engine of this Version Profile (Chromium M" + config.profile.milestone +
-        ") has no " + missing + ". A Tizen " + config.profile.version + " TV plays " +
-        (format === "MP4" ? "H.264 and AAC in MP4" : format) +
-        ". Check this stream on a TV, or on a Version Profile whose Engine plays it.");
+    reported[key] = true;
+    var engine = "the Engine of this Version Profile (Chromium M" + config.profile.milestone + ") has no " +
+        missing.join(" and ") + ". A Tizen " + config.profile.version + " TV plays ";
+    raiseDiagnostic("media-format-unsupported", attempt + ": " + engine +
+        (format.codecs.length
+            ? format.codecs.join("/") + " in MP4. Check this stream on a TV, or on a Version Profile whose Engine plays it."
+            : "H.264 and AAC in MP4, so if this stream uses them, check it on a TV or on a Version Profile whose Engine plays it."));
 }
 function mp4TypeOf(url) {
     var path = String(url).split(/[?#]/)[0];

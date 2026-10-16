@@ -6,41 +6,38 @@
 // 2017 to 2026). The Engines up to Tizen 8.0 are Chromium snapshots, built
 // without those codecs: they answer "" to canPlayType, false to
 // MediaSource.isTypeSupported, and fail such a stream with
-// MEDIA_ERR_SRC_NOT_SUPPORTED (measured on every Engine, #105). Their answers
+// MEDIA_ERR_SRC_NOT_SUPPORTED (measured on every Windows Engine, #105). Their answers
 // are left as they are, since the stream can't play anyway; the Diagnostic
 // tells the developer a TV would play it.
 //
 // Only H.264, AAC and MP4 itself are recognised. Other formats a TV lists
 // (HEVC, AC-3, MPEG-TS...) aren't checked: which of them each TV model
-// decodes varies.
+// decodes varies. A failed stream counts as MP4 by its <source type> or its
+// URL's extension; one served under another name goes unreported.
 
 /** The MP4 MIME types, and the file extensions that stand for them. */
 var MP4_TYPES = ["video/mp4", "audio/mp4", "video/x-m4v", "audio/x-m4a"];
 var MP4_EXTENSIONS: { [extension: string]: string } = { mp4: "video/mp4", m4v: "video/mp4", m4a: "audio/mp4" };
 
-/** A codec a TV decodes, as an RFC 6381 prefix and its name. */
+/**
+ * A codec a TV decodes in MP4: its RFC 6381 prefixes, and a type the Engine
+ * is asked about to learn whether it has the codec.
+ */
 var TV_CODECS = [
-  { prefix: "avc1.", name: "H.264" },
-  { prefix: "avc3.", name: "H.264" },
-  { prefix: "mp4a.", name: "AAC" },
+  { name: "H.264", prefixes: ["avc1.", "avc3."], probe: 'video/mp4; codecs="avc1.42E01E"' },
+  { name: "AAC", prefixes: ["mp4a."], probe: 'audio/mp4; codecs="mp4a.40.2"' },
 ];
-
-/** What the Engine plays of the formats above, to name what it lacks. */
-var H264_PROBE = 'video/mp4; codecs="avc1.42E01E"';
-var AAC_PROBE = 'audio/mp4; codecs="mp4a.40.2"';
 
 var nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
 var reported: { [key: string]: boolean } = {};
 
-function engineCanPlay(mime: string): boolean {
-  return nativeCanPlayType.call(document.createElement("video"), mime) !== "";
+/** An MP4 format, with the codecs it names (none when only the container is known). */
+interface TvFormat {
+  codecs: string[];
 }
 
-/**
- * The TV format `mime` names, e.g. "H.264/AAC in MP4", or null when it isn't
- * MP4 or names a codec not recognised here.
- */
-function tvFormat(mime: string): string | null {
+/** The format `mime` names, or null when it isn't MP4 or names a codec not recognised here. */
+function tvFormat(mime: string): TvFormat | null {
   var parts = String(mime).split(";");
   if (MP4_TYPES.indexOf(parts[0].replace(/\s/g, "").toLowerCase()) < 0) {
     return null;
@@ -62,47 +59,56 @@ function tvFormat(mime: string): string | null {
       }
     }
   }
-  return codecs.length ? codecs.join("/") + " in MP4" : "MP4";
+  return { codecs: codecs };
 }
 
 function codecName(codec: string): string | null {
   for (var i = 0; i < TV_CODECS.length; i++) {
-    if (codec.toLowerCase().indexOf(TV_CODECS[i].prefix) === 0) {
-      return TV_CODECS[i].name;
+    for (var j = 0; j < TV_CODECS[i].prefixes.length; j++) {
+      if (codec.toLowerCase().indexOf(TV_CODECS[i].prefixes[j]) === 0) {
+        return TV_CODECS[i].name;
+      }
     }
   }
   return null;
 }
 
-/** The codecs a TV plays in MP4 that the Engine can't, e.g. "H.264 and AAC". */
-function missingCodecs(): string {
+/**
+ * The codecs of `format` the Engine lacks; for a bare container, those of
+ * H.264 and AAC it lacks.
+ */
+function missingCodecs(format: TvFormat): string[] {
   var missing: string[] = [];
-  if (!engineCanPlay(H264_PROBE)) {
-    missing.push("H.264");
+  for (var i = 0; i < TV_CODECS.length; i++) {
+    var codec = TV_CODECS[i];
+    var used = !format.codecs.length || format.codecs.indexOf(codec.name) >= 0;
+    if (used && nativeCanPlayType.call(document.createElement("video"), codec.probe) === "") {
+      missing.push(codec.name);
+    }
   }
-  if (!engineCanPlay(AAC_PROBE)) {
-    missing.push("AAC");
-  }
-  return missing.join(" and ");
+  return missing;
 }
 
 /**
- * Raises the Diagnostic once per format and `key` (the API, or the stream's
- * URL), if the Engine lacks a codec a TV would use for it. `what` says what
- * the App tried.
+ * Raises the Diagnostic if the Engine lacks a codec of `format`, once per
+ * format and `source`: the API the App called, or the stream's URL.
+ * `attempt` says what the App did.
  */
-function reportUnplayable(format: string, what: string, key: string) {
-  var missing = missingCodecs();
-  if (!missing || reported[key + " " + format]) {
+function reportUnplayable(format: TvFormat, attempt: string, source: string) {
+  var missing = missingCodecs(format);
+  var key = source + " " + format.codecs.join("/");
+  if (!missing.length || reported[key]) {
     return;
   }
-  reported[key + " " + format] = true;
+  reported[key] = true;
+  var engine = "the Engine of this Version Profile (Chromium M" + config.profile.milestone + ") has no " +
+    missing.join(" and ") + ". A Tizen " + config.profile.version + " TV plays ";
   raiseDiagnostic(
     "media-format-unsupported",
-    what + ": the Engine of this Version Profile (Chromium M" + config.profile.milestone +
-      ") has no " + missing + ". A Tizen " + config.profile.version + " TV plays " +
-      (format === "MP4" ? "H.264 and AAC in MP4" : format) +
-      ". Check this stream on a TV, or on a Version Profile whose Engine plays it.",
+    attempt + ": " + engine +
+      (format.codecs.length
+        ? format.codecs.join("/") + " in MP4. Check this stream on a TV, or on a Version Profile whose Engine plays it."
+        : "H.264 and AAC in MP4, so if this stream uses them, check it on a TV or on a Version Profile whose Engine plays it."),
   );
 }
 

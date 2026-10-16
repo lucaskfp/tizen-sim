@@ -19,8 +19,9 @@ const PATTERN_GREY: [u8; 3] = [0xc0, 0xc0, 0xc0];
 const MP4_H264_AAC: &str = r#"video/mp4; codecs="avc1.42E01E, mp4a.40.2""#;
 
 /// Chrome for Testing (M113 on) is built with H.264 and AAC; the Chromium
-/// snapshots older Engines come from are not (measured on every Engine,
-/// #105).
+/// snapshots older Engines come from are not. Measured on every Windows
+/// Engine (#105); on Linux it follows from Chromium's `proprietary_codecs`
+/// build flag, on only for Chrome-branded and Chrome for Testing builds.
 fn engine_plays_h264_aac() -> bool {
     profile().milestone >= 113
 }
@@ -111,7 +112,10 @@ async fn avplay_plays_h264_aac_mp4_or_the_app_is_told_the_engine_cant() {
     let s = &t.session;
     let prepared = eval_callback(
         s,
-        "webapis.avplay.open(mediaUrl('clip.mp4'));          webapis.avplay.setDisplayRect(0, 0, 1920, 1080);          webapis.avplay.prepareAsync(function () { webapis.avplay.play();            done(webapis.avplay.getState()); }, function (e) { done(e.name); });",
+        "webapis.avplay.open(mediaUrl('clip.mp4')); \
+         webapis.avplay.setDisplayRect(0, 0, 1920, 1080); \
+         webapis.avplay.prepareAsync(function () { webapis.avplay.play(); \
+           done(webapis.avplay.getState()); }, function (e) { done(e.name); });",
     )
     .await;
     assert_eq!(prepared, "PLAYING");
@@ -129,11 +133,6 @@ async fn avplay_plays_h264_aac_mp4_or_the_app_is_told_the_engine_cant() {
             "{diagnostic:?}"
         );
     }
-    println!(
-        "Tizen {}: AVPlay clip.mp4 plays: {}",
-        profile().version,
-        engine_plays_h264_aac()
-    );
 }
 
 #[tokio::test]
@@ -145,7 +144,12 @@ async fn media_source_takes_h264_aac_mp4_or_the_app_is_told_the_engine_cant() {
     let added = eval_callback(
         s,
         &format!(
-            "var source = new MediaSource();              source.addEventListener('sourceopen', function () {{                try {{ source.addSourceBuffer({type}); done('added'); }}                catch (e) {{ done(e.name); }} }});              var v = document.createElement('video');              v.src = URL.createObjectURL(source); document.body.appendChild(v);",
+            "var source = new MediaSource(); \
+             source.addEventListener('sourceopen', function () {{ \
+               try {{ source.addSourceBuffer({type}); done('added'); }} \
+               catch (e) {{ done(e.name); }} }}); \
+             var v = document.createElement('video'); \
+             v.src = URL.createObjectURL(source); document.body.appendChild(v);",
             type = json!(MP4_H264_AAC)
         ),
     )
