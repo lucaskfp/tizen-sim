@@ -426,3 +426,71 @@ test("where the layout can't be remembered, the dock button still moves the pane
 
   expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
 });
+
+/**
+ * Lays out the session panel's header `width` pixels wide, its tabs needing 260 and the dock
+ * button 32, until the test ends. jsdom has no layout; the returned function resizes the header
+ * and tells the GUI, as a ResizeObserver would.
+ */
+function panelHeader(width: number) {
+  const observers = new Set<() => void>();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      private readonly notify: () => void;
+      constructor(callback: () => void) {
+        this.notify = callback;
+      }
+      observe() {
+        observers.add(this.notify);
+      }
+      unobserve() {}
+      disconnect() {
+        observers.delete(this.notify);
+      }
+    },
+  );
+  const clientWidth = vi
+    .spyOn(HTMLElement.prototype, "clientWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.dataset.slot === "session-panel-header" ? width : 0;
+    });
+  const offsetWidth = vi
+    .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.slot === "tabs-list") return 260;
+      return this.tagName === "BUTTON" ? 32 : 0;
+    });
+  onTestFinished(() => {
+    clientWidth.mockRestore();
+    offsetWidth.mockRestore();
+    vi.unstubAllGlobals();
+  });
+  return async (to: number) => {
+    width = to;
+    await act(async () => observers.forEach((notify) => notify()));
+  };
+}
+
+test("a narrow panel shows its tabs as a dropdown, and widening it brings the tabs back", async () => {
+  monitor(3440, 1440);
+  const resize = panelHeader(200);
+  rustSide({ "plugin:dialog|open": "C:/apps/tizen-apis" });
+  render(<App />);
+  expect(splitter()).toHaveAttribute("aria-orientation", "vertical");
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/tizen-apis");
+  await sessionEvents(1, { Diagnostic: { code: "privilege-not-declared", message: "needs a privilege" } });
+
+  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  const picker = screen.getByRole("combobox", { name: "Panel" });
+  expect(picker).toHaveDisplayValue("Log");
+  expect(screen.getByRole("button", { name: /dock the panel/i })).toBeInTheDocument();
+  await userEvent.selectOptions(picker, "Diagnostics (1)");
+  expect(screen.getByRole("tabpanel", { name: "Diagnostics (1)" })).toHaveTextContent("privilege-not-declared");
+
+  await resize(600);
+
+  expect(screen.queryByRole("combobox", { name: "Panel" })).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Diagnostics (1)" })).toHaveAttribute("aria-selected", "true");
+});
