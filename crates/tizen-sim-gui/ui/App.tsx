@@ -13,13 +13,21 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as commands from "@/lib/commands";
 import { usePanelLayout } from "@/lib/panelLayout";
-import { initialView, reduce, type Status } from "@/lib/session";
+import { initialView, reduce, type SessionView, type Status } from "@/lib/session";
+import { useFits } from "@/lib/useFits";
 import { cn } from "@/lib/utils";
 
 /** The panel open under the toolbar, if any. Panels sit beside the TV screen, never over it. */
 type Panel = "devServer" | "sessions" | null;
 
 const PANEL_ID = "session-panel";
+
+/** The session panel's tabs, each labelled with what it lists. */
+const PANEL_TABS: { value: string; label: (view: SessionView) => string }[] = [
+  { value: "log", label: () => "Log" },
+  { value: "network", label: (view) => `Network (${view.network.length})` },
+  { value: "diagnostics", label: (view) => `Diagnostics (${view.diagnostics.length})` },
+];
 
 export function App() {
   const [view, dispatch] = useReducer(reduce, initialView);
@@ -32,6 +40,12 @@ export function App() {
   /** Where the Log/Network/Diagnostics panel sits, and its share of the area it splits with the TV screen. */
   const sessionPanel = usePanelLayout();
   const splitArea = useRef<HTMLElement>(null);
+  /** The session panel's open tab. */
+  const [tab, setTab] = useState("log");
+  const panelHeader = useRef<HTMLDivElement>(null);
+  const panelTabs = useRef<HTMLDivElement>(null);
+  const dockButton = useRef<HTMLButtonElement>(null);
+  const tabsFit = useFits(panelHeader, [panelTabs, dockButton]);
 
   useEffect(() => {
     const unlisten = commands.onSessionEvent(dispatch);
@@ -167,20 +181,44 @@ export function App() {
           />
           <Tabs
             id={PANEL_ID}
-            defaultValue="log"
+            value={tab}
+            onValueChange={setTab}
             // Grows no further than its share, but gives up the splitter's pixel when the screen is at its
             // minimum; never below MIN_PANEL_PX (panelLayout.ts).
             className={cn("min-h-0 min-w-0 shrink grow-0 gap-0 overflow-hidden", dockedBottom ? "min-h-30" : "min-w-30")}
             style={{ flexBasis: `${sessionPanel.layout.fraction * 100}%` }}
           >
-            <div className="flex items-start gap-2 p-2">
-              {/* A narrow panel wraps its tabs rather than overflowing. */}
-              <TabsList className="min-w-0 flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
-                <TabsTrigger value="log">Log</TabsTrigger>
-                <TabsTrigger value="network">Network ({view.network.length})</TabsTrigger>
-                <TabsTrigger value="diagnostics">Diagnostics ({view.diagnostics.length})</TabsTrigger>
+            <div ref={panelHeader} data-slot="session-panel-header" className="relative flex items-center gap-2 p-2">
+              {/* Where the tabs don't fit on one row, a dropdown stands in for them. The tabs stay, hidden, so
+                  their width is still measured and they still name the open panel. */}
+              <TabsList
+                ref={panelTabs}
+                aria-hidden={!tabsFit || undefined}
+                className={cn("shrink-0", !tabsFit && "invisible absolute")}
+              >
+                {PANEL_TABS.map(({ value, label }) => (
+                  <TabsTrigger key={value} value={value}>
+                    {label(view)}
+                  </TabsTrigger>
+                ))}
               </TabsList>
+              {!tabsFit && (
+                <select
+                  aria-label="Panel"
+                  aria-controls={PANEL_ID}
+                  className="h-8 min-w-0 rounded-md border bg-background px-2 text-sm"
+                  value={tab}
+                  onChange={(e) => setTab(e.target.value)}
+                >
+                  {PANEL_TABS.map(({ value, label }) => (
+                    <option key={value} value={value}>
+                      {label(view)}
+                    </option>
+                  ))}
+                </select>
+              )}
               <Button
+                ref={dockButton}
                 variant="ghost"
                 size="icon-sm"
                 className="ml-auto shrink-0"
