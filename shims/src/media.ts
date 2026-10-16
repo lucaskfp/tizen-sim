@@ -10,9 +10,8 @@
 // are left as they are, since the stream can't play anyway; the Diagnostic
 // tells the developer a TV would play it.
 //
-// Only H.264, AAC and MP4 itself are recognised. Other formats a TV lists
-// (HEVC, AC-3, MPEG-TS...) aren't checked: which of them each TV model
-// decodes varies. A failed stream counts as MP4 by its <source type> or its
+// Only H.264, AAC and MP4 itself are recognised. Other formats a TV lists,
+// such as HEVC, AC-3 and MPEG-TS, aren't checked yet. A failed stream counts as MP4 by its <source type> or its
 // URL's extension; one served under another name goes unreported.
 
 /** The MP4 MIME types, and the file extensions that stand for them. */
