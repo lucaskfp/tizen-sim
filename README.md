@@ -146,7 +146,7 @@ Also out of scope:
 
 ## Contributing
 
-Contributions are welcome: bug reports, behaviour you've measured on a real TV, docs and code. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to report issues, how platform behaviour must be sourced, the development setup and the pull request flow. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md), and security issues are reported as [SECURITY.md](SECURITY.md) describes.
+Contributions are welcome through [issues](https://github.com/lucaskfp/tizen-sim/issues): bug reports, behaviour you've measured on a real TV, proposals and fixes. Pull requests are open to collaborators only. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to report issues, how platform behaviour must be sourced, the development setup and the pull request flow. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md), and security issues are reported as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
