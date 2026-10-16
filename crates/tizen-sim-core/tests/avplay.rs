@@ -5,7 +5,9 @@ mod support;
 
 use serde_json::{Value, json};
 use std::time::Duration;
-use support::{eval_callback, eventually_equals, expect_event, pixel, start, start_with};
+use support::{
+    eval_callback, eventually_equals, eventually_pixel, expect_event, pixel, start, start_with,
+};
 use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{Session, SessionEvent};
 
@@ -46,26 +48,6 @@ async fn open(session: &Session, media: &str) {
 async fn event_names(session: &Session) -> Vec<String> {
     serde_json::from_value(eval(session, "avEvents.map(function (e) { return e[0]; })").await)
         .unwrap()
-}
-
-fn near(actual: [u8; 3], expected: [u8; 3]) -> bool {
-    actual
-        .iter()
-        .zip(expected)
-        .all(|(a, e)| a.abs_diff(e) <= 24)
-}
-
-/// Waits until the screen shows about `expected` at `(x, y)`.
-async fn eventually_pixel(session: &Session, x: u32, y: u32, expected: [u8; 3]) {
-    let mut last = [0; 3];
-    for _ in 0..50 {
-        last = pixel(&session.screenshot().await.unwrap(), x, y);
-        if near(last, expected) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    panic!("the screen at ({x}, {y}) never became {expected:?}; last {last:?}");
 }
 
 /// using-avplay.html: NONE → IDLE (`open`) → READY (`prepare`) →

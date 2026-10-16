@@ -1,0 +1,18 @@
+/* The page stays transparent so AVPlay's video, behind it, shows through. */
+html, body { margin: 0; width: 1920px; height: 1080px; background: transparent; color: #eee; font-family: sans-serif; overflow: hidden; }
+.panel { position: absolute; box-sizing: border-box; padding: 24px 32px; background: #1b1f27; border-radius: 12px; }
+#actions { left: 40px; top: 40px; width: 900px; height: 1000px; }
+#types { left: 980px; top: 40px; width: 900px; height: 520px; font-size: 18px; overflow: hidden; }
+#player { left: 980px; top: 580px; width: 440px; height: 460px; }
+#player video { width: 376px; height: 212px; background: #000; }
+#avplayLabel { position: absolute; left: 1440px; top: 580px; width: 440px; font-size: 18px; color: #aaa; }
+h1 { margin: 0 0 8px; font-size: 40px; }
+h2 { margin: 0 0 12px; font-size: 26px; }
+.hint { color: #aaa; font-size: 20px; margin: 0 0 20px; }
+#buttons button { display: block; width: 100%; margin: 0 0 8px; padding: 8px 18px; text-align: left; font-size: 21px; color: #eee; background: #2a303c; border: 3px solid transparent; border-radius: 8px; }
+#buttons button:focus { border-color: #4da3ff; outline: none; background: #33405a; }
+#buttons .result { display: block; margin-top: 2px; font-size: 18px; color: #9fd39f; white-space: normal; }
+#buttons .result.failed { color: #ff9f9f; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid #333; }
+td.no { color: #ff9f9f; }

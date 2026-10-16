@@ -176,6 +176,7 @@ function createVideoPlane(): VideoPlane {
       var probe = setTimeout(function () {
         if (video === element && element.style.display === "none") {
           pattern.style.display = "block";
+          reportAdaptiveStream(url);
         }
         settle();
       }, DECODE_PROBE_MS);
@@ -194,6 +195,8 @@ function createVideoPlane(): VideoPlane {
           return;
         }
         clearTimeout(probe);
+        reportMediaError(element);
+        reportAdaptiveStream(url);
         element.style.display = "none";
         pattern.style.display = "block";
         settle();

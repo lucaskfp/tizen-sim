@@ -9,6 +9,7 @@
   filesystem: createFilesystem(),
 };
 warnOnDeprecated("tizen");
+installMediaChecks();
 
 // The virtual $WEBAPIS script calls this (see webapis.ts).
 config.installWebapis = installWebapis;
