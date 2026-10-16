@@ -6,6 +6,15 @@ An open-source desktop simulator for **Samsung Tizen TV web apps**, replacing Sa
 - **Vocabulary:** `CONTEXT.md` (App, Version Profile, Engine, Session, Shim, Remote Key, Diagnostic, ...).
 - **Architectural decisions:** `docs/adr/`.
 
+## Facts, not guesses
+
+Every factual claim, in an answer, a comment, a doc, an issue or a PR, comes from a source you checked in this task: the docs (`docs/agents/tizen-docs.md` says where), the code, a measurement on an Engine or a TV, or the tool's own output. This covers how the TV, Chromium, a library or the tooling behaves, and what this repo does.
+
+- Look it up before stating it. If a question can be answered by reading a page, running a command or measuring, do that first, then answer.
+- Cite what you checked: the page, file or measurement.
+- If you couldn't check something, say so: mark it **unverified**, or say you don't know. Never fill the gap with something that sounds plausible.
+- Don't generalise past what the source says. A rule read off one page, one year or one Engine holds for that page, year or Engine until the others are checked.
+
 ## Scope
 
 **In scope: the platform.** What a Tizen TV does for and to an App:
