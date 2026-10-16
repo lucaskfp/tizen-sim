@@ -2196,8 +2196,14 @@ function engineHasNo(missing) {
     return "the Engine of this Version Profile (Chromium M" + config.profile.milestone + ")" +
         (missing.length ? " has no " + inWords(missing) : " can't play it");
 }
-function sourcePage() {
-    return " (TV " + config.profile.media.page + ")";
+function sourcePage(container) {
+    var formats = config.profile.media.formats;
+    for (var i = 0; i < formats.length; i++) {
+        if (!formats[i].music && formats[i].containers.indexOf(container) >= 0) {
+            return " (TV " + config.profile.media.page + ")";
+        }
+    }
+    return " (TV specifications/media-specifications.html, Music)";
 }
 var CHECK_ELSEWHERE = " Check it on a TV, or on a Version Profile whose Engine plays it.";
 function report(key, message) {
@@ -2223,7 +2229,7 @@ function reportRefusedType(mime, attempt, source) {
             config.profile.media.modelGroups.length + " model groups) play " + name;
     var documentedForMse = format.codecs.length > 0 && !(format.codecs.join(",") + ",").replace(/(H\.264|AAC|VP9),/g, "");
     var mse = source === "isTypeSupported" || source === "addSourceBuffer";
-    report(source + " " + name, attempt + ": " + engineHasNo(engineLacks(format.container, format.codecs)) + ". " + tvs + sourcePage() + "." +
+    report(source + " " + name, attempt + ": " + engineHasNo(engineLacks(format.container, format.codecs)) + ". " + tvs + sourcePage(format.container) + "." +
         (mse && !documentedForMse ? " Whether a TV's MSE takes it is unverified." : "") + CHECK_ELSEWHERE);
 }
 function reportMediaError(element) {
@@ -2248,7 +2254,7 @@ function reportMediaError(element) {
     }
     var lacksContainer = missing[0] === container;
     report(url, "The Engine can't play " + url + ": " + engineHasNo(missing) + ". Tizen " + config.profile.version + " TVs play " +
-        (lacksContainer ? container : inWords(missing) + " in " + container) + sourcePage() +
+        (lacksContainer ? container : inWords(missing) + " in " + container) + sourcePage(container) +
         (lacksContainer ? "." + CHECK_ELSEWHERE : ", so if this stream uses them, check it on a TV, or on a Version Profile whose Engine plays it."));
 }
 function reportAdaptiveStream(url) {

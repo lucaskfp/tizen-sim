@@ -248,8 +248,15 @@ function engineHasNo(missing: string[]): string {
     (missing.length ? " has no " + inWords(missing) : " can't play it");
 }
 
-function sourcePage(): string {
-  return " (TV " + config.profile.media!.page + ")";
+/** Where the year lists `container`: its video specifications, or the Music table for an audio-only format. */
+function sourcePage(container: string): string {
+  var formats = config.profile.media!.formats;
+  for (var i = 0; i < formats.length; i++) {
+    if (!formats[i].music && formats[i].containers.indexOf(container) >= 0) {
+      return " (TV " + config.profile.media!.page + ")";
+    }
+  }
+  return " (TV specifications/media-specifications.html, Music)";
 }
 
 var CHECK_ELSEWHERE = " Check it on a TV, or on a Version Profile whose Engine plays it.";
@@ -286,7 +293,7 @@ function reportRefusedType(mime: string, attempt: string, source: string) {
   var mse = source === "isTypeSupported" || source === "addSourceBuffer";
   report(
     source + " " + name,
-    attempt + ": " + engineHasNo(engineLacks(format.container, format.codecs)) + ". " + tvs + sourcePage() + "." +
+    attempt + ": " + engineHasNo(engineLacks(format.container, format.codecs)) + ". " + tvs + sourcePage(format.container) + "." +
       (mse && !documentedForMse ? " Whether a TV's MSE takes it is unverified." : "") + CHECK_ELSEWHERE,
   );
 }
@@ -317,7 +324,7 @@ function reportMediaError(element: HTMLElement) {
   report(
     url,
     "The Engine can't play " + url + ": " + engineHasNo(missing) + ". Tizen " + config.profile.version + " TVs play " +
-      (lacksContainer ? container : inWords(missing) + " in " + container) + sourcePage() +
+      (lacksContainer ? container : inWords(missing) + " in " + container) + sourcePage(container) +
       (lacksContainer ? "." + CHECK_ELSEWHERE : ", so if this stream uses them, check it on a TV, or on a Version Profile whose Engine plays it."),
   );
 }
