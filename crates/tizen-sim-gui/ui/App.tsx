@@ -7,6 +7,7 @@ import { Remote } from "@/components/Remote";
 import { RunningSessions } from "@/components/RunningSessions";
 import { Splitter } from "@/components/Splitter";
 import { TvScreen } from "@/components/TvScreen";
+import { UpdateButton } from "@/components/Update";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -115,6 +116,7 @@ export function App() {
         </Button>
 
         <div className="ml-auto flex items-center gap-2 text-sm">
+          <UpdateButton onError={showProblem} />
           {view.appId && <span className="font-medium">{view.appId}</span>}
           {view.adopted && <Badge variant="outline">Started from the CLI</Badge>}
           <StatusBadge status={view.status} />

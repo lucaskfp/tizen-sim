@@ -40,5 +40,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag }}
+    # The updater's signing key (release.yml).
+    secrets: inherit
     permissions:
       contents: write

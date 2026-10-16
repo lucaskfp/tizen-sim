@@ -44,5 +44,16 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCMjlDOTQ1NTBDNEI1NzQKUldSMHRjUlFSY2tweXprQzRkMjU2b0lFM3NYTy8yZUpTSExLU0FxMm9EaUR1YW0xU0FwR1NnQVQK",
+      "endpoints": [
+        "https://github.com/lucaskfp/tizen-sim/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

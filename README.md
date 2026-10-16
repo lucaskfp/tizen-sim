@@ -45,6 +45,7 @@ Download the latest release from [GitHub Releases](https://github.com/lucaskfp/t
 
 - **Windows.** The installers aren't code-signed yet, so SmartScreen warns about an unknown publisher on first run: choose *More info*, then *Run anyway*.
 - **Linux.** Install the system packages in [docs/linux.md](docs/linux.md) for the Engines you use.
+- **Updates.** The GUI checks for a newer release when it starts and offers it in its toolbar: *Update to <version>* installs it and restarts the GUI. The CLI is updated by hand.
 - Engines are downloaded to `~/.tizen-sim/engines` the first time a Version Profile is used; set `TIZEN_SIM_HOME` to keep tizen-sim's data elsewhere.
 
 ### Building from source

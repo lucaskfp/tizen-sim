@@ -258,7 +258,12 @@ pub fn run() {
         headless: false,
         engine_path: None,
     };
-    setup(tauri::Builder::default(), options)
+    // Only in the app itself: the updater needs the configuration it is
+    // built with, which tests on the mock runtime don't have.
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+    setup(builder, options)
         .build(context())
         .expect("could not start the GUI")
         .run(|app, event| match event {
