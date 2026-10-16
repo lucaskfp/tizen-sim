@@ -2,7 +2,7 @@
 // records commands and emits Session events as the Rust side would.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { onTestFinished, vi } from "vitest";
@@ -437,6 +437,53 @@ test("a click on the splitter without dragging leaves the panel's size alone", a
 
   expect(splitter()).toHaveAttribute("aria-valuenow", "30");
   expect(localStorage.getItem("tizen-sim.panel")).toBeNull();
+});
+
+test("the splitter highlights after the pointer rests on it, and at once while dragged", () => {
+  rustSide();
+  render(<App />);
+  // Only the splitter's delay is faked. The test cleanup and userEvent both await a
+  // setTimeout, and hang while it's faked, so the pointer events are dispatched directly.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const wait = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+
+    // Passing over it leaves it unchanged.
+    fireEvent.pointerEnter(splitter());
+    wait(100);
+    fireEvent.pointerLeave(splitter());
+    wait(1000);
+    expect(splitter()).not.toHaveAttribute("data-highlighted");
+
+    // Resting on it highlights it once the delay is over.
+    fireEvent.pointerEnter(splitter());
+    expect(splitter()).not.toHaveAttribute("data-highlighted");
+    wait(1000);
+    expect(splitter()).toHaveAttribute("data-highlighted");
+    fireEvent.pointerLeave(splitter());
+    expect(splitter()).not.toHaveAttribute("data-highlighted");
+
+    // Pressing it to drag highlights it with no delay, until released.
+    fireEvent.pointerEnter(splitter());
+    fireEvent.pointerDown(splitter(), { button: 0, pointerId: 1 });
+    expect(splitter()).toHaveAttribute("data-highlighted");
+    fireEvent.pointerUp(splitter(), { button: 0, pointerId: 1 });
+    fireEvent.pointerLeave(splitter());
+    expect(splitter()).not.toHaveAttribute("data-highlighted");
+  } finally {
+    // Here, not in onTestFinished: that runs after the cleanup, which would hang.
+    vi.useRealTimers();
+  }
+});
+
+test("the splitter shows a grip at its centre, for both docks", async () => {
+  rustSide();
+  render(<App />);
+  expect(within(splitter()).getByTestId("splitter-grip")).toHaveAttribute("data-orientation", "horizontal");
+
+  await userEvent.click(screen.getByRole("button", { name: "Dock the panel on the right" }));
+
+  expect(within(splitter()).getByTestId("splitter-grip")).toHaveAttribute("data-orientation", "vertical");
 });
 
 test("where the layout can't be remembered, the dock button still moves the panel", async () => {

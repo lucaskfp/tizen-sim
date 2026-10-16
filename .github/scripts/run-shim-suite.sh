@@ -2,7 +2,8 @@
 # Runs the in-page Shim suite on one Version Profile's Engine, with the
 # network tests: an Engine's own background requests would show up in the
 # App's network log, and which it makes differs by Engine (#61). The media
-# tests record which of the TV's formats the Engine plays (#105). On failure,
+# tests record which of the TV's formats the Engine plays (#105), and the web
+# features tests check what each Engine has that its TVs lack (#106). On failure,
 # names the Version Profile and each failing test as GitHub annotations and in
 # the job summary.
 #
@@ -13,7 +14,7 @@ profile="$1"
 log="$(mktemp)"
 
 TIZEN_SIM_TEST_PROFILE="$profile" cargo test -p tizen-sim-core --no-fail-fast \
-  --test shims --test webapis --test remote_keys --test screen --test network --test media 2>&1 | tee "$log"
+  --test shims --test webapis --test remote_keys --test screen --test network --test media --test web_features 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 [ "$status" -eq 0 ] && exit 0
 

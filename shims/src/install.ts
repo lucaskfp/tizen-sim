@@ -13,3 +13,6 @@ installMediaChecks();
 
 // The virtual $WEBAPIS script calls this (see webapis.ts).
 config.installWebapis = installWebapis;
+
+// Last, so the Shims have taken what they use first.
+removeMissingFeatures();
