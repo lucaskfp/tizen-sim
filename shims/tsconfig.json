@@ -26,6 +26,7 @@
     "src/filesystem-file.ts",
     "src/filesystem-handle.ts",
     "src/webapis.ts",
+    "src/media.ts",
     "src/video-plane.ts",
     "src/avplay.ts",
     "src/screen.ts",

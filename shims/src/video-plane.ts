@@ -194,6 +194,7 @@ function createVideoPlane(): VideoPlane {
           return;
         }
         clearTimeout(probe);
+        reportMediaError(element);
         element.style.display = "none";
         pattern.style.display = "block";
         settle();

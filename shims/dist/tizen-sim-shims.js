@@ -2012,6 +2012,144 @@ function installWebapis() {
     };
     warnOnDeprecated("webapis");
 }
+var MP4_TYPES = ["video/mp4", "audio/mp4", "video/x-m4v", "audio/x-m4a"];
+var MP4_EXTENSIONS = { mp4: "video/mp4", m4v: "video/mp4", m4a: "audio/mp4" };
+var TV_CODECS = [
+    { prefix: "avc1.", name: "H.264" },
+    { prefix: "avc3.", name: "H.264" },
+    { prefix: "mp4a.", name: "AAC" },
+];
+var H264_PROBE = 'video/mp4; codecs="avc1.42E01E"';
+var AAC_PROBE = 'audio/mp4; codecs="mp4a.40.2"';
+var nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+var reported = {};
+function engineCanPlay(mime) {
+    return nativeCanPlayType.call(document.createElement("video"), mime) !== "";
+}
+function tvFormat(mime) {
+    var parts = String(mime).split(";");
+    if (MP4_TYPES.indexOf(parts[0].replace(/\s/g, "").toLowerCase()) < 0) {
+        return null;
+    }
+    var codecs = [];
+    for (var i = 1; i < parts.length; i++) {
+        var parameter = /^\s*codecs\s*=\s*"?([^"]*)"?\s*$/i.exec(parts[i]);
+        if (!parameter) {
+            continue;
+        }
+        var listed = parameter[1].split(",");
+        for (var j = 0; j < listed.length; j++) {
+            var name = codecName(listed[j].replace(/\s/g, ""));
+            if (!name) {
+                return null;
+            }
+            if (codecs.indexOf(name) < 0) {
+                codecs.push(name);
+            }
+        }
+    }
+    return codecs.length ? codecs.join("/") + " in MP4" : "MP4";
+}
+function codecName(codec) {
+    for (var i = 0; i < TV_CODECS.length; i++) {
+        if (codec.toLowerCase().indexOf(TV_CODECS[i].prefix) === 0) {
+            return TV_CODECS[i].name;
+        }
+    }
+    return null;
+}
+function missingCodecs() {
+    var missing = [];
+    if (!engineCanPlay(H264_PROBE)) {
+        missing.push("H.264");
+    }
+    if (!engineCanPlay(AAC_PROBE)) {
+        missing.push("AAC");
+    }
+    return missing.join(" and ");
+}
+function reportUnplayable(format, what, key) {
+    var missing = missingCodecs();
+    if (!missing || reported[key + " " + format]) {
+        return;
+    }
+    reported[key + " " + format] = true;
+    raiseDiagnostic("media-format-unsupported", what + ": the Engine of this Version Profile (Chromium M" + config.profile.milestone +
+        ") has no " + missing + ". A Tizen " + config.profile.version + " TV plays " +
+        (format === "MP4" ? "H.264 and AAC in MP4" : format) +
+        ". Check this stream on a TV, or on a Version Profile whose Engine plays it.");
+}
+function mp4TypeOf(url) {
+    var path = String(url).split(/[?#]/)[0];
+    var extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+    return MP4_EXTENSIONS.hasOwnProperty(extension) ? MP4_EXTENSIONS[extension] : null;
+}
+function reportMediaError(element) {
+    var url = element.currentSrc || element.src || "";
+    var mime = (element instanceof HTMLSourceElement && element.type) || mp4TypeOf(url);
+    var format = mime ? tvFormat(mime) : null;
+    if (format) {
+        reportUnplayable(format, "The Engine can't play " + url, url);
+    }
+}
+function installMediaChecks() {
+    HTMLMediaElement.prototype.canPlayType = function (mime) {
+        var answer = nativeCanPlayType.call(this, mime);
+        var format = answer === "" ? tvFormat(mime) : null;
+        if (format) {
+            reportUnplayable(format, "canPlayType('" + mime + "') answered \"\"", "canPlayType");
+        }
+        return answer;
+    };
+    var MediaSourceClass = window.MediaSource;
+    if (MediaSourceClass) {
+        var nativeIsTypeSupported = MediaSourceClass.isTypeSupported;
+        MediaSourceClass.isTypeSupported = function (mime) {
+            var answer = nativeIsTypeSupported.call(MediaSourceClass, mime);
+            var format = answer ? null : tvFormat(mime);
+            if (format) {
+                reportUnplayable(format, "MediaSource.isTypeSupported('" + mime + "') answered false", "isTypeSupported");
+            }
+            return answer;
+        };
+        var nativeAddSourceBuffer = MediaSourceClass.prototype.addSourceBuffer;
+        MediaSourceClass.prototype.addSourceBuffer = function (mime) {
+            try {
+                return nativeAddSourceBuffer.call(this, mime);
+            }
+            catch (e) {
+                var format = tvFormat(mime);
+                if (format) {
+                    reportUnplayable(format, "MediaSource.addSourceBuffer('" + mime + "') failed", "addSourceBuffer");
+                }
+                throw e;
+            }
+        };
+    }
+    var MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
+    function onError(event) {
+        var target = event.target;
+        if (target instanceof HTMLSourceElement) {
+            reportMediaError(target);
+        }
+        else if (target instanceof HTMLMediaElement && target.error && target.error.code === MEDIA_ERR_SRC_NOT_SUPPORTED) {
+            reportMediaError(target);
+        }
+    }
+    document.addEventListener("error", onError, true);
+    var nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+        if (!this.__tizenSimWatched) {
+            Object.defineProperty(this, "__tizenSimWatched", { value: true });
+            this.addEventListener("error", function (event) {
+                if (!document.documentElement.contains(event.target)) {
+                    onError(event);
+                }
+            });
+        }
+        return nativePlay.apply(this, arguments);
+    };
+}
 var CANVAS_CHECK_MS = 250;
 var DECODE_PROBE_MS = 5000;
 var PATTERN_BARS = ["#c0c0c0", "#c0c000", "#00c0c0", "#00c000", "#c000c0", "#c00000", "#0000c0"];
@@ -2142,6 +2280,7 @@ function createVideoPlane() {
                     return;
                 }
                 clearTimeout(probe);
+                reportMediaError(element);
                 element.style.display = "none";
                 pattern.style.display = "block";
                 settle();
@@ -2728,5 +2867,6 @@ window.tizen = {
     filesystem: createFilesystem(),
 };
 warnOnDeprecated("tizen");
+installMediaChecks();
 config.installWebapis = installWebapis;
 })();

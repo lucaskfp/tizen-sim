@@ -260,6 +260,26 @@ pub fn has_xvfb() -> bool {
 }
 
 /// The RGB colour of a pixel of a PNG screenshot.
+pub fn near(actual: [u8; 3], expected: [u8; 3]) -> bool {
+    actual
+        .iter()
+        .zip(expected)
+        .all(|(a, e)| a.abs_diff(e) <= 24)
+}
+
+/// Waits until the screen shows about `expected` at `(x, y)`.
+pub async fn eventually_pixel(session: &Session, x: u32, y: u32, expected: [u8; 3]) {
+    let mut last = [0; 3];
+    for _ in 0..50 {
+        last = pixel(&session.screenshot().await.unwrap(), x, y);
+        if near(last, expected) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("the screen at ({x}, {y}) never became {expected:?}; last {last:?}");
+}
+
 pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 3] {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().unwrap();
