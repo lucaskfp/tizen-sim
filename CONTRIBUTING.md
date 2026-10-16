@@ -2,11 +2,11 @@
 
 By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes, not in public issues.
 
-Contributions are welcome: bug reports, behaviour you've measured on a real TV, docs and code.
+Contributions are welcome as issues: bug reports, behaviour you've measured on a real TV, proposals and fixes. Only collaborators open pull requests.
 
 ## Reporting issues and proposing work
 
-- **Issues** live in [GitHub Issues](https://github.com/lucaskfp/tizen-sim/issues). Pull requests aren't used to request features, so open an issue first for anything beyond a small fix.
+- **Issues** live in [GitHub Issues](https://github.com/lucaskfp/tizen-sim/issues). They are the way to contribute: pull requests from outside contributors are turned off.
 - **Bug reports** should give:
   - the Version Profile;
   - your OS;
@@ -24,13 +24,17 @@ Contributions are welcome: bug reports, behaviour you've measured on a real TV, 
 
 ## Pull requests
 
-1. For anything beyond a small fix, open or pick an issue first, so the approach can be agreed before you write code.
-2. Fork the repo and branch from `main`.
+Only the repo's collaborators can open pull requests. If you have a fix, open an issue describing it; you can paste the diff there, and a maintainer will turn it into a pull request. If you'd like to contribute regularly, ask in an issue to be added as a collaborator.
+
+For collaborators:
+
+1. Work from an issue, so the approach is agreed before you write code.
+2. Branch from `main`.
 3. Keep the change to one issue, with tests: unit tests next to the code, and Session tests under `crates/tizen-sim-core/tests` for behaviour an App can see.
 4. Run the checks under [Development](#development) before pushing.
 5. Open the pull request against `main` and reference the issue (`Closes #123`).
 
-`main` only takes pull requests whose CI passes: lint, tests on Windows and Linux, the GUI and Shim builds, and CodeQL. Pull requests are squash-merged, so the PR title becomes the commit message: write it as a [Conventional Commit](https://www.conventionalcommits.org). The `PR title` check enforces it, with the types `feat`, `fix`, `docs`, `ci`, `build`, `test`, `refactor`, `perf`, `chore` and `revert`. `feat` and `fix` decide the next version. A first-time contributor's CI runs once a maintainer approves it.
+`main` only takes pull requests whose CI passes: lint, tests on Windows and Linux, the GUI and Shim builds, and CodeQL. Pull requests are squash-merged, so the PR title becomes the commit message: write it as a [Conventional Commit](https://www.conventionalcommits.org). The `PR title` check enforces it, with the types `feat`, `fix`, `docs`, `ci`, `build`, `test`, `refactor`, `perf`, `chore` and `revert`. `feat` and `fix` decide the next version.
 
 ## Platform behaviour must be sourced
 
