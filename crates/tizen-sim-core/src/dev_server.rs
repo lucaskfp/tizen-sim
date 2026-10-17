@@ -389,12 +389,17 @@ async fn call_host(
         AppFiles::Bundler(_) => None,
     };
     let sandbox = Sandbox::new(state.sandbox_dir.clone(), package);
-    let outcome = tokio::task::spawn_blocking(move || match method.strip_prefix("filesystem.") {
-        Some(call) => sandbox.call(call, &params),
-        None => Err(crate::sandbox::SandboxError {
-            name: "NotSupportedError",
-            message: format!("the Host has no {method}"),
-        }),
+    let outcome = tokio::task::spawn_blocking(move || {
+        if let Some(call) = method.strip_prefix("filesystem.") {
+            sandbox.call(call, &params)
+        } else if let Some(call) = method.strip_prefix("widgetdata.") {
+            sandbox.widget_data(call, &params)
+        } else {
+            Err(crate::sandbox::SandboxError {
+                name: "NotSupportedError",
+                message: format!("the Host has no {method}"),
+            })
+        }
     })
     .await;
     let reply = match outcome {

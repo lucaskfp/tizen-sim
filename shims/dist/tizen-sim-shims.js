@@ -1635,6 +1635,7 @@ var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
     UNKNOWN_ERR: 9999,
 });
 var WEBAPIS_ERROR_CODES = extend(ERROR_CODES, {
+    DOMStringSizeError: 2,
     InvalidValuesError: 26,
     IOError: 27,
     ServiceNotAvailableError: 28,
@@ -1644,6 +1645,8 @@ var WebapisException = webApiErrorType(true, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ER
 var WebapisError = webApiErrorType(false, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ERROR_CODES);
 var PRODUCTINFO_PRIVILEGE = "http://developer.samsung.com/privilege/productinfo";
 var NETWORK_PRIVILEGE = "http://developer.samsung.com/privilege/network.public";
+var ADINFO_PRIVILEGE = "http://developer.samsung.com/privilege/adinfo";
+var WIDGETDATA_PRIVILEGE = "http://developer.samsung.com/privilege/widgetdata";
 function extend(base, extra) {
     var out = {};
     for (var key in base) {
@@ -1999,6 +2002,92 @@ function createNetwork(device) {
     }
     return network;
 }
+function createAdInfo(device) {
+    function access(method) {
+        requireWebapisPrivilege(ADINFO_PRIVILEGE, "webapis.adinfo." + method);
+    }
+    return {
+        getVersion: function () {
+            access("getVersion");
+            return pluginVersion();
+        },
+        getTIFA: function () {
+            access("getTIFA");
+            if (!device.tifa) {
+                webapisFail("InvalidStateError", "The TV has no PSID");
+            }
+            return device.tifa;
+        },
+        isLATEnabled: function () {
+            access("isLATEnabled");
+            return device.limitAdTracking;
+        },
+    };
+}
+function createWidgetData() {
+    var MAX_DATA_LENGTH = 20000;
+    function requireOptionalCallback(callback, argument) {
+        if (callback !== undefined && callback !== null) {
+            requireType(callback, "function", argument);
+        }
+    }
+    function run(method, params, onerror, deliver) {
+        var result;
+        try {
+            requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
+            result = bridge.call("widgetdata." + method, params);
+        }
+        catch (e) {
+            failLater(onerror, e.name, e.message, WebapisError);
+            return;
+        }
+        setTimeout(function () {
+            deliver(result);
+        }, 0);
+    }
+    function succeed(onsuccess) {
+        return function () {
+            if (typeof onsuccess === "function") {
+                onsuccess();
+            }
+        };
+    }
+    var widgetdata = {
+        getVersion: function () {
+            requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata.getVersion");
+            return pluginVersion();
+        },
+    };
+    if (available("webapis.widgetdata.read")) {
+        widgetdata.read = function (onsuccess, onerror) {
+            requireType(onsuccess, "function", "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            run("read", {}, onerror, function (data) {
+                onsuccess(data);
+            });
+        };
+    }
+    if (available("webapis.widgetdata.write")) {
+        widgetdata.write = function (data, onsuccess, onerror) {
+            requireType(data, "string", "data");
+            requireOptionalCallback(onsuccess, "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            if (data.length > MAX_DATA_LENGTH) {
+                failLater(onerror, "DOMStringSizeError", "data is longer than " + MAX_DATA_LENGTH + " characters", WebapisError);
+                return;
+            }
+            run("write", { data: data }, onerror, succeed(onsuccess));
+        };
+    }
+    if (available("webapis.widgetdata.remove")) {
+        widgetdata.remove = function (onsuccess, onerror) {
+            requireOptionalCallback(onsuccess, "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            run("remove", {}, onerror, succeed(onsuccess));
+        };
+    }
+    return widgetdata;
+}
 function installWebapis() {
     if (window.webapis) {
         return;
@@ -2009,6 +2098,8 @@ function installWebapis() {
         tvinfo: createTvInfo(device),
         network: createNetwork(device),
         avplay: createAVPlay(),
+        adinfo: createAdInfo(device),
+        widgetdata: createWidgetData(),
     };
     warnOnDeprecated("webapis");
 }
