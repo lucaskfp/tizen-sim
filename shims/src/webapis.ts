@@ -524,19 +524,24 @@ function createWidgetData(): any {
   }
 
   /**
-   * Runs a Host call, then hands its result to `deliver`, or its error to
-   * `onerror`, after the method returns.
+   * Calls the Host after the method returns, as filesystem's runLater does,
+   * and hands its result to `deliver`. A failure goes to `onerror` under its
+   * own name if the method's reference lists it in `errors`, and as
+   * UnknownError ("if any other error occurs") otherwise.
    */
-  function run(method: string, params: any, onerror: any, deliver: (result: any) => void) {
-    var result: any;
-    try {
-      requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
-      result = bridge.call("widgetdata." + method, params);
-    } catch (e: any) {
-      failLater(onerror, e.name, e.message, WebapisError);
-      return;
-    }
+  function callHostLater(method: string, params: any, errors: string[], onerror: any, deliver: (result: any) => void) {
     setTimeout(function () {
+      var result: any;
+      try {
+        requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
+        result = bridge.call("widgetdata." + method, params);
+      } catch (e: any) {
+        if (typeof onerror === "function") {
+          var listed = e.name === "SecurityError" || errors.indexOf(e.name) >= 0;
+          onerror(new WebapisError(listed ? e.name : "UnknownError", e.message));
+        }
+        return;
+      }
       deliver(result);
     }, 0);
   }
@@ -559,7 +564,7 @@ function createWidgetData(): any {
     widgetdata.read = function (onsuccess: any, onerror?: any) {
       requireType(onsuccess, "function", "onsuccess");
       requireOptionalCallback(onerror, "onerror");
-      run("read", {}, onerror, function (data: string) {
+      callHostLater("read", {}, ["NotFoundError"], onerror, function (data: string) {
         onsuccess(data);
       });
     };
@@ -573,14 +578,14 @@ function createWidgetData(): any {
         failLater(onerror, "DOMStringSizeError", "data is longer than " + MAX_DATA_LENGTH + " characters", WebapisError);
         return;
       }
-      run("write", { data: data }, onerror, succeed(onsuccess));
+      callHostLater("write", { data: data }, [], onerror, succeed(onsuccess));
     };
   }
   if (available("webapis.widgetdata.remove")) {
     widgetdata.remove = function (onsuccess?: any, onerror?: any) {
       requireOptionalCallback(onsuccess, "onsuccess");
       requireOptionalCallback(onerror, "onerror");
-      run("remove", {}, onerror, succeed(onsuccess));
+      callHostLater("remove", {}, ["NotFoundError"], onerror, succeed(onsuccess));
     };
   }
   return widgetdata;

@@ -2031,17 +2031,20 @@ function createWidgetData() {
             requireType(callback, "function", argument);
         }
     }
-    function run(method, params, onerror, deliver) {
-        var result;
-        try {
-            requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
-            result = bridge.call("widgetdata." + method, params);
-        }
-        catch (e) {
-            failLater(onerror, e.name, e.message, WebapisError);
-            return;
-        }
+    function callHostLater(method, params, errors, onerror, deliver) {
         setTimeout(function () {
+            var result;
+            try {
+                requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
+                result = bridge.call("widgetdata." + method, params);
+            }
+            catch (e) {
+                if (typeof onerror === "function") {
+                    var listed = e.name === "SecurityError" || errors.indexOf(e.name) >= 0;
+                    onerror(new WebapisError(listed ? e.name : "UnknownError", e.message));
+                }
+                return;
+            }
             deliver(result);
         }, 0);
     }
@@ -2062,7 +2065,7 @@ function createWidgetData() {
         widgetdata.read = function (onsuccess, onerror) {
             requireType(onsuccess, "function", "onsuccess");
             requireOptionalCallback(onerror, "onerror");
-            run("read", {}, onerror, function (data) {
+            callHostLater("read", {}, ["NotFoundError"], onerror, function (data) {
                 onsuccess(data);
             });
         };
@@ -2076,14 +2079,14 @@ function createWidgetData() {
                 failLater(onerror, "DOMStringSizeError", "data is longer than " + MAX_DATA_LENGTH + " characters", WebapisError);
                 return;
             }
-            run("write", { data: data }, onerror, succeed(onsuccess));
+            callHostLater("write", { data: data }, [], onerror, succeed(onsuccess));
         };
     }
     if (available("webapis.widgetdata.remove")) {
         widgetdata.remove = function (onsuccess, onerror) {
             requireOptionalCallback(onsuccess, "onsuccess");
             requireOptionalCallback(onerror, "onerror");
-            run("remove", {}, onerror, succeed(onsuccess));
+            callHostLater("remove", {}, ["NotFoundError"], onerror, succeed(onsuccess));
         };
     }
     return widgetdata;

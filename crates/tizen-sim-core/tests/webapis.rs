@@ -258,8 +258,9 @@ async fn adinfo_without_a_tifa_is_an_invalid_state() {
 /// Reads the App's WidgetData, passing `done` the data or the error's name.
 const READ_WIDGET_DATA: &str = "webapis.widgetdata.read(done, function (e) { done(e.name); });";
 
-/// widgetdata-api.html: the App's secure storage (read, write and remove
-/// since 4.0) keeps its data across relaunches, like the App's other data.
+/// The App's WidgetData (widgetdata-api.html; read, write and remove since
+/// 4.0) lasts across relaunches until removed. The page doesn't say whether
+/// a TV keeps it (unverified); tizen-sim keeps it like the App's other data.
 #[tokio::test]
 async fn widgetdata_survives_relaunches_until_removed() {
     if !support::has_api("webapis.widgetdata.read") {
@@ -303,6 +304,33 @@ async fn widgetdata_survives_relaunches_until_removed() {
         "NotFoundError"
     );
     second.stop().await;
+}
+
+/// widgetdata-api.html: read, write and remove pass "UnknownError, if any
+/// other error occurs" to onerror. A directory where the data is kept makes
+/// each of them fail on the disk.
+#[tokio::test]
+async fn widgetdata_storage_failures_are_unknown_errors() {
+    if !support::has_api("webapis.widgetdata.read") {
+        return;
+    }
+    let state = tempfile::tempdir().unwrap();
+    let sandbox = tizen_sim_core::home::Home::at(".")
+        .with_state_dir(state.path().to_path_buf())
+        .sandbox_dir("Fixture011.Webapis");
+    std::fs::create_dir_all(sandbox.join("widgetdata")).unwrap();
+    let session = support::start_session("webapis", state.path());
+    session.wait_until_loaded().await.unwrap();
+    let errors = eval_callback(
+        &session,
+        "var w = webapis.widgetdata, names = []; \
+         function failed(e) { names.push(e.name); if (names.length === 3) done(names.sort()); } \
+         w.write('data', null, failed); w.read(function () { failed({ name: 'read' }); }, failed); \
+         w.remove(null, failed);",
+    )
+    .await;
+    assert_eq!(errors, json!(vec!["UnknownError"; 3]));
+    session.stop().await;
 }
 
 /// widgetdata-api.html: an argument of the wrong type throws
