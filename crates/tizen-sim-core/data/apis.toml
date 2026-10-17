@@ -184,3 +184,17 @@ since = "10.0"
 [[api]]
 name = "webapis.avplay.getUID"
 deprecated = "7.0"
+
+# samsung-product-api-references/widgetdata-api.html: the module and
+# getVersion are since 2.3, the storage methods since 4.0.
+[[api]]
+name = "webapis.widgetdata.read"
+since = "4.0"
+
+[[api]]
+name = "webapis.widgetdata.write"
+since = "4.0"
+
+[[api]]
+name = "webapis.widgetdata.remove"
+since = "4.0"
