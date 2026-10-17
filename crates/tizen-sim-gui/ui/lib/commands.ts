@@ -26,6 +26,10 @@ export const runningSessions = () => invoke<RunningSession[]>("running_sessions"
 export const adopt = (id: string) => invoke<void>("adopt", { id });
 /** Whether the TV screen is shown inside the GUI (on Windows). */
 export const embedsScreen = () => invoke<boolean>("embeds_screen");
+/** A Version Profile's device values, with those chosen in the GUI. */
+export const deviceValues = (profile: string) => invoke<Record<string, unknown>>("device_values", { profile });
+/** Sets a device value the platform APIs report; the App restarts with it. */
+export const setDeviceValue = (name: string, value: unknown) => invoke<void>("set_device_value", { name, value });
 export const setScreenArea = (area: ScreenArea | null) => invoke<void>("set_screen_area", { area });
 
 export const onSessionEvent = (handle: (event: GuiEvent) => void): Promise<UnlistenFn> =>

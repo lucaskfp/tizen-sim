@@ -28,6 +28,8 @@ fn main() {
                 "adopt",
                 "embeds_screen",
                 "set_screen_area",
+                "device_values",
+                "set_device_value",
             ])),
     )
     .expect("failed to run the Tauri build script");

@@ -19,6 +19,8 @@
     "allow-running-sessions",
     "allow-adopt",
     "allow-embeds-screen",
-    "allow-set-screen-area"
+    "allow-set-screen-area",
+    "allow-device-values",
+    "allow-set-device-value"
   ]
 }

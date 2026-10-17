@@ -285,6 +285,50 @@ async fn switching_version_profile_restarts_the_session_on_that_profile() {
 }
 
 #[tokio::test]
+async fn changing_a_device_value_restarts_the_session_with_it() {
+    let mut gui = gui();
+    gui.controller.open(fixture("hello"), None).await;
+    gui.expect_loaded(1).await;
+    assert_eq!(
+        gui.controller.device_values("10.0").unwrap()["energySaving"],
+        "OFF"
+    );
+
+    gui.controller
+        .set_device_value("energySaving", serde_json::json!("HIGH"))
+        .await
+        .unwrap();
+
+    gui.expect(30, |e| is_exit(e, 1, ExitReason::Stopped)).await;
+    gui.expect_loaded(2).await;
+    // The GUI's choice holds on every Version Profile.
+    for profile in ["10.0", "3.0"] {
+        assert_eq!(
+            gui.controller.device_values(profile).unwrap()["energySaving"],
+            "HIGH"
+        );
+    }
+    gui.controller.stop().await;
+}
+
+#[tokio::test]
+async fn an_unknown_device_value_is_refused() {
+    let gui = gui();
+    gui.controller.open(fixture("hello"), None).await;
+
+    let error = gui
+        .controller
+        .set_device_value("energySavings", serde_json::json!("HIGH"))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("energySavings"), "{error}");
+    // Nothing was kept that would fail the next start.
+    assert!(gui.controller.device_values("10.0").is_ok());
+    gui.controller.stop().await;
+}
+
+#[tokio::test]
 async fn switching_to_an_unknown_version_profile_reports_why_the_session_failed() {
     let mut gui = gui();
     gui.controller.open(fixture("hello"), None).await;
@@ -392,6 +436,13 @@ async fn a_session_started_elsewhere_can_be_adopted_and_is_left_running() {
     .await;
     let png = gui.controller.screenshot().await.unwrap();
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "not a PNG");
+    // Its owner chose its device values.
+    let error = gui
+        .controller
+        .set_device_value("energySaving", serde_json::json!("HIGH"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ControllerError::Adopted), "{error}");
 
     // Letting go of it gives its window back and leaves it running.
     gui.controller.stop().await;

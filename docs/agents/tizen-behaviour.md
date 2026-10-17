@@ -127,7 +127,7 @@ Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/
 
 ## Samsung Product API
 
-Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo`, `network`, `adinfo` and `widgetdata` module pages.
+Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo`, `network`, `avinfo`, `adinfo` and `widgetdata` module pages.
 
 - **Loading.** An App gets `webapis` by loading `<script src="$WEBAPIS/webapis/webapis.js">`. The page names no other way, so a page without it has no `webapis`. That `$WEBAPIS` resolves at any path depth comes from the product spec (#23).
 - **Errors.** `webapis`' `WebAPIException` has tizen's constants plus `INVALID_VALUES_ERR` 26, `IO_ERR` 27, `SERVICE_NOT_AVAILABLE_ERR` 28 and `UNKNOWN_ERR` 9999. That the matching error names carry those codes is **unverified**.
@@ -135,6 +135,7 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
 - **Privileges:**
   - `productinfo`: every method needs `productinfo`, except `isDisplayRotatorSupported` (since 5.5). `setSystemConfig` lists no `SecurityError` among its exceptions but describes one for `onerror`, so tizen-sim reports it there.
   - `tvinfo`: only `setMenuValue` (since 3.0, B2B products only) needs `tvinfo`. Which exception an unknown menu key raises is **unverified**.
+  - `avinfo`: no method names a privilege.
   - `network`: every method needs `network.public` (TV `guides/fundamentals/checking-network-status.html` too), except `setIpMode` (`b2bcontrol`), the DHCP option 60 methods (partner `network.dhcpoption60`) and the SoftAP methods (`network.softAP`).
 - **`productinfo`:**
   - `ProductInfoConfigKey`: `CONFIG_KEY_DATA_SERVICE` 0, `CONFIG_KEY_SERVICE_COUNTRY` 1 (read-only). The `NotSupportedError` `setSystemConfig` throws for it is marked deprecated since 3.0 with no replacement named; tizen-sim still throws it (**unverified**).
@@ -149,6 +150,16 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
   - Address getters throw `InvalidStateError` without a connection; Wi-Fi getters throw it without Wi-Fi.
   - `getTVName` exists since 4.0 and `getWiFiFrequency` since 6.0. The setters (`setIp`, `setSubnetMask`, `setGateway`, `setDns`, `setIpMode`) and the proxy methods are for B2B products only, so a TV has none of them.
   - `NetworkIpMode`'s descriptions conflict (DYNAMIC is described as IPv6, AUTO as IPv4 DHCP): **docs conflict**.
+- **`avinfo`:**
+  - `getVersion`, `isHdrTvSupport` and the `AvInfoDigitalCompMode` constants (LINE 0, RF 1) exist since 2.3.
+  - `getVersion`, `isHdrTvSupport` and the Energy Saving and Eco Sensor methods throw `NotSupportedError` "for non Samsung products". tizen-sim treats a Version Profile with a licensed brand (`productinfo.getLicensedBrand`) as one; that a TV links the two is **unverified**.
+  - `getDolbyDigitalCompMode` (deprecated since 4.0) throws `NotSupportedError`: "this feature doesn't be supported since 2016", before every Version Profile. Measured on a Tizen 5.0 TV: `NotSupportedError` with code 9, and the console gets `[AvInfo.js] getDolbyDigitalCompMode error 9`, not a "DEPRECATION WARNING".
+  - Measured on the same TV: `getVersion()` gives each module's plugin version, not the Tizen version: `avinfo` 3.0, `tvinfo` 3.3, `productinfo` 3.2. tizen-sim still reports the Version Profile's version; what other TV years report is **unverified**.
+  - Measured on the same TV: `webapis` calls made from a `<head>` script before `<body>` exists throw `TypeError: Cannot read property 'appendChild' of null`; the same calls work once the page has loaded. tizen-sim answers them either way.
+  - The TV's `avinfo` also has members the reference doesn't list (`getBacklight`, `setContrast`, `getHdmiHdcpType`, `AvInfoSoundOutputMode` and others). They aren't documented, so they aren't shimmed.
+  - `setSubAmpMode` (since 6.0) is for Hotel TVs; on any other product it throws `NotSupportedError`.
+  - `getEnergySaving`/`setEnergySaving` (`OFF`, `LOW`, `MEDIUM`, `HIGH`) and `getEcoSensor`/`setEcoSensor` (`OFF`, `ON`) exist since 6.5. The setters throw `TypeMismatchError` for a wrong type and `InvalidValuesError` for a value outside the enum. They throw `NotSupportedError` "in an emulator"; tizen-sim answers as a TV does. The order of the checks is **unverified**.
+
 - **`adinfo`** (since 2.4): `getVersion`, `getTIFA` and `isLATEnabled`, each needing `adinfo`.
   - The TIFA is a randomized, resettable device identifier for advertising. Its format is **unverified**.
   - `getTIFA` throws `InvalidStateError` "if the PSID value is null". The page doesn't say what the PSID is or when it is null.
@@ -156,6 +167,16 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
   - Every method needs `widgetdata`. `getVersion` throws `SecurityError`. `read`, `write` and `remove` throw only `TypeMismatchError` and pass `SecurityError` to `onerror`, as they do `NotFoundError` (nothing stored, for `read` and `remove`) and `DOMStringSizeError` (`write` data over 20000 characters).
   - `read`'s `onsuccess` is required; the other callbacks are optional and nullable.
   - Whether the data survives a relaunch, and whether clearing the App's data removes it, is **unverified**: the page doesn't say. tizen-sim keeps it in the App's Sandbox, like the App's files in `wgt-private`.
+
+## Display control
+
+Source: `tvdisplaycontrol.html` in the 4.0 to 10.0 TV references.
+
+- **Members.** `get3DEffectMode`, `is3DModeEnabled` and `getSupported3DEffectModeList` exist since 2.3. They report stereoscopic 3D support: a `Display3DModeState` (`NOT_CONNECTED`, `NOT_SUPPORTED`, `READY`) and `Display3DEffectMode`s.
+- **`VERTICAL_STRIPE`.** The IDL names this effect `VERTICAL_STRIPE` and the description `VERTICAL_STRIP`: **docs conflict**. tizen-sim uses the IDL's name.
+- **Privilege.** The 4.0 reference requires `http://tizen.org/privilege/tv.display` for every method. The 5.0 and 5.5 references mark it and its `SecurityError` deprecated ("This type of error is deprecated since Tizen 5.0"), and from 6.0 they name no privilege. TD `reference/security-privileges.md`: "Deprecated since 5.0". Measured on a Tizen 5.0 TV (UN50RU7100): an App without it gets every answer, with no `SecurityError`. tizen-sim enforces it only before 5.0; that 5.5 TVs don't enforce it either, and that 3.0 and 4.0 TVs do, is **unverified**.
+- **Errors.** A non-function success or error callback throws `TypeMismatchError`; a null error callback is accepted (measured on the 5.0 TV, code 17). Without the `http://tizen.org/feature/tv.display` feature, every method throws `NotSupportedError`.
+- **Values.** Measured on the 5.0 TV (no 3D): `is3DModeEnabled()` gives `NOT_SUPPORTED`, `get3DEffectMode()` gives `OFF`, the supported list is `[]`, and `getCapability('http://tizen.org/feature/tv.display')` is `true`. Other models and years are **unverified**.
 
 ## File system
 

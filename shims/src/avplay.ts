@@ -118,13 +118,6 @@ function createAVPlay(): any {
     }
   }
 
-  function requireOneOf(value: any, values: string[], argument: string) {
-    requireType(value, "string", argument);
-    if (values.indexOf(value) < 0) {
-      fail("InvalidValuesError", argument + " must be one of " + values.join(", "));
-    }
-  }
-
   function requireCallback(value: any, argument: string) {
     if (value !== undefined && value !== null && typeof value !== "function") {
       fail("TypeMismatchError", argument + " must be a function");

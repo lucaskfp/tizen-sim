@@ -8,6 +8,7 @@ use support::{EXIT_SECS, eval_callback, eventually_equals, expect_event, start, 
 use tizen_sim_core::session::{ExitReason, Lifecycle, SessionEvent};
 
 const APP_INFO_PRIVILEGE: &str = "http://tizen.org/privilege/application.info";
+const TV_DISPLAY_PRIVILEGE: &str = "http://tizen.org/privilege/tv.display";
 
 #[tokio::test]
 async fn tizen_exists_before_the_first_script_on_every_page() {
@@ -452,6 +453,113 @@ async fn lenient_mode_allows_the_read_but_still_raises_the_diagnostic() {
             if d.code == "privilege-not-declared" && d.message.contains(APP_INFO_PRIVILEGE))
     })
     .await;
+    t.session.stop().await;
+}
+
+/// tvdisplaycontrol.html: values from the Version Profile.
+#[tokio::test]
+async fn tvdisplaycontrol_reports_version_profile_values() {
+    let t = start("tizen-apis-privileged");
+    t.session.wait_until_loaded().await.unwrap();
+    let values = t
+        .session
+        .evaluate(
+            "[tizen.tvdisplaycontrol.is3DModeEnabled(), tizen.tvdisplaycontrol.get3DEffectMode(), \
+              tizen.systeminfo.getCapability('http://tizen.org/feature/tv.display')]",
+        )
+        .await
+        .unwrap();
+    assert_eq!(values, json!(["NOT_SUPPORTED", "OFF", true]));
+    let modes = eval_callback(
+        &t.session,
+        "tizen.tvdisplaycontrol.getSupported3DEffectModeList(done, function (e) { done(e.name); });",
+    )
+    .await;
+    assert_eq!(modes, json!([]));
+    // A non-function callback is a TypeMismatchError; the error callback is
+    // optional.
+    let errors = t
+        .session
+        .evaluate(
+            "(function () { function name(f) { try { f(); return 'no error'; } \
+               catch (e) { return e.name; } } return [ \
+               name(function () { tizen.tvdisplaycontrol.getSupported3DEffectModeList(); }), \
+               name(function () { tizen.tvdisplaycontrol.getSupported3DEffectModeList(function () {}, 1); }), \
+               name(function () { tizen.tvdisplaycontrol.getSupported3DEffectModeList(function () {}, null); }) \
+             ]; })()",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        errors,
+        json!(["TypeMismatchError", "TypeMismatchError", "no error"])
+    );
+    t.session.stop().await;
+}
+
+#[tokio::test]
+async fn tvdisplaycontrol_reports_a_3d_tv_from_session_overrides() {
+    let t = start_with("tizen-apis-privileged", |c| {
+        c.device.insert("display3DModeState".into(), json!("READY"));
+        c.device
+            .insert("display3DEffectMode".into(), json!("SIDE_BY_SIDE"));
+        c.device.insert(
+            "supported3DEffectModes".into(),
+            json!(["OFF", "TOP_BOTTOM", "SIDE_BY_SIDE"]),
+        );
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    let values = t
+        .session
+        .evaluate(
+            "[tizen.tvdisplaycontrol.is3DModeEnabled(), tizen.tvdisplaycontrol.get3DEffectMode()]",
+        )
+        .await
+        .unwrap();
+    assert_eq!(values, json!(["READY", "SIDE_BY_SIDE"]));
+    let modes = eval_callback(
+        &t.session,
+        "tizen.tvdisplaycontrol.getSupported3DEffectModeList(done);",
+    )
+    .await;
+    assert_eq!(modes, json!(["OFF", "TOP_BOTTOM", "SIDE_BY_SIDE"]));
+    t.session.stop().await;
+}
+
+/// `tv.display` guards every tvdisplaycontrol method before 5.0; the 5.0 and
+/// 5.5 references mark it deprecated, and from 6.0 they name no privilege
+/// (tvdisplaycontrol.html, 4.0 to 10.0). A Tizen 5.0 TV answers an App
+/// without it.
+#[tokio::test]
+async fn tvdisplaycontrol_needs_tv_display_before_tizen_5() {
+    let mut t = start("tizen-apis");
+    t.session.wait_until_loaded().await.unwrap();
+    let thrown = t
+        .session
+        .evaluate(
+            "(function () { function name(f) { try { f(); return 'no error'; } \
+               catch (e) { return e.name; } } return [ \
+               name(function () { tizen.tvdisplaycontrol.is3DModeEnabled(); }), \
+               name(function () { tizen.tvdisplaycontrol.get3DEffectMode(); }), \
+               name(function () { tizen.tvdisplaycontrol.getSupported3DEffectModeList(function () {}); }) \
+             ]; })()",
+        )
+        .await
+        .unwrap();
+    let version: f64 = support::profile().version.parse().unwrap();
+    let expected = if version < 5.0 {
+        "SecurityError"
+    } else {
+        "no error"
+    };
+    assert_eq!(thrown, json!([expected, expected, expected]));
+    if version < 5.0 {
+        expect_event(&mut t.events, 10, |e| {
+            matches!(e, SessionEvent::Diagnostic(d)
+                if d.code == "privilege-not-declared" && d.message.contains(TV_DISPLAY_PRIVILEGE))
+        })
+        .await;
+    }
     t.session.stop().await;
 }
 

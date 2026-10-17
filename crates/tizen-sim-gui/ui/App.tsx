@@ -7,6 +7,7 @@ import { Remote } from "@/components/Remote";
 import { RunningSessions } from "@/components/RunningSessions";
 import { Splitter } from "@/components/Splitter";
 import { TvScreen } from "@/components/TvScreen";
+import { TvSettings } from "@/components/TvSettings";
 import { UpdateButton } from "@/components/Update";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,14 +23,15 @@ type Panel = "devServer" | "sessions" | null;
 
 const PANEL_ID = "session-panel";
 
-/** A tab of the Log/Network/Diagnostics panel. */
-type SessionPanelTab = "log" | "network" | "diagnostics";
+/** A tab of the Log/Network/Diagnostics/TV settings panel. */
+type SessionPanelTab = "log" | "network" | "diagnostics" | "settings";
 
 /** The session panel's tabs, each labelled with what it lists. */
 const SESSION_PANEL_TABS: { value: SessionPanelTab; label: (view: SessionView) => string }[] = [
   { value: "log", label: () => "Log" },
   { value: "network", label: (view) => `Network (${view.network.length})` },
   { value: "diagnostics", label: (view) => `Diagnostics (${view.diagnostics.length})` },
+  { value: "settings", label: () => "TV settings" },
 ];
 
 export function App() {
@@ -243,6 +245,14 @@ export function App() {
             </TabsContent>
             <TabsContent value="diagnostics" className="min-h-0 border-t">
               <DiagnosticsPanel diagnostics={view.diagnostics} />
+            </TabsContent>
+            <TabsContent value="settings" className="min-h-0 border-t">
+              <TvSettings
+                profile={view.profile}
+                adopted={view.adopted}
+                onChange={(name, value) => run(() => commands.setDeviceValue(name, value))}
+                onError={showProblem}
+              />
             </TabsContent>
           </Tabs>
         </main>

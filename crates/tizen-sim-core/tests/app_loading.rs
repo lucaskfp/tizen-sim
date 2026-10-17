@@ -57,7 +57,10 @@ fn reads_name_version_package_and_privileges() {
     assert_eq!(app.package(), "Fixture005");
     assert_eq!(
         app.privileges(),
-        ["http://tizen.org/privilege/application.info"]
+        [
+            "http://tizen.org/privilege/application.info",
+            "http://tizen.org/privilege/tv.display"
+        ]
     );
 }
 

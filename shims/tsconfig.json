@@ -21,6 +21,7 @@
     "src/systeminfo.ts",
     "src/application.ts",
     "src/tvinputdevice.ts",
+    "src/tvdisplaycontrol.ts",
     "src/keyboard.ts",
     "src/filesystem.ts",
     "src/filesystem-file.ts",
