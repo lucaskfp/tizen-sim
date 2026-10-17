@@ -71,9 +71,44 @@ pub struct App {
     background_categories: Vec<String>,
     entry_point: String,
     access_policy: AccessPolicy,
+    launch_screen: Option<LaunchScreen>,
     files: AppFiles,
     /// Where a Package was unpacked; removed once the last clone is dropped.
     _unpacked: Option<Arc<tempfile::TempDir>>,
+}
+
+/// The splash screen `<tizen:launch_screen>` declares, shown from launch until
+/// `ready_when` (TD reference/config-xml.md, "Tizen launch screen"). The TV
+/// guides don't mention it; a 2019 TV shows it (measured, #113). Its paths
+/// are relative to the App's root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchScreen {
+    pub ready_when: ReadyWhen,
+    pub background_color: Option<String>,
+    pub background_image: Option<String>,
+    pub image: Option<String>,
+}
+
+/// When the launch screen hides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadyWhen {
+    /// At the "frame,rendered" callback: the page's first frame. The default.
+    FirstPaint,
+    /// At the "load,complete" callback: the page has loaded.
+    Complete,
+    /// When the App calls `window.screen.show()`.
+    Custom,
+}
+
+impl ReadyWhen {
+    /// The `ready_when` value naming it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReadyWhen::FirstPaint => "first-paint",
+            ReadyWhen::Complete => "complete",
+            ReadyWhen::Custom => "custom",
+        }
+    }
 }
 
 /// Where the App's files are served from.
@@ -307,6 +342,11 @@ impl App {
         &self.access_policy
     }
 
+    /// The App's launch screen, if it declares one.
+    pub fn launch_screen(&self) -> Option<&LaunchScreen> {
+        self.launch_screen.as_ref()
+    }
+
     /// Where the App's files are served from.
     pub fn files(&self) -> &AppFiles {
         &self.files
@@ -320,6 +360,17 @@ impl App {
         }
     }
 
+    /// The path of one of the App's files on the Session's dev server, given
+    /// its path relative to the App's root, URL-encoded.
+    pub fn served_path(&self, file: &str) -> String {
+        let root = match &self.files {
+            AppFiles::Folder(_) => Url::parse("http://app/").expect("a valid URL"),
+            AppFiles::Bundler(url) => bundler_root(url),
+        };
+        let file = root.join(file.trim_start_matches('/')).unwrap_or(root);
+        file.path().to_string()
+    }
+
     /// The path (and query) of the entry page on the Session's dev server:
     /// the entry point below the App's root. For a Dev Server URL App the
     /// root is the URL's path, taken as a folder, and the URL's query is kept,
@@ -328,16 +379,24 @@ impl App {
         match &self.files {
             AppFiles::Folder(_) => format!("/{}", self.entry_point.trim_start_matches('/')),
             AppFiles::Bundler(url) => {
-                let mut root = url.clone();
-                if !root.path().ends_with('/') {
-                    root.set_path(&format!("{}/", root.path()));
-                }
+                let root = bundler_root(url);
                 let mut entry = root.join(&self.entry_point).unwrap_or(root);
                 entry.set_query(url.query());
                 entry[url::Position::BeforePath..url::Position::AfterQuery].to_string()
             }
         }
     }
+}
+
+/// A Dev Server URL's path taken as a folder, without its query: the root of
+/// the App's files.
+fn bundler_root(url: &Url) -> Url {
+    let mut root = url.clone();
+    root.set_query(None);
+    if !root.path().ends_with('/') {
+        root.set_path(&format!("{}/", root.path()));
+    }
+    root
 }
 
 /// Reads the App in `root`. Errors name files under `shown_as` instead, so
@@ -491,6 +550,7 @@ fn read_config(file: &Path, shown_as: &Path, files: AppFiles) -> Result<App, App
         .unwrap_or("index.html")
         .to_string();
     let access_policy = access_policy(widget);
+    let launch_screen = launch_screen(widget);
 
     Ok(App {
         id,
@@ -503,6 +563,7 @@ fn read_config(file: &Path, shown_as: &Path, files: AppFiles) -> Result<App, App
         background_categories,
         entry_point,
         access_policy,
+        launch_screen,
         files,
         _unpacked: None,
     })
@@ -587,6 +648,39 @@ fn access_policy(widget: roxmltree::Node) -> AccessPolicy {
             .filter_map(AccessRequest::from_element)
             .collect(),
     )
+}
+
+/// The `<tizen:launch_screen>` element. Its `ls_landscape` is used, else
+/// `ls_default`, taking a TV screen as landscape; which one a TV picks is
+/// unverified. The docs mark every attribute mandatory but say nothing of a
+/// missing one, so a missing one is left out here. An unknown `ready_when`
+/// falls back to the documented default, `first-paint` (unverified).
+fn launch_screen(widget: roxmltree::Node) -> Option<LaunchScreen> {
+    let element = widget
+        .children()
+        .find(|n| n.has_tag_name((TIZEN_NS, "launch_screen")))?;
+    let child = |name| {
+        element
+            .children()
+            .find(|n| n.has_tag_name((TIZEN_NS, name)))
+    };
+    let screen = child("ls_landscape").or_else(|| child("ls_default"));
+    let attribute = |name| {
+        screen
+            .and_then(|n| n.attribute(name))
+            .filter(|value| !value.is_empty())
+            .map(String::from)
+    };
+    let ready_when = [ReadyWhen::Complete, ReadyWhen::Custom]
+        .into_iter()
+        .find(|when| element.attribute("ready_when") == Some(when.as_str()))
+        .unwrap_or(ReadyWhen::FirstPaint);
+    Some(LaunchScreen {
+        ready_when,
+        background_color: attribute("background_color"),
+        background_image: attribute("background_image"),
+        image: attribute("image"),
+    })
 }
 
 impl AccessPolicy {

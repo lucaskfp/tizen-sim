@@ -65,7 +65,7 @@ Sources: TD `reference/config-xml.md`, TD `guides/development/setting-properties
   - `use.voiceguide`
   - `use.ime`, `use.keypad.without.useraction`
 - **Size limits.** `<preference>` (name ≤ 80 bytes, value ≤ 8192 bytes, `readonly` honoured) is exposed to the App through the widget interface. `tizen:metadata` has the same limits and is read-only.
-- **`tizen:launch_screen ready_when`:** `first-paint` (default), `complete`, or `custom`. With `custom`, the screen waits for `window.screen.show()`.
+- **`tizen:launch_screen ready_when`:** `first-paint` (default) hides the splash screen at the "frame,rendered" callback, `complete` at "load,complete", and `custom` when the App calls `window.screen.show()`. The splash screen comes from `tizen:ls_default` (mandatory), `ls_landscape` or `ls_portrait`, each with `background_image`, `background_color`, `image` and `image_border`; the docs don't say how they're laid out. The TV guides don't mention the launch screen. Measured on a 2019 TV (Tizen 5.0, #113): `custom` without `show()` stays up for good; every App has `screen.show()`, but it hides the screen only with `custom` (under `complete` an earlier call is ignored until the load event); `first-paint` hides it before the load event; it stays up when the App goes to another page before hiding it, until that page calls `show()`, and once hidden it doesn't come back; the background image is stretched over the screen and the image is scaled to fit it, keeping its proportions, and centred; `image_border` changed nothing visible (`0px stretch`, `40px stretch`, `40px repeat` and `40px round` all looked the same).
 
 ## Privileges
 
@@ -79,7 +79,7 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
   - `application.info`, `application.launch`, `package.info`
   - `internet`, `filesystem.read`, `filesystem.write`, `content.read`, `content.write`, `download`, `alarm`, `power`, `system`, `fullscreen`, `mediastorage`, `externalstorage`
   - `tv.audio` (deprecated since 5.0)
-- **Samsung privileges** (`http://developer.samsung.com/privilege/...`): `productinfo`, `tvinfo`, `network.public`, `drmplay`, `allshare`, `widgetdata`.
+- **Samsung privileges** (`http://developer.samsung.com/privilege/...`): `productinfo`, `tvinfo`, `network.public`, `drmplay`, `allshare`, `widgetdata`. The `adinfo` module page names `adinfo` too.
 - **`application.info`** guards `ApplicationInformation.size`, which throws `SecurityError` when read without it. It does **not** guard `getAppsInfo` or `getAppInfo` on TV 9.0. (`application.html`)
 - **`internet`** is required for XHR, WebSocket, SSE, AppCache and CORS. (TD security-privileges, W3C table)
 
@@ -127,7 +127,7 @@ Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/
 
 ## Samsung Product API
 
-Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo` and `network` module pages.
+Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo`, `network`, `adinfo` and `widgetdata` module pages.
 
 - **Loading.** An App gets `webapis` by loading `<script src="$WEBAPIS/webapis/webapis.js">`. The page names no other way, so a page without it has no `webapis`. That `$WEBAPIS` resolves at any path depth comes from the product spec (#23).
 - **Errors.** `webapis`' `WebAPIException` has tizen's constants plus `INVALID_VALUES_ERR` 26, `IO_ERR` 27, `SERVICE_NOT_AVAILABLE_ERR` 28 and `UNKNOWN_ERR` 9999. That the matching error names carry those codes is **unverified**.
@@ -149,6 +149,13 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
   - Address getters throw `InvalidStateError` without a connection; Wi-Fi getters throw it without Wi-Fi.
   - `getTVName` exists since 4.0 and `getWiFiFrequency` since 6.0. The setters (`setIp`, `setSubnetMask`, `setGateway`, `setDns`, `setIpMode`) and the proxy methods are for B2B products only, so a TV has none of them.
   - `NetworkIpMode`'s descriptions conflict (DYNAMIC is described as IPv6, AUTO as IPv4 DHCP): **docs conflict**.
+- **`adinfo`** (since 2.4): `getVersion`, `getTIFA` and `isLATEnabled`, each needing `adinfo`.
+  - The TIFA is a randomized, resettable device identifier for advertising. Its format is **unverified**.
+  - `getTIFA` throws `InvalidStateError` "if the PSID value is null". The page doesn't say what the PSID is or when it is null.
+- **`widgetdata`** (since 2.3; `read`, `write` and `remove` since 4.0): "application secure storage" of encrypted data. `write` takes a string and `read` hands one back; neither takes a key or file name.
+  - Every method needs `widgetdata`. `getVersion` throws `SecurityError`. `read`, `write` and `remove` throw only `TypeMismatchError` and pass `SecurityError` to `onerror`, as they do `NotFoundError` (nothing stored, for `read` and `remove`) and `DOMStringSizeError` (`write` data over 20000 characters).
+  - `read`'s `onsuccess` is required; the other callbacks are optional and nullable.
+  - Whether the data survives a relaunch, and whether clearing the App's data removes it, is **unverified**: the page doesn't say. tizen-sim keeps it in the App's Sandbox, like the App's files in `wgt-private`.
 
 ## File system
 

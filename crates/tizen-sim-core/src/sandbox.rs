@@ -29,6 +29,10 @@ pub const ROOTS: &[&str] = &[
 /// The read-only root holding the App's own files.
 const PACKAGE_ROOT: &str = "wgt-package";
 
+/// The file in the Sandbox's directory, outside the roots, that holds the
+/// App's WidgetData.
+const WIDGET_DATA_FILE: &str = "widgetdata";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ResetError {
     #[error("{0} is running; stop its Session first")]
@@ -129,6 +133,32 @@ impl Sandbox {
                 let from = self.resolve(params["from"].as_str().unwrap_or_default())?;
                 let to = self.resolve(params["to"].as_str().unwrap_or_default())?;
                 transfer(&from, &to, params, method == "move")
+            }
+            _ => Err(error("NotSupportedError", format!("unknown call {method}"))),
+        }
+    }
+
+    /// Runs one Bridge call (`widgetdata.<method>`) on the App's WidgetData,
+    /// its secure storage (widgetdata-api.html). It lives in the Sandbox
+    /// outside the virtual roots, so `tizen.filesystem` can't reach it, it
+    /// survives relaunches and `reset` clears it. The TV encrypts it; the
+    /// simulator keeps it as plain text.
+    pub fn widget_data(&self, method: &str, params: &Value) -> Result<Value, SandboxError> {
+        let file = self.dir.join(WIDGET_DATA_FILE);
+        let failed = |e| io_error("WidgetData", e);
+        match method {
+            "read" => Ok(Value::String(
+                std::fs::read_to_string(&file).map_err(failed)?,
+            )),
+            "write" => {
+                std::fs::create_dir_all(&self.dir).map_err(failed)?;
+                let data = params["data"].as_str().unwrap_or_default();
+                std::fs::write(&file, data).map_err(failed)?;
+                Ok(Value::Null)
+            }
+            "remove" => {
+                std::fs::remove_file(&file).map_err(failed)?;
+                Ok(Value::Null)
             }
             _ => Err(error("NotSupportedError", format!("unknown call {method}"))),
         }
@@ -858,6 +888,57 @@ mod tests {
 
         assert!(!exists(&sandbox, "wgt-private-tmp/cache.json"));
         assert!(exists(&sandbox, "wgt-private/settings.json"));
+    }
+
+    #[test]
+    fn widget_data_reads_back_in_a_later_session() {
+        let (dir, sandbox) = sandbox();
+        sandbox
+            .widget_data("write", &json!({ "data": "token=abc" }))
+            .unwrap();
+
+        let relaunched = Sandbox::new(dir.path().join("sandbox"), None);
+        relaunched.start_session().unwrap();
+
+        assert_eq!(
+            relaunched.widget_data("read", &json!({})).unwrap(),
+            "token=abc"
+        );
+    }
+
+    #[test]
+    fn removed_widget_data_is_not_found() {
+        let (_dir, sandbox) = sandbox();
+        sandbox
+            .widget_data("write", &json!({ "data": "token=abc" }))
+            .unwrap();
+
+        sandbox.widget_data("remove", &json!({})).unwrap();
+
+        for method in ["read", "remove"] {
+            assert_eq!(
+                sandbox.widget_data(method, &json!({})).unwrap_err().name,
+                "NotFoundError",
+                "{method}"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_clears_widget_data() {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::at(home_dir.path());
+        let sandbox = Sandbox::new(home.sandbox_dir("abcdefghij.App"), None);
+        sandbox
+            .widget_data("write", &json!({ "data": "token=abc" }))
+            .unwrap();
+
+        reset("abcdefghij.App", &home).unwrap();
+
+        assert_eq!(
+            sandbox.widget_data("read", &json!({})).unwrap_err().name,
+            "NotFoundError"
+        );
     }
 
     #[test]
