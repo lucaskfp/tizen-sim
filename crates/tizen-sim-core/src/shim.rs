@@ -1,7 +1,7 @@
 //! The Shim bootstrap: the script every served HTML document loads before any
 //! App script (ADR-0002), carrying the Session's data and the Shim bundle.
 
-use crate::app::{App, ReadyWhen};
+use crate::app::App;
 use crate::profile::VersionProfile;
 use crate::remote_keys::{KeyMap, RemoteKey};
 use crate::screen::AppResolution;
@@ -69,11 +69,7 @@ pub fn session_data(
             "installedAt": installed_at_ms(),
         },
         "launchScreen": app.launch_screen().map(|screen| json!({
-            "readyWhen": match screen.ready_when {
-                ReadyWhen::FirstPaint => "first-paint",
-                ReadyWhen::Complete => "complete",
-                ReadyWhen::Custom => "custom",
-            },
+            "readyWhen": screen.ready_when.as_str(),
             "backgroundColor": screen.background_color,
             "backgroundImage": screen.background_image.as_deref().map(|file| app.served_path(file)),
             "image": screen.image.as_deref().map(|file| app.served_path(file)),

@@ -166,7 +166,13 @@ async fn it_shows_once_per_launch() {
 
     // The Host's reload launches the App again.
     test.session.evaluate("history.back(); 0").await.unwrap();
-    eventually_equals(&test.session, "location.pathname", json!("/index.html")).await;
+    // Loaded, so its load event can't be taken for the reload's.
+    eventually_equals(
+        &test.session,
+        "location.pathname + ' ' + document.readyState",
+        json!("/index.html complete"),
+    )
+    .await;
     test.session.reload().await.unwrap();
     assert_eq!(
         test.session.evaluate(SHOWN).await.unwrap(),

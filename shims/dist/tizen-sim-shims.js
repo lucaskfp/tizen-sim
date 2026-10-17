@@ -3034,13 +3034,28 @@ function formatTime(ms) {
         }
     }
 })();
-var LAUNCHED_KEY = "__tizen-sim:launch-screen-hidden";
+var HIDDEN_KEY = "__tizen-sim:launch-screen-hidden";
+config.forgetLaunchScreen = function () {
+    try {
+        sessionStorage.removeItem(HIDDEN_KEY);
+    }
+    catch (e) {
+    }
+};
 (function () {
     var launchScreen = config.launchScreen;
     var overlay = null;
+    function hiddenBefore() {
+        try {
+            return sessionStorage.getItem(HIDDEN_KEY) !== null;
+        }
+        catch (e) {
+            return false;
+        }
+    }
     function hide() {
         try {
-            sessionStorage.setItem(LAUNCHED_KEY, "1");
+            sessionStorage.setItem(HIDDEN_KEY, "1");
         }
         catch (e) {
         }
@@ -3102,14 +3117,6 @@ var LAUNCHED_KEY = "__tizen-sim:launch-screen-hidden";
     }
     else if (launchScreen.readyWhen === "complete") {
         window.addEventListener("load", hide);
-    }
-    function hiddenBefore() {
-        try {
-            return sessionStorage.getItem(LAUNCHED_KEY) !== null;
-        }
-        catch (e) {
-            return false;
-        }
     }
 })();
 function removeMissingFeatures() {

@@ -65,6 +65,9 @@ interface SimConfig {
   keyMap: { [keyCode: string]: string };
   // Hooks the Host calls through CDP; installed by the Shims.
   keys?: { isRegistered: (name: string) => boolean };
+  // Shows the launch screen again on the next page; the Host calls it
+  // before its reloads and restarts (see launch-screen.ts).
+  forgetLaunchScreen?: () => void;
   // Installs `webapis`; called by the virtual $WEBAPIS/webapis/webapis.js.
   installWebapis?: () => void;
 }

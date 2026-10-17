@@ -1152,9 +1152,9 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     Ok(())
 }
 
-/// Clears the page's mark that its launch screen was hidden.
-const FORGET_LAUNCH_SCREEN: &str =
-    "try { sessionStorage.removeItem('__tizen-sim:launch-screen-hidden'); } catch (e) {} 0";
+/// Has the page show its launch screen again (shims/src/launch-screen.ts).
+/// The page before the first load has no Shims.
+const FORGET_LAUNCH_SCREEN: &str = "(function (host) {      if (host && host.forgetLaunchScreen) host.forgetLaunchScreen();      })(window.__TIZEN_SIM__); 0";
 
 /// Waits for the page's first paint, as some Engines (M94, M108) drop key
 /// events until the page's first frame is up, which can come after the load

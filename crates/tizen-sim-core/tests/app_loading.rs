@@ -226,8 +226,8 @@ fn launch_screen(children: &str) -> Option<LaunchScreen> {
 }
 
 /// `<tizen:launch_screen>` and its `ready_when` (TD reference/config-xml.md,
-/// "Tizen launch screen"). TVs are landscape, so `ls_landscape` is taken over
-/// `ls_default` when both are there.
+/// "Tizen launch screen"). `ls_landscape` is taken over `ls_default` when
+/// both are there; which one a TV picks is unverified.
 #[test]
 fn the_launch_screen_is_read_with_when_it_hides() {
     assert_eq!(launch_screen(""), None);

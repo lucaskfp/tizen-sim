@@ -99,6 +99,17 @@ pub enum ReadyWhen {
     Custom,
 }
 
+impl ReadyWhen {
+    /// The `ready_when` value naming it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReadyWhen::FirstPaint => "first-paint",
+            ReadyWhen::Complete => "complete",
+            ReadyWhen::Custom => "custom",
+        }
+    }
+}
+
 /// Where the App's files are served from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppFiles {
@@ -353,14 +364,7 @@ impl App {
     pub fn served_path(&self, file: &str) -> String {
         let root = match &self.files {
             AppFiles::Folder(_) => Url::parse("http://app/").expect("a valid URL"),
-            AppFiles::Bundler(url) => {
-                let mut root = url.clone();
-                root.set_query(None);
-                if !root.path().ends_with('/') {
-                    root.set_path(&format!("{}/", root.path()));
-                }
-                root
-            }
+            AppFiles::Bundler(url) => bundler_root(url),
         };
         let file = root.join(file.trim_start_matches('/')).unwrap_or(root);
         file.path().to_string()
@@ -374,16 +378,24 @@ impl App {
         match &self.files {
             AppFiles::Folder(_) => format!("/{}", self.entry_point.trim_start_matches('/')),
             AppFiles::Bundler(url) => {
-                let mut root = url.clone();
-                if !root.path().ends_with('/') {
-                    root.set_path(&format!("{}/", root.path()));
-                }
+                let root = bundler_root(url);
                 let mut entry = root.join(&self.entry_point).unwrap_or(root);
                 entry.set_query(url.query());
                 entry[url::Position::BeforePath..url::Position::AfterQuery].to_string()
             }
         }
     }
+}
+
+/// A Dev Server URL's path taken as a folder, without its query: the root of
+/// the App's files.
+fn bundler_root(url: &Url) -> Url {
+    let mut root = url.clone();
+    root.set_query(None);
+    if !root.path().ends_with('/') {
+        root.set_path(&format!("{}/", root.path()));
+    }
+    root
 }
 
 /// Reads the App in `root`. Errors name files under `shown_as` instead, so
@@ -637,8 +649,8 @@ fn access_policy(widget: roxmltree::Node) -> AccessPolicy {
     )
 }
 
-/// The `<tizen:launch_screen>` element. TVs are landscape, so its
-/// `ls_landscape` is used, else `ls_default`; which one a TV picks is
+/// The `<tizen:launch_screen>` element. Its `ls_landscape` is used, else
+/// `ls_default`, taking a TV screen as landscape; which one a TV picks is
 /// unverified. The docs mark every attribute mandatory but say nothing of a
 /// missing one, so a missing one is left out here. An unknown `ready_when`
 /// falls back to the documented default, `first-paint` (unverified).
@@ -658,11 +670,10 @@ fn launch_screen(widget: roxmltree::Node) -> Option<LaunchScreen> {
             .filter(|value| !value.is_empty())
             .map(String::from)
     };
-    let ready_when = match element.attribute("ready_when") {
-        Some("complete") => ReadyWhen::Complete,
-        Some("custom") => ReadyWhen::Custom,
-        _ => ReadyWhen::FirstPaint,
-    };
+    let ready_when = [ReadyWhen::Complete, ReadyWhen::Custom]
+        .into_iter()
+        .find(|when| element.attribute("ready_when") == Some(when.as_str()))
+        .unwrap_or(ReadyWhen::FirstPaint);
     Some(LaunchScreen {
         ready_when,
         background_color: attribute("background_color"),

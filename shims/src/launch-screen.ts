@@ -9,22 +9,40 @@
 // - how a TV lays out `background_image`, `image` and `image_border`. Here the
 //   background image is stretched over the screen, the image is centred at
 //   its own size, and `image_border` is ignored;
+// - whether a TV has `screen.show()` for an App without a launch screen.
+//   Here every App has it;
 // - whether `screen.show()` also hides it before `first-paint` or `complete`
 //   would. Here it does;
 // - whether it shows again when the App goes to another page. Here it shows
 //   once per launch. The Host counts its reloads and restarts as launches
-//   and clears the mark (LAUNCHED_KEY) before them (see session.rs).
+//   and calls `config.forgetLaunchScreen` before them (see session.rs).
 
 /** The sessionStorage mark that the launch screen was hidden. */
-var LAUNCHED_KEY = "__tizen-sim:launch-screen-hidden";
+var HIDDEN_KEY = "__tizen-sim:launch-screen-hidden";
+
+config.forgetLaunchScreen = function () {
+  try {
+    sessionStorage.removeItem(HIDDEN_KEY);
+  } catch (e) {
+    // Storage may be off; nothing was marked then.
+  }
+};
 
 (function () {
   var launchScreen = config.launchScreen;
   var overlay: HTMLElement | null = null;
 
+  function hiddenBefore(): boolean {
+    try {
+      return sessionStorage.getItem(HIDDEN_KEY) !== null;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function hide() {
     try {
-      sessionStorage.setItem(LAUNCHED_KEY, "1");
+      sessionStorage.setItem(HIDDEN_KEY, "1");
     } catch (e) {
       // Storage may be off; the page then shows it again if it navigates.
     }
@@ -91,13 +109,5 @@ var LAUNCHED_KEY = "__tizen-sim:launch-screen-hidden";
     });
   } else if (launchScreen.readyWhen === "complete") {
     window.addEventListener("load", hide);
-  }
-
-  function hiddenBefore(): boolean {
-    try {
-      return sessionStorage.getItem(LAUNCHED_KEY) !== null;
-    } catch (e) {
-      return false;
-    }
   }
 })();
