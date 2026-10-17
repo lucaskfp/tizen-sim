@@ -42,6 +42,14 @@ interface MediaConfig {
   someModels: { [codec: string]: string[] };
 }
 
+interface LaunchScreenConfig {
+  readyWhen: "first-paint" | "complete" | "custom";
+  backgroundColor: string | null;
+  // Paths on the dev server, URL-encoded.
+  backgroundImage: string | null;
+  image: string | null;
+}
+
 interface SimConfig {
   bridgeUrl: string;
   // Where the dev server serves the files of the App's Sandbox.
@@ -50,11 +58,16 @@ interface SimConfig {
   // The App's screen size in CSS px.
   screen: { width: number; height: number };
   app: AppConfig;
+  // The App's <tizen:launch_screen>; null when it declares none.
+  launchScreen: LaunchScreenConfig | null;
   profile: ProfileConfig;
   // Keyboard keyCode -> Remote Key name, for keys with no meaning on a TV.
   keyMap: { [keyCode: string]: string };
   // Hooks the Host calls through CDP; installed by the Shims.
   keys?: { isRegistered: (name: string) => boolean };
+  // Shows the launch screen again on the next page; the Host calls it
+  // before its reloads and restarts (see launch-screen.ts).
+  forgetLaunchScreen?: () => void;
   // Installs `webapis`; called by the virtual $WEBAPIS/webapis/webapis.js.
   installWebapis?: () => void;
 }
