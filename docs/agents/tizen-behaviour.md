@@ -65,7 +65,7 @@ Sources: TD `reference/config-xml.md`, TD `guides/development/setting-properties
   - `use.voiceguide`
   - `use.ime`, `use.keypad.without.useraction`
 - **Size limits.** `<preference>` (name ≤ 80 bytes, value ≤ 8192 bytes, `readonly` honoured) is exposed to the App through the widget interface. `tizen:metadata` has the same limits and is read-only.
-- **`tizen:launch_screen ready_when`:** `first-paint` (default), `complete`, or `custom`. With `custom`, the screen waits for `window.screen.show()`.
+- **`tizen:launch_screen ready_when`:** `first-paint` (default) hides the splash screen at the "frame,rendered" callback, `complete` at "load,complete", and `custom` when the App calls `window.screen.show()`. The splash screen comes from `tizen:ls_default` (mandatory), `ls_landscape` or `ls_portrait`, each with `background_image`, `background_color`, `image` and `image_border`; the docs don't say how they're laid out. The TV guides don't mention the launch screen.
 
 ## Privileges
 
