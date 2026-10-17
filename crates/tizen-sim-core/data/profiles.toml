@@ -116,6 +116,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -233,6 +239,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -350,6 +362,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -467,6 +485,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -584,6 +608,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -701,6 +731,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -818,6 +854,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -935,6 +977,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -1052,6 +1100,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's
@@ -1169,6 +1223,12 @@ wifiFrequency = 5180
 # NetworkWiFiSecurityMode and NetworkWiFiEncryptionType names.
 wifiSecurityMode = "WPA2_PSK"
 wifiEncryptionType = "AES"
+# webapis.adinfo (adinfo-api.html): the TIFA, a resettable advertising
+# identifier, and whether the user enabled Limit Ad Tracking. The TIFA's
+# format is unverified. Empty stands for a null PSID, which makes getTIFA
+# throw InvalidStateError.
+tifa = "TIZENSIMTIFA00001"
+limitAdTracking = false
 
 # TV menu settings webapis.tvinfo.getMenuValue reports, by TvInfoMenuKey name
 # (tvinfo-api.html#TvInfoMenuValue). Missing keys read as 0, each key's

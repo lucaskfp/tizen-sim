@@ -135,6 +135,9 @@ export function App() {
         </Button>
 
         <div className="ml-auto flex items-center gap-2 text-sm">
+          <span title="Installed version" className="text-muted-foreground">
+            tizen-sim {__TIZEN_SIM_VERSION__}
+          </span>
           <UpdateButton onError={showProblem} />
           {view.appId && <span className="font-medium">{view.appId}</span>}
           {view.adopted && <Badge variant="outline">Started from the CLI</Badge>}
@@ -167,7 +170,7 @@ export function App() {
 
       <div className="flex min-h-0 flex-1">
         <aside className="w-60 shrink-0 overflow-auto border-r p-3">
-          <Remote disabled={!loaded} onPress={(key) => run(() => commands.pressKey(key))} />
+          <Remote disabled={!loaded && view.status.kind !== "asking"} onPress={(key) => run(() => commands.pressKey(key))} />
         </aside>
 
         <main ref={splitArea} className={cn("flex min-h-0 min-w-0 flex-1", dockedBottom ? "flex-col" : "flex-row")}>
@@ -273,6 +276,8 @@ function StatusBadge({ status }: { status: Status }) {
         </Badge>
       );
     }
+    case "asking":
+      return <Badge variant="secondary">Waiting for a gamepad</Badge>;
     case "running":
       return <Badge>Running</Badge>;
     case "hidden":

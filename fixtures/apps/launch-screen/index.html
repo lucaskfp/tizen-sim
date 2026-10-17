@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script>
+  function launchScreenShown() {
+    return !!document.querySelector('[data-tizen-sim="launch-screen"]');
+  }
+  window.seen = { atStart: launchScreenShown() };
+  setTimeout(function () {
+    window.seen.midLoad = launchScreenShown();
+  }, 1000);
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #008000; }
+</style>
+</head>
+<body>
+<!-- slow image -->
+</body>
+</html>

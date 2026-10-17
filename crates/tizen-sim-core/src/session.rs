@@ -12,6 +12,7 @@ use crate::devtools_relay::{self, DevtoolsRelay};
 use crate::engine::{
     self, DownloadProgress, EngineSpec, EngineWindow, LaunchOptions, RunningEngine,
 };
+use crate::gamepad;
 use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::{ProfileCatalog, RememberedProfiles, VersionProfile};
@@ -60,6 +61,9 @@ pub struct SessionConfig {
     /// Start with the transparency checkerboard on (see
     /// `Session::set_checkerboard`).
     pub checkerboard: bool,
+    /// The gamepad models taken as connected to the TV, for Apps whose
+    /// `gamepad` metadata requires one (see `crate::gamepad`).
+    pub gamepads: Vec<String>,
     pub home: Home,
 }
 
@@ -139,6 +143,12 @@ pub enum Lifecycle {
         /// browser or with `Session::open_devtools`.
         devtools_url: String,
     },
+    /// The App requires one of these gamepad models and none is connected,
+    /// so the platform asks, in the Engine window, before launching it: Play
+    /// launches it, Cancel and Connect Now don't (see `crate::gamepad`).
+    GamepadRequired {
+        models: Vec<String>,
+    },
     AppLoaded {
         url: String,
     },
@@ -171,6 +181,9 @@ pub enum ExitReason {
     /// The Exit key was pressed or the Back key held, which makes a TV
     /// terminate the App.
     TerminatedByRemote,
+    /// The App was never launched: Cancel or Connect Now was chosen in the
+    /// popup asking for a required gamepad.
+    LaunchCanceled,
 }
 
 /// A message in the App's console: written by the App, or by the Engine
@@ -235,6 +248,9 @@ struct Inner {
     reloads: mpsc::UnboundedSender<oneshot::Sender<Result<(), String>>>,
     /// The Engine's process and window while the App is loaded.
     engine: Mutex<Option<EngineProcess>>,
+    /// The page of the platform popup shown before the App launches, which
+    /// takes the Remote Keys meanwhile.
+    popup: Mutex<Option<Arc<Cdp>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -306,6 +322,7 @@ impl Session {
             devtools: tokio::sync::Mutex::new(None),
             reloads,
             engine: Mutex::new(None),
+            popup: Mutex::new(None),
         });
         let task = tokio::spawn(run(config, inner.clone(), stop_rx, reload_rx));
         *inner.task.try_lock().expect("fresh mutex") = Some(task);
@@ -372,20 +389,18 @@ impl Session {
         key: PhysicalKey,
         action: KeyAction,
     ) -> Result<(), SessionError> {
-        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let popup = self.inner.popup.lock().unwrap().clone();
+        let cdp = match (&popup, self.inner.loaded.get()) {
+            (Some(popup), _) => popup,
+            (None, Some(loaded)) => &loaded.cdp,
+            (None, None) => return Err(SessionError::NotLoaded),
+        };
         let (event_type, repeat) = match action {
             KeyAction::Down => ("rawKeyDown", false),
             KeyAction::Repeat => ("rawKeyDown", true),
             KeyAction::Up => ("keyUp", false),
         };
-        dispatch_key(
-            &loaded.cdp,
-            event_type,
-            key.0,
-            key.dom_key().as_deref(),
-            repeat,
-        )
-        .await
+        dispatch_key(cdp, event_type, key.0, key.dom_key().as_deref(), repeat).await
     }
 
     /// A PNG of the App's screen at the TV's resolution, whatever the size of
@@ -536,7 +551,12 @@ async fn run(
     };
     let mut running = match started {
         Ok(running) => running,
-        Err(error) => {
+        Err(StartError::Ended(reason)) => {
+            // Dropping what startup had started closes the Engine and server.
+            inner.finish(reason);
+            return;
+        }
+        Err(StartError::Failed(error)) => {
             tracing::error!(%error, "Session failed to start");
             inner
                 .log
@@ -565,11 +585,7 @@ async fn run(
                 break reason;
             }
             status = running.engine.child.wait() => {
-                // Closing its window makes the Engine quit normally.
-                break match status {
-                    Ok(status) if status.success() => ExitReason::EngineClosed,
-                    _ => ExitReason::EngineCrashed,
-                };
+                break engine_exit_reason(status);
             }
             Some(batch) = next_batch(&mut running.watcher) => {
                 inner.hot_reload(&config, &mut running, batch).await;
@@ -591,6 +607,11 @@ impl Inner {
     async fn press_key(&self, name: &str) -> Result<KeyOutcome, SessionError> {
         let key = RemoteKey::find(name)
             .ok_or_else(|| SessionError::UnknownRemoteKey(name.to_string()))?;
+        let popup = self.popup.lock().unwrap().clone();
+        if let Some(popup) = popup {
+            // The platform's own popup takes every key; the App isn't running.
+            return self.deliver_key(&popup, key).await;
+        }
         let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
         let drop_key = |reason: String| {
             let outcome = KeyOutcome::Dropped { reason };
@@ -639,11 +660,16 @@ impl Inner {
             }
         }
 
+        self.deliver_key(&loaded.cdp, key).await
+    }
+
+    /// Presses and releases `key` in the page, reporting it delivered.
+    async fn deliver_key(&self, cdp: &Cdp, key: &RemoteKey) -> Result<KeyOutcome, SessionError> {
         let dom_key = key.dom_key.as_deref();
-        dispatch_key(&loaded.cdp, "rawKeyDown", key.code, dom_key, false).await?;
-        dispatch_key(&loaded.cdp, "keyUp", key.code, dom_key, false).await?;
+        dispatch_key(cdp, "rawKeyDown", key.code, dom_key, false).await?;
+        dispatch_key(cdp, "keyUp", key.code, dom_key, false).await?;
         self.log.publish(SessionEvent::RemoteKey {
-            key: name.to_string(),
+            key: key.name.clone(),
             outcome: KeyOutcome::Delivered,
         });
         Ok(KeyOutcome::Delivered)
@@ -850,13 +876,28 @@ impl Inner {
 
     fn finish(&self, reason: ExitReason) {
         self.engine.lock().unwrap().take();
+        self.popup.lock().unwrap().take();
         self.log
             .publish(SessionEvent::Lifecycle(Lifecycle::Exited { reason }));
         self.status.send_replace(SessionStatus::Exited);
     }
 }
 
-async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
+/// Why a Session didn't get its App running.
+enum StartError {
+    Failed(String),
+    /// It ended before the App launched: the developer chose not to launch
+    /// it, or the Engine went away during the gamepad popup.
+    Ended(ExitReason),
+}
+
+impl From<String> for StartError {
+    fn from(error: String) -> StartError {
+        StartError::Failed(error)
+    }
+}
+
+async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, StartError> {
     let session_dir = SessionDir::create(&crate::session_dir::sessions_dir(&config.home))
         .map_err(|e| format!("could not create the Session directory: {e}"))?;
     let app =
@@ -1062,6 +1103,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     let url = server.url(&app.entry_path());
     let runs_in_background = app.runs_in_background();
+    let required_gamepads = app.required_gamepads().to_vec();
     let mut running = Running {
         engine,
         server,
@@ -1075,24 +1117,31 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         _devtools_relay: devtools_relay,
         session_dir,
     };
+    let asks_for_gamepad = gamepad::needs_popup(&required_gamepads, &config.gamepads);
+    if asks_for_gamepad {
+        // Shown in the Engine window, so the Engine is recorded first.
+        record_engine(inner, &running, &mut entry, config.headless).await;
+        ask_for_gamepad(inner, &mut running, required_gamepads).await?;
+    }
     running.network.set_logging(true);
-    load_page(&mut running, "Page.navigate", json!({ "url": url }))
+    let loaded = if asks_for_gamepad {
+        // The App replaces the popup, which isn't in the App's history.
+        let replace = format!("location.replace({}); 0", Value::String(url.clone()));
+        load_page(
+            &mut running,
+            "Runtime.evaluate",
+            json!({ "expression": replace }),
+        )
         .await
-        .map_err(|e| format!("could not load the App at {url}: {e}"))?;
+    } else {
+        load_page(&mut running, "Page.navigate", json!({ "url": url })).await
+    };
+    loaded.map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
     inner.restore_backdrop(&cdp).await;
-    entry.engine_pid = running.engine.child.id();
-    if !config.headless {
-        entry.window = engine_window(&running.engine).await;
+    if entry.engine_pid.is_none() {
+        record_engine(inner, &running, &mut entry, config.headless).await;
     }
-    if let Err(error) = registry::write_entry(running.session_dir.path(), &entry) {
-        tracing::warn!(%error, "could not record the Engine in the Session Registry");
-    }
-    *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
-        pid,
-        window: entry.window,
-        display: running.engine.display(),
-    });
     let _ = inner.loaded.set(Loaded {
         cdp,
         profile,
@@ -1110,6 +1159,100 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .publish(SessionEvent::Lifecycle(Lifecycle::AppLoaded { url }));
     inner.status.send_replace(SessionStatus::Loaded);
     Ok(running)
+}
+
+/// Records the Engine's process and window, in the Session Registry and for
+/// `Session::engine_window`.
+async fn record_engine(
+    inner: &Inner,
+    running: &Running,
+    entry: &mut RegistryEntry,
+    headless: bool,
+) {
+    entry.engine_pid = running.engine.child.id();
+    if !headless {
+        entry.window = engine_window(&running.engine).await;
+    }
+    if let Err(error) = registry::write_entry(running.session_dir.path(), entry) {
+        tracing::warn!(%error, "could not record the Engine in the Session Registry");
+    }
+    *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
+        pid,
+        window: entry.window,
+        display: running.engine.display(),
+    });
+}
+
+/// Shows the platform's popup asking for one of the `models` and waits for
+/// the developer's choice: Play goes on to launch the App, Cancel and
+/// Connect Now don't (see `crate::gamepad`).
+async fn ask_for_gamepad(
+    inner: &Inner,
+    running: &mut Running,
+    models: Vec<String>,
+) -> Result<(), StartError> {
+    load_page(
+        running,
+        "Page.navigate",
+        json!({ "url": gamepad::popup_url(&models) }),
+    )
+    .await
+    .map_err(|e| format!("could not show the gamepad popup: {e}"))?;
+    *inner.popup.lock().unwrap() = Some(running.cdp.clone());
+    inner
+        .log
+        .publish(SessionEvent::Lifecycle(Lifecycle::GamepadRequired {
+            models,
+        }));
+    // An Engine closed or crashed during the popup ends the Session as it
+    // would with the App running. Its process is watched, as the page may
+    // not answer once the Engine is killed: polling the popup of a killed
+    // M47 Engine (Tizen 3.0) waited past 600 s in the gamepad tests.
+    let choice = tokio::select! {
+        status = running.engine.child.wait() => {
+            return Err(StartError::Ended(engine_exit_reason(status)));
+        }
+        choice = popup_choice(&running.cdp) => choice,
+    };
+    let choice = match choice {
+        Ok(choice) => choice,
+        Err(error) => {
+            // The page may be lost a moment before the process exits.
+            let exited = tokio::time::timeout(Duration::from_secs(5), running.engine.child.wait());
+            if let Ok(status) = exited.await {
+                return Err(StartError::Ended(engine_exit_reason(status)));
+            }
+            return Err(format!("lost the gamepad popup: {error}").into());
+        }
+    };
+    inner.popup.lock().unwrap().take();
+    match choice {
+        gamepad::Choice::Play => Ok(()),
+        gamepad::Choice::Cancel | gamepad::Choice::ConnectNow => {
+            Err(StartError::Ended(ExitReason::LaunchCanceled))
+        }
+    }
+}
+
+/// Waits for the developer's choice in the gamepad popup. Polled rather than
+/// awaited, as `eval_callback` in the Session tests' support does: Engines
+/// without `awaitPromise` can't await a promise.
+async fn popup_choice(cdp: &Cdp) -> Result<gamepad::Choice, CdpError> {
+    loop {
+        let value = cdp.evaluate(gamepad::CHOICE_EXPRESSION).await?;
+        if let Some(choice) = gamepad::parse_choice(&value) {
+            return Ok(choice);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Why the Engine process ended: closing its window makes it quit normally.
+fn engine_exit_reason(status: std::io::Result<std::process::ExitStatus>) -> ExitReason {
+    match status {
+        Ok(status) if status.success() => ExitReason::EngineClosed,
+        _ => ExitReason::EngineCrashed,
+    }
 }
 
 /// The Engine's window, given a moment to show if it hasn't yet.
@@ -1132,6 +1275,9 @@ async fn engine_window(engine: &RunningEngine) -> Option<u64> {
 async fn load_page(running: &mut Running, method: &str, params: Value) -> Result<(), String> {
     // Forget loads that finished before this one started.
     while running.page_loads.try_recv().is_ok() {}
+    // The Host's loads launch the App, so its launch screen shows again
+    // (shims/src/launch-screen.ts).
+    let _ = running.cdp.evaluate(FORGET_LAUNCH_SCREEN).await;
     running
         .cdp
         .call(method, params)
@@ -1148,6 +1294,10 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     wait_for_first_paint(&running.cdp).await;
     Ok(())
 }
+
+/// Has the page show its launch screen again (shims/src/launch-screen.ts).
+/// The page before the first load has no Shims.
+const FORGET_LAUNCH_SCREEN: &str = "(function (host) {      if (host && host.forgetLaunchScreen) host.forgetLaunchScreen();      })(window.__TIZEN_SIM__); 0";
 
 /// Waits for the page's first paint, as some Engines (M94, M108) drop key
 /// events until the page's first frame is up, which can come after the load

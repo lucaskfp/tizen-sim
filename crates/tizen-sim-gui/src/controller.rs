@@ -289,6 +289,7 @@ impl Controller {
             device: self.device.lock().unwrap().clone(),
             resolution: Default::default(),
             checkerboard: false,
+            gamepads: Vec::new(),
             home: self.options.home.clone(),
         }));
         let handle = Handle::Owned(session.clone());
@@ -446,6 +447,7 @@ async fn forward(
     screen: Arc<dyn Screen>,
     home: Home,
 ) {
+    let mut shown = false;
     loop {
         let Some(event) = events.next().await else {
             // An adopted Session's owner went away without a word, and its
@@ -461,10 +463,17 @@ async fn forward(
             }
             return;
         };
-        let loaded = matches!(event, SessionEvent::Lifecycle(Lifecycle::AppLoaded { .. }));
+        // The Engine window is shown from the gamepad popup on, if there is one.
+        let show = !shown
+            && matches!(
+                event,
+                SessionEvent::Lifecycle(
+                    Lifecycle::GamepadRequired { .. } | Lifecycle::AppLoaded { .. }
+                )
+            );
         let exited = matches!(event, SessionEvent::Lifecycle(Lifecycle::Exited { .. }));
         sink(GuiEvent::Session { session, event });
-        if loaded {
+        if show {
             let embedded = match engine_window(&handle, &home) {
                 Some((window, pid)) => {
                     let owned = matches!(handle, Handle::Owned(_));
@@ -473,6 +482,7 @@ async fn forward(
                 None => false,
             };
             sink(GuiEvent::Screen { session, embedded });
+            shown = true;
         }
         if exited {
             screen.release();
@@ -481,7 +491,8 @@ async fn forward(
     }
 }
 
-/// The Session's Engine window and process, once its App has loaded.
+/// The Session's Engine window and process, once its App has loaded or the
+/// gamepad popup is up.
 fn engine_window(handle: &Handle, home: &Home) -> Option<(u64, Option<u32>)> {
     match handle {
         Handle::Owned(session) => Some((session.engine_window()?, session.engine_pid())),

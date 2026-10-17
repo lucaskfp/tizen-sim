@@ -10,6 +10,8 @@ use tizen_sim_core::session::{Lifecycle, SessionEvent};
 
 const PRODUCTINFO_PRIVILEGE: &str = "http://developer.samsung.com/privilege/productinfo";
 const NETWORK_PRIVILEGE: &str = "http://developer.samsung.com/privilege/network.public";
+const ADINFO_PRIVILEGE: &str = "http://developer.samsung.com/privilege/adinfo";
+const WIDGETDATA_PRIVILEGE: &str = "http://developer.samsung.com/privilege/widgetdata";
 
 /// Runs `body` and returns the name of what it throws, or `"no error"`.
 fn attempt(body: &str) -> String {
@@ -325,6 +327,197 @@ async fn network_reports_version_profile_values() {
     t.session.stop().await;
 }
 
+/// adinfo-api.html: the TV's advertising identifier (TIFA) and its Limit Ad
+/// Tracking setting.
+#[tokio::test]
+async fn adinfo_reports_version_profile_values() {
+    let t = start("webapis");
+    t.session.wait_until_loaded().await.unwrap();
+    let values = t
+        .session
+        .evaluate(
+            "(function () { var a = webapis.adinfo; return [ \
+               typeof a.getVersion(), a.getTIFA(), a.isLATEnabled() \
+             ]; })()",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        values,
+        json!(["string", support::device_value("tifa"), false])
+    );
+    t.session.stop().await;
+}
+
+/// adinfo-api.html: getTIFA throws InvalidStateError "if the PSID value is
+/// null".
+#[tokio::test]
+async fn adinfo_without_a_tifa_is_an_invalid_state() {
+    let t = start_with("webapis", |c| {
+        c.device.insert("tifa".into(), json!(""));
+        c.device.insert("limitAdTracking".into(), json!(true));
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    let values = t
+        .session
+        .evaluate(&format!(
+            "[{}, webapis.adinfo.isLATEnabled()]",
+            attempt("webapis.adinfo.getTIFA()")
+        ))
+        .await
+        .unwrap();
+    assert_eq!(values, json!(["InvalidStateError", true]));
+    t.session.stop().await;
+}
+
+/// Reads the App's WidgetData, passing `done` the data or the error's name.
+const READ_WIDGET_DATA: &str = "webapis.widgetdata.read(done, function (e) { done(e.name); });";
+
+/// The App's WidgetData (widgetdata-api.html; read, write and remove since
+/// 4.0) lasts across relaunches until removed. The page doesn't say whether
+/// a TV keeps it (unverified); tizen-sim keeps it like the App's other data.
+#[tokio::test]
+async fn widgetdata_survives_relaunches_until_removed() {
+    if !support::has_api("webapis.widgetdata.read") {
+        return;
+    }
+    let state = tempfile::tempdir().unwrap();
+    let first = support::start_session("webapis", state.path());
+    first.wait_until_loaded().await.unwrap();
+    assert_eq!(
+        eval_callback(&first, READ_WIDGET_DATA).await,
+        "NotFoundError"
+    );
+    assert_eq!(
+        eval_callback(
+            &first,
+            "webapis.widgetdata.write('token=Olá 📺', function () { done('written'); }, \
+               function (e) { done(e.name); });"
+        )
+        .await,
+        "written"
+    );
+    first.stop().await;
+
+    let second = support::start_session("webapis", state.path());
+    second.wait_until_loaded().await.unwrap();
+    assert_eq!(
+        eval_callback(&second, READ_WIDGET_DATA).await,
+        "token=Olá 📺"
+    );
+    assert_eq!(
+        eval_callback(
+            &second,
+            "webapis.widgetdata.remove(function () { done('removed'); }, \
+               function (e) { done(e.name); });"
+        )
+        .await,
+        "removed"
+    );
+    assert_eq!(
+        eval_callback(&second, READ_WIDGET_DATA).await,
+        "NotFoundError"
+    );
+    second.stop().await;
+}
+
+/// widgetdata-api.html: read, write and remove pass "UnknownError, if any
+/// other error occurs" to onerror. A directory where the data is kept makes
+/// each of them fail on the disk.
+#[tokio::test]
+async fn widgetdata_storage_failures_are_unknown_errors() {
+    if !support::has_api("webapis.widgetdata.read") {
+        return;
+    }
+    let state = tempfile::tempdir().unwrap();
+    let sandbox = tizen_sim_core::home::Home::at(".")
+        .with_state_dir(state.path().to_path_buf())
+        .sandbox_dir("Fixture011.Webapis");
+    std::fs::create_dir_all(sandbox.join("widgetdata")).unwrap();
+    let session = support::start_session("webapis", state.path());
+    session.wait_until_loaded().await.unwrap();
+    let errors = eval_callback(
+        &session,
+        "var w = webapis.widgetdata, names = []; \
+         function failed(e) { names.push(e.name); if (names.length === 3) done(names.sort()); } \
+         w.write('data', null, failed); w.read(function () { failed({ name: 'read' }); }, failed); \
+         w.remove(null, failed);",
+    )
+    .await;
+    assert_eq!(errors, json!(vec!["UnknownError"; 3]));
+    session.stop().await;
+}
+
+/// widgetdata-api.html: an argument of the wrong type throws
+/// TypeMismatchError; data over 20000 characters is a DOMStringSizeError,
+/// passed to onerror.
+#[tokio::test]
+async fn widgetdata_rejects_bad_arguments() {
+    if !support::has_api("webapis.widgetdata.read") {
+        return;
+    }
+    let t = start("webapis");
+    t.session.wait_until_loaded().await.unwrap();
+    let thrown = t
+        .session
+        .evaluate(&format!(
+            "[{}, {}, {}, {}, {}]",
+            attempt("webapis.widgetdata.read()"),
+            attempt("webapis.widgetdata.read(function () {}, 'onerror')"),
+            attempt("webapis.widgetdata.write(42)"),
+            attempt("webapis.widgetdata.write('data', 'onsuccess')"),
+            attempt("webapis.widgetdata.remove(null, {})"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(thrown, json!(vec!["TypeMismatchError"; 5]));
+
+    let sizes = eval_callback(
+        &t.session,
+        "var w = webapis.widgetdata, max = new Array(20001).join('x'); \
+         w.write(max + 'x', function () { done('written'); }, function (e) { \
+           var tooLong = e.name; \
+           w.write(max, function () { done([tooLong, 'written']); }, \
+             function (e) { done([tooLong, e.name]); }); \
+         });",
+    )
+    .await;
+    assert_eq!(sizes, json!(["DOMStringSizeError", "written"]));
+    t.session.stop().await;
+}
+
+/// widgetdata-api.html: getVersion throws SecurityError without the
+/// widgetdata privilege; read, write and remove list it among the errors
+/// passed to onerror.
+#[tokio::test]
+async fn undeclared_widgetdata_privilege_is_a_security_error() {
+    let mut t = start("webapis-unprivileged");
+    t.session.wait_until_loaded().await.unwrap();
+    assert_eq!(
+        t.session
+            .evaluate(&attempt("webapis.widgetdata.getVersion()"))
+            .await
+            .unwrap(),
+        "SecurityError"
+    );
+    if support::has_api("webapis.widgetdata.read") {
+        let errors = eval_callback(
+            &t.session,
+            "var w = webapis.widgetdata, names = []; \
+             function failed(e) { names.push(e.name); if (names.length === 3) done(names); } \
+             w.write('data', null, failed); w.read(function () {}, failed); w.remove(null, failed);",
+        )
+        .await;
+        assert_eq!(errors, json!(vec!["SecurityError"; 3]));
+    }
+    expect_event(&mut t.events, 10, |e| {
+        matches!(e, SessionEvent::Diagnostic(d)
+            if d.code == "privilege-not-declared" && d.message.contains(WIDGETDATA_PRIVILEGE))
+    })
+    .await;
+    t.session.stop().await;
+}
+
 #[tokio::test]
 async fn per_session_overrides_replace_version_profile_values() {
     let t = start_with("webapis", |c| {
@@ -391,15 +584,15 @@ async fn undeclared_samsung_privileges_throw_security_error() {
                function code(f) { try { f(); return 'no error'; } catch (e) { return [e.name, e.code]; } } \
                return [ \
                  code(function () { webapis.productinfo.getDuid(); }), \
-                 code(function () { webapis.network.getIp(); }) \
+                 code(function () { webapis.network.getIp(); }), \
+                 code(function () { webapis.adinfo.getVersion(); }), \
+                 code(function () { webapis.adinfo.getTIFA(); }), \
+                 code(function () { webapis.adinfo.isLATEnabled(); }) \
                ]; })()",
         )
         .await
         .unwrap();
-    assert_eq!(
-        thrown,
-        json!([["SecurityError", 18], ["SecurityError", 18]])
-    );
+    assert_eq!(thrown, json!(vec![json!(["SecurityError", 18]); 5]));
     // isDisplayRotatorSupported (since 5.5) needs no privilege (productinfo-api.html).
     if support::has_api("webapis.productinfo.isDisplayRotatorSupported") {
         assert_eq!(
@@ -410,7 +603,7 @@ async fn undeclared_samsung_privileges_throw_security_error() {
             "boolean"
         );
     }
-    for privilege in [PRODUCTINFO_PRIVILEGE, NETWORK_PRIVILEGE] {
+    for privilege in [PRODUCTINFO_PRIVILEGE, NETWORK_PRIVILEGE, ADINFO_PRIVILEGE] {
         expect_event(&mut t.events, 10, |e| {
             matches!(e, SessionEvent::Diagnostic(d)
                 if d.code == "privilege-not-declared" && d.message.contains(privilege))

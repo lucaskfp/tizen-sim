@@ -1,13 +1,15 @@
-// The Samsung Product API (`webapis.*`): productinfo, tvinfo, network and
-// avinfo, plus avplay (see avplay.ts), answered from the Version Profile's device values with the Session's
-// overrides applied.
+// The Samsung Product API (`webapis.*`): productinfo, tvinfo and network, plus avinfo and adinfo, answered
+// from the Version Profile's device values with the Session's overrides applied; widgetdata, kept in the
+// App's Sandbox; and
+// avplay (see avplay.ts).
 //
 // A TV gives a page `webapis` only once it loads `$WEBAPIS/webapis/webapis.js`
 // (samsung-product-api-references.html), so the bundle defines it here and the
 // dev server answers that virtual script with a call to `installWebapis`.
 //
 // Sources: developer.samsung.com/smarttv/develop/api-references/
-// samsung-product-api-references/{webapi,productinfo,tvinfo,network,avinfo}-api.html.
+// samsung-product-api-references/
+// {webapi,productinfo,tvinfo,network,avinfo,adinfo,widgetdata}-api.html.
 // "Since" versions there are Tizen versions; members newer than the Version
 // Profile are absent (see availability.ts).
 //
@@ -18,6 +20,7 @@
 // webapi-api.html#WebAPIException adds four codes to tizen's. That
 // InvalidValuesError, IOError, ServiceNotAvailableError and UnknownError carry
 // them is unverified: the reference lists the constants, not the mapping.
+// So is DOMStringSizeError (widgetdata.write) carrying DOMSTRING_SIZE_ERR.
 var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
   INVALID_VALUES_ERR: 26,
   IO_ERR: 27,
@@ -25,6 +28,7 @@ var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
   UNKNOWN_ERR: 9999,
 });
 var WEBAPIS_ERROR_CODES = extend(ERROR_CODES, {
+  DOMStringSizeError: 2,
   InvalidValuesError: 26,
   IOError: 27,
   ServiceNotAvailableError: 28,
@@ -35,6 +39,8 @@ var WebapisError = webApiErrorType(false, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ERROR
 
 var PRODUCTINFO_PRIVILEGE = "http://developer.samsung.com/privilege/productinfo";
 var NETWORK_PRIVILEGE = "http://developer.samsung.com/privilege/network.public";
+var ADINFO_PRIVILEGE = "http://developer.samsung.com/privilege/adinfo";
+var WIDGETDATA_PRIVILEGE = "http://developer.samsung.com/privilege/widgetdata";
 
 function extend<T>(base: { [key: string]: T }, extra: { [key: string]: T }): { [key: string]: T } {
   var out: { [key: string]: T } = {};
@@ -558,6 +564,118 @@ function createAvInfo(device: { [key: string]: any }): any {
   return avinfo;
 }
 
+// adinfo-api.html. Every method needs adinfo.
+function createAdInfo(device: { [key: string]: any }): any {
+  function access(method: string) {
+    requireWebapisPrivilege(ADINFO_PRIVILEGE, "webapis.adinfo." + method);
+  }
+
+  return {
+    getVersion: function () {
+      access("getVersion");
+      return pluginVersion();
+    },
+
+    // Thrown "if the PSID value is null"; the profile's empty TIFA stands for that.
+    getTIFA: function () {
+      access("getTIFA");
+      if (!device.tifa) {
+        webapisFail("InvalidStateError", "The TV has no PSID");
+      }
+      return device.tifa;
+    },
+
+    isLATEnabled: function () {
+      access("isLATEnabled");
+      return device.limitAdTracking;
+    },
+  };
+}
+
+// widgetdata-api.html: the App's secure storage, which the Host keeps in its
+// Sandbox. read, write and remove exist since 4.0; they throw only
+// TypeMismatchError and pass every other error, SecurityError included, to
+// onerror. That a non-string `data` is a TypeMismatchError, rather than
+// converted to a string, is unverified.
+function createWidgetData(): any {
+  // write's limit: "Data, up to 20000 characters". Counting UTF-16 code
+  // units, as String.length does, is unverified.
+  var MAX_DATA_LENGTH = 20000;
+
+  function requireOptionalCallback(callback: any, argument: string) {
+    if (callback !== undefined && callback !== null) {
+      requireType(callback, "function", argument);
+    }
+  }
+
+  /**
+   * Calls the Host after the method returns, as filesystem's runLater does,
+   * and hands its result to `deliver`. A failure goes to `onerror` under its
+   * own name if the method's reference lists it in `errors`, and as
+   * UnknownError ("if any other error occurs") otherwise.
+   */
+  function callHostLater(method: string, params: any, errors: string[], onerror: any, deliver: (result: any) => void) {
+    setTimeout(function () {
+      var result: any;
+      try {
+        requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
+        result = bridge.call("widgetdata." + method, params);
+      } catch (e: any) {
+        if (typeof onerror === "function") {
+          var listed = e.name === "SecurityError" || errors.indexOf(e.name) >= 0;
+          onerror(new WebapisError(listed ? e.name : "UnknownError", e.message));
+        }
+        return;
+      }
+      deliver(result);
+    }, 0);
+  }
+
+  function succeed(onsuccess: any) {
+    return function () {
+      if (typeof onsuccess === "function") {
+        onsuccess();
+      }
+    };
+  }
+
+  var widgetdata: any = {
+    getVersion: function () {
+      requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata.getVersion");
+      return pluginVersion();
+    },
+  };
+  if (available("webapis.widgetdata.read")) {
+    widgetdata.read = function (onsuccess: any, onerror?: any) {
+      requireType(onsuccess, "function", "onsuccess");
+      requireOptionalCallback(onerror, "onerror");
+      callHostLater("read", {}, ["NotFoundError"], onerror, function (data: string) {
+        onsuccess(data);
+      });
+    };
+  }
+  if (available("webapis.widgetdata.write")) {
+    widgetdata.write = function (data: any, onsuccess?: any, onerror?: any) {
+      requireType(data, "string", "data");
+      requireOptionalCallback(onsuccess, "onsuccess");
+      requireOptionalCallback(onerror, "onerror");
+      if (data.length > MAX_DATA_LENGTH) {
+        failLater(onerror, "DOMStringSizeError", "data is longer than " + MAX_DATA_LENGTH + " characters", WebapisError);
+        return;
+      }
+      callHostLater("write", { data: data }, [], onerror, succeed(onsuccess));
+    };
+  }
+  if (available("webapis.widgetdata.remove")) {
+    widgetdata.remove = function (onsuccess?: any, onerror?: any) {
+      requireOptionalCallback(onsuccess, "onsuccess");
+      requireOptionalCallback(onerror, "onerror");
+      callHostLater("remove", {}, ["NotFoundError"], onerror, succeed(onsuccess));
+    };
+  }
+  return widgetdata;
+}
+
 /** Called by the virtual `$WEBAPIS/webapis/webapis.js`; loading it twice keeps the first. */
 function installWebapis() {
   if ((window as any).webapis) {
@@ -570,6 +688,8 @@ function installWebapis() {
     network: createNetwork(device),
     avinfo: createAvInfo(device),
     avplay: createAVPlay(),
+    adinfo: createAdInfo(device),
+    widgetdata: createWidgetData(),
   };
   warnOnDeprecated("webapis");
 }

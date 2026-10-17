@@ -47,7 +47,7 @@ Download the latest release from [GitHub Releases](https://github.com/lucaskfp/t
 
 - **Windows.** The installers aren't code-signed yet, so SmartScreen warns about an unknown publisher on first run: choose *More info*, then *Run anyway*.
 - **Linux.** Install the system packages in [docs/linux.md](docs/linux.md) for the Engines you use.
-- **Updates.** The GUI checks for a newer release when it starts and offers it in its toolbar: *Update to <version>* installs it and restarts the GUI. The CLI is updated by hand.
+- **Updates.** The GUI shows its installed version in its toolbar. It checks for a newer release when it starts and offers it there too: *Update to <version>* installs it and restarts the GUI. The CLI is updated by hand; `tizen-sim --version` shows its version.
 - Engines are downloaded to `~/.tizen-sim/engines` the first time a Version Profile is used; set `TIZEN_SIM_HOME` to keep tizen-sim's data elsewhere.
 
 ### Building from source
@@ -100,6 +100,7 @@ Run `tizen-sim help <command>` for every option. `run` also takes these:
 - `--map-key`: map a keyboard key to a Remote Key.
 - `--device`: override the device values the APIs report.
 - `--resolution`: 1920x1080 or 1280x720.
+- `--gamepad`: a gamepad model to take as connected, for Apps whose `gamepad` metadata requires one.
 - `--engine-path`: use your own Chromium build.
 
 ### The GUI

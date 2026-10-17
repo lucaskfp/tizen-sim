@@ -1664,6 +1664,7 @@ var WEBAPIS_ERROR_CONSTANTS = extend(ERROR_CONSTANTS, {
     UNKNOWN_ERR: 9999,
 });
 var WEBAPIS_ERROR_CODES = extend(ERROR_CODES, {
+    DOMStringSizeError: 2,
     InvalidValuesError: 26,
     IOError: 27,
     ServiceNotAvailableError: 28,
@@ -1673,6 +1674,8 @@ var WebapisException = webApiErrorType(true, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ER
 var WebapisError = webApiErrorType(false, WEBAPIS_ERROR_CONSTANTS, WEBAPIS_ERROR_CODES);
 var PRODUCTINFO_PRIVILEGE = "http://developer.samsung.com/privilege/productinfo";
 var NETWORK_PRIVILEGE = "http://developer.samsung.com/privilege/network.public";
+var ADINFO_PRIVILEGE = "http://developer.samsung.com/privilege/adinfo";
+var WIDGETDATA_PRIVILEGE = "http://developer.samsung.com/privilege/widgetdata";
 function extend(base, extra) {
     var out = {};
     for (var key in base) {
@@ -2093,6 +2096,95 @@ function createAvInfo(device) {
     }
     return avinfo;
 }
+function createAdInfo(device) {
+    function access(method) {
+        requireWebapisPrivilege(ADINFO_PRIVILEGE, "webapis.adinfo." + method);
+    }
+    return {
+        getVersion: function () {
+            access("getVersion");
+            return pluginVersion();
+        },
+        getTIFA: function () {
+            access("getTIFA");
+            if (!device.tifa) {
+                webapisFail("InvalidStateError", "The TV has no PSID");
+            }
+            return device.tifa;
+        },
+        isLATEnabled: function () {
+            access("isLATEnabled");
+            return device.limitAdTracking;
+        },
+    };
+}
+function createWidgetData() {
+    var MAX_DATA_LENGTH = 20000;
+    function requireOptionalCallback(callback, argument) {
+        if (callback !== undefined && callback !== null) {
+            requireType(callback, "function", argument);
+        }
+    }
+    function callHostLater(method, params, errors, onerror, deliver) {
+        setTimeout(function () {
+            var result;
+            try {
+                requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata." + method);
+                result = bridge.call("widgetdata." + method, params);
+            }
+            catch (e) {
+                if (typeof onerror === "function") {
+                    var listed = e.name === "SecurityError" || errors.indexOf(e.name) >= 0;
+                    onerror(new WebapisError(listed ? e.name : "UnknownError", e.message));
+                }
+                return;
+            }
+            deliver(result);
+        }, 0);
+    }
+    function succeed(onsuccess) {
+        return function () {
+            if (typeof onsuccess === "function") {
+                onsuccess();
+            }
+        };
+    }
+    var widgetdata = {
+        getVersion: function () {
+            requireWebapisPrivilege(WIDGETDATA_PRIVILEGE, "webapis.widgetdata.getVersion");
+            return pluginVersion();
+        },
+    };
+    if (available("webapis.widgetdata.read")) {
+        widgetdata.read = function (onsuccess, onerror) {
+            requireType(onsuccess, "function", "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            callHostLater("read", {}, ["NotFoundError"], onerror, function (data) {
+                onsuccess(data);
+            });
+        };
+    }
+    if (available("webapis.widgetdata.write")) {
+        widgetdata.write = function (data, onsuccess, onerror) {
+            requireType(data, "string", "data");
+            requireOptionalCallback(onsuccess, "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            if (data.length > MAX_DATA_LENGTH) {
+                failLater(onerror, "DOMStringSizeError", "data is longer than " + MAX_DATA_LENGTH + " characters", WebapisError);
+                return;
+            }
+            callHostLater("write", { data: data }, [], onerror, succeed(onsuccess));
+        };
+    }
+    if (available("webapis.widgetdata.remove")) {
+        widgetdata.remove = function (onsuccess, onerror) {
+            requireOptionalCallback(onsuccess, "onsuccess");
+            requireOptionalCallback(onerror, "onerror");
+            callHostLater("remove", {}, ["NotFoundError"], onerror, succeed(onsuccess));
+        };
+    }
+    return widgetdata;
+}
 function installWebapis() {
     if (window.webapis) {
         return;
@@ -2104,6 +2196,8 @@ function installWebapis() {
         network: createNetwork(device),
         avinfo: createAvInfo(device),
         avplay: createAVPlay(),
+        adinfo: createAdInfo(device),
+        widgetdata: createWidgetData(),
     };
     warnOnDeprecated("webapis");
 }
@@ -3121,6 +3215,93 @@ function formatTime(ms) {
         }
         catch (e) {
         }
+    }
+})();
+var HIDDEN_KEY = "__tizen-sim:launch-screen-hidden";
+config.forgetLaunchScreen = function () {
+    try {
+        sessionStorage.removeItem(HIDDEN_KEY);
+    }
+    catch (e) {
+    }
+};
+(function () {
+    var launchScreen = config.launchScreen;
+    var overlay = null;
+    function hiddenBefore() {
+        try {
+            return sessionStorage.getItem(HIDDEN_KEY) !== null;
+        }
+        catch (e) {
+            return false;
+        }
+    }
+    function hide() {
+        try {
+            sessionStorage.setItem(HIDDEN_KEY, "1");
+        }
+        catch (e) {
+        }
+        if (overlay && overlay.parentNode) {
+            overlay.parentNode.removeChild(overlay);
+        }
+        overlay = null;
+    }
+    Object.defineProperty(window.screen, "show", {
+        value: function show() {
+            if (launchScreen && launchScreen.readyWhen === "custom") {
+                hide();
+            }
+        },
+        configurable: true,
+        writable: true,
+    });
+    if (!launchScreen || window.top !== window || hiddenBefore()) {
+        return;
+    }
+    overlay = document.createElement("tizen-sim-launch-screen");
+    overlay.setAttribute("data-tizen-sim", "launch-screen");
+    var images = [];
+    var positions = [];
+    var sizes = [];
+    if (launchScreen.image) {
+        images.push('url("' + launchScreen.image + '")');
+        positions.push("center");
+        sizes.push("contain");
+    }
+    if (launchScreen.backgroundImage) {
+        images.push('url("' + launchScreen.backgroundImage + '")');
+        positions.push("0 0");
+        sizes.push("100% 100%");
+    }
+    var style = {
+        display: "block",
+        position: "fixed",
+        left: "0",
+        top: "0",
+        width: "100%",
+        height: "100%",
+        margin: "0",
+        padding: "0",
+        border: "0",
+        "z-index": "2147483647",
+        "background-color": launchScreen.backgroundColor || "transparent",
+        "background-image": images.length ? images.join(", ") : "none",
+        "background-position": positions.join(", ") || "0 0",
+        "background-size": sizes.join(", ") || "auto",
+        "background-repeat": "no-repeat",
+    };
+    for (var property in style) {
+        overlay.style.setProperty(property, style[property], "important");
+    }
+    document.documentElement.appendChild(overlay);
+    if (launchScreen.readyWhen === "first-paint") {
+        requestAnimationFrame(function () {
+            requestAnimationFrame(hide);
+        });
+    }
+    else if (launchScreen.readyWhen === "complete") {
+        window.addEventListener("load", hide);
     }
 })();
 function removeMissingFeatures() {

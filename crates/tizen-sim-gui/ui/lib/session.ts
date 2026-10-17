@@ -18,6 +18,7 @@ export type SessionEvent =
 export type Lifecycle =
   | { Starting: { app_id: string; profile: string } }
   | { EngineReady: { engine_version: string; debugger_url: string; devtools_url: string } }
+  | { GamepadRequired: { models: string[] } }
   | { AppLoaded: { url: string } }
   | "Reloaded"
   | "Hidden"
@@ -31,7 +32,8 @@ export type ExitReason =
   | "EngineCrashed"
   | "FailedToStart"
   | "AppExited"
-  | "TerminatedByRemote";
+  | "TerminatedByRemote"
+  | "LaunchCanceled";
 
 export type KeyOutcome = "Delivered" | { Dropped: { reason: string } };
 
@@ -65,6 +67,8 @@ export type LogLine = {
 export type Status =
   | { kind: "idle" }
   | { kind: "starting"; download?: { received: number; total: number | null } }
+  /** The TV's popup asks for a required gamepad before launching the App. */
+  | { kind: "asking" }
   | { kind: "running" }
   | { kind: "hidden" }
   | { kind: "failed"; error: string }
@@ -189,6 +193,15 @@ function lifecycle(view: SessionView, event: Lifecycle): SessionView {
       `Engine ready: ${event.EngineReady.engine_version}`,
     );
   }
+  if ("GamepadRequired" in event) {
+    const models = event.GamepadRequired.models.join(" or ");
+    return withLog(
+      { ...view, status: { kind: "asking" } },
+      "session",
+      "info",
+      `The App requires a ${models} gamepad and none is connected: the TV asks before launching it.`,
+    );
+  }
   if ("AppLoaded" in event) {
     return withLog({ ...view, status: { kind: "running" } }, "session", "info", `App loaded: ${event.AppLoaded.url}`);
   }
@@ -221,6 +234,7 @@ const exitText: Record<ExitReason, string> = {
   FailedToStart: "The Session failed to start.",
   AppExited: "The App exited.",
   TerminatedByRemote: "Exit was pressed or Back held: the App was terminated, as on a TV.",
+  LaunchCanceled: "The App was not launched.",
 };
 
 function hotReloadLine(event: HotReload): [LogLevel, string] {

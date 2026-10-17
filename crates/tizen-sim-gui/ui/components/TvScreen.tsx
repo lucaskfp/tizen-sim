@@ -114,6 +114,7 @@ function ScreenMessage({
           {restart}
         </>
       );
+    case "asking":
     case "running":
     case "hidden":
       if (!embeds || !view.embedded) {

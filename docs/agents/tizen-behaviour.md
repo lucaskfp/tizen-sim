@@ -65,7 +65,7 @@ Sources: TD `reference/config-xml.md`, TD `guides/development/setting-properties
   - `use.voiceguide`
   - `use.ime`, `use.keypad.without.useraction`
 - **Size limits.** `<preference>` (name ≤ 80 bytes, value ≤ 8192 bytes, `readonly` honoured) is exposed to the App through the widget interface. `tizen:metadata` has the same limits and is read-only.
-- **`tizen:launch_screen ready_when`:** `first-paint` (default), `complete`, or `custom`. With `custom`, the screen waits for `window.screen.show()`.
+- **`tizen:launch_screen ready_when`:** `first-paint` (default) hides the splash screen at the "frame,rendered" callback, `complete` at "load,complete", and `custom` when the App calls `window.screen.show()`. The splash screen comes from `tizen:ls_default` (mandatory), `ls_landscape` or `ls_portrait`, each with `background_image`, `background_color`, `image` and `image_border`; the docs don't say how they're laid out. The TV guides don't mention the launch screen. Measured on a 2019 TV (Tizen 5.0, #113): `custom` without `show()` stays up for good; every App has `screen.show()`, but it hides the screen only with `custom` (under `complete` an earlier call is ignored until the load event); `first-paint` hides it before the load event; it stays up when the App goes to another page before hiding it, until that page calls `show()`, and once hidden it doesn't come back; the background image is stretched over the screen and the image is scaled to fit it, keeping its proportions, and centred; `image_border` changed nothing visible (`0px stretch`, `40px stretch`, `40px repeat` and `40px round` all looked the same).
 
 ## Privileges
 
@@ -79,7 +79,7 @@ Sources: TD `reference/security-privileges.md`, TD `guides/concepts/web-runtime.
   - `application.info`, `application.launch`, `package.info`
   - `internet`, `filesystem.read`, `filesystem.write`, `content.read`, `content.write`, `download`, `alarm`, `power`, `system`, `fullscreen`, `mediastorage`, `externalstorage`
   - `tv.audio` (deprecated since 5.0)
-- **Samsung privileges** (`http://developer.samsung.com/privilege/...`): `productinfo`, `tvinfo`, `network.public`, `drmplay`, `allshare`, `widgetdata`.
+- **Samsung privileges** (`http://developer.samsung.com/privilege/...`): `productinfo`, `tvinfo`, `network.public`, `drmplay`, `allshare`, `widgetdata`. The `adinfo` module page names `adinfo` too.
 - **`application.info`** guards `ApplicationInformation.size`, which throws `SecurityError` when read without it. It does **not** guard `getAppsInfo` or `getAppInfo` on TV 9.0. (`application.html`)
 - **`internet`** is required for XHR, WebSocket, SSE, AppCache and CORS. (TD security-privileges, W3C table)
 
@@ -127,7 +127,7 @@ Source: `systeminfo.html`, `systeminfo_capability_keys.html`, TD `guides/device/
 
 ## Samsung Product API
 
-Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo`, `network` and `avinfo` module pages.
+Sources: TV `api-references/samsung-product-api-references.html` and its `webapi`, `productinfo`, `tvinfo`, `network`, `avinfo`, `adinfo` and `widgetdata` module pages.
 
 - **Loading.** An App gets `webapis` by loading `<script src="$WEBAPIS/webapis/webapis.js">`. The page names no other way, so a page without it has no `webapis`. That `$WEBAPIS` resolves at any path depth comes from the product spec (#23).
 - **Errors.** `webapis`' `WebAPIException` has tizen's constants plus `INVALID_VALUES_ERR` 26, `IO_ERR` 27, `SERVICE_NOT_AVAILABLE_ERR` 28 and `UNKNOWN_ERR` 9999. That the matching error names carry those codes is **unverified**.
@@ -159,6 +159,14 @@ Sources: TV `api-references/samsung-product-api-references.html` and its `webapi
   - The TV's `avinfo` also has members the reference doesn't list (`getBacklight`, `setContrast`, `getHdmiHdcpType`, `AvInfoSoundOutputMode` and others). They aren't documented, so they aren't shimmed.
   - `setSubAmpMode` (since 6.0) is for Hotel TVs; on any other product it throws `NotSupportedError`.
   - `getEnergySaving`/`setEnergySaving` (`OFF`, `LOW`, `MEDIUM`, `HIGH`) and `getEcoSensor`/`setEcoSensor` (`OFF`, `ON`) exist since 6.5. The setters throw `TypeMismatchError` for a wrong type and `InvalidValuesError` for a value outside the enum. They throw `NotSupportedError` "in an emulator"; tizen-sim answers as a TV does. The order of the checks is **unverified**.
+
+- **`adinfo`** (since 2.4): `getVersion`, `getTIFA` and `isLATEnabled`, each needing `adinfo`.
+  - The TIFA is a randomized, resettable device identifier for advertising. Its format is **unverified**.
+  - `getTIFA` throws `InvalidStateError` "if the PSID value is null". The page doesn't say what the PSID is or when it is null.
+- **`widgetdata`** (since 2.3; `read`, `write` and `remove` since 4.0): "application secure storage" of encrypted data. `write` takes a string and `read` hands one back; neither takes a key or file name.
+  - Every method needs `widgetdata`. `getVersion` throws `SecurityError`. `read`, `write` and `remove` throw only `TypeMismatchError` and pass `SecurityError` to `onerror`, as they do `NotFoundError` (nothing stored, for `read` and `remove`) and `DOMStringSizeError` (`write` data over 20000 characters).
+  - `read`'s `onsuccess` is required; the other callbacks are optional and nullable.
+  - Whether the data survives a relaunch, and whether clearing the App's data removes it, is **unverified**: the page doesn't say. tizen-sim keeps it in the App's Sandbox, like the App's files in `wgt-private`.
 
 ## Display control
 
@@ -260,3 +268,17 @@ Source: TV `guides/user-interaction/keyboardime.html`.
 
 - **Showing the virtual keyboard.** Focusing an `<input>`/`<textarea>` shows it. A focus set by script doesn't show it when `use.keypad.without.useraction` is false, and `use.ime=false` disables it.
 - **IME key codes:** Done 65376, Cancel 65385, other IME keys 229. With a physical keyboard, Enter sends Done and Esc sends Cancel.
+
+## Gamepad
+
+Source: TV `guides/user-interaction/gamepad.html`.
+
+- **Input.** Apps read gamepads through the W3C Gamepad API (`gamepadconnected`, `gamepaddisconnected`, `navigator.getGamepads()`, `vibrationActuator.playEffect`). The guide doesn't limit this to Apps declaring the `gamepad` metadata. It says nothing of gamepads producing Remote Keys either, so whether they do is **unverified**.
+- **Limits.** At most 4 gamepads at once. A connected gamepad is usable only once the user presses a button or moves an axis.
+- **Support.** "All Samsung TVs since 2016 support gamepads".
+- **`http://samsung.com/tv/metadata/gamepad`.** The value names gamepad models, separated by `::` (e.g. `dualshock4`, `usbgamepad::xxx`). When the App launches, the platform checks that one of them is connected. If none is, a popup appears before the App runs (the guide's figure): "You must connect the DUALSHOCK®4 controller to play this game. Do you want to play anyway?", with Play, Cancel and Connect Now. TV `guides/fundamentals/configuring-tv-applications.html` (Table 4) says the same: "Require a specific gamepad model to be connected."
+- **Unverified:**
+  - How a model name maps to a physical gamepad.
+  - What Cancel and Connect Now do, and what Back, Exit and the other keys do in the popup.
+  - The popup's wording when several models are listed.
+  - Which entry counts when the key appears more than once.

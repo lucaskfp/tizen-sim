@@ -3,6 +3,8 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { onTestFinished, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -175,6 +177,28 @@ test("the on-screen remote sends Remote Keys, and dropped keys show in the log",
   ).toBeInTheDocument();
 });
 
+test("the TV's popup asking for a required gamepad is answered with the remote", async () => {
+  const invoked = rustSide({ "plugin:dialog|open": "C:/apps/gamepad", embeds_screen: true });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/gamepad");
+  await sessionEvents(1, { Lifecycle: { GamepadRequired: { models: ["dualshock4", "usbgamepad"] } } });
+  await screenEvent(1, true);
+
+  expect(screen.getByText("Waiting for a gamepad")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "The App requires a dualshock4 or usbgamepad gamepad and none is connected: the TV asks before launching it.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /reload/i })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "ArrowRight" }));
+  expect(invoked).toContainEqual({ cmd: "press_key", args: { key: "ArrowRight" } });
+
+  await sessionEvents(1, { Lifecycle: { Exited: { reason: "LaunchCanceled" } } });
+  expect(screen.getByText("The App was not launched.")).toBeInTheDocument();
+});
+
 test("the network panel lists requests with their Access Policy verdicts", async () => {
   rustSide({ "plugin:dialog|open": "C:/apps/network" });
   render(<App />);
@@ -271,6 +295,21 @@ test("a failed command is shown", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("invalid dev server URL");
 });
 
+/** The version `tizen-sim --version` reports: the CLI crate's, which release-please bumps. */
+function cliVersion(): string {
+  const manifest = readFileSync(path.resolve(__dirname, "../../tizen-sim-cli/Cargo.toml"), "utf8");
+  const version = /^version = "(.+)"$/m.exec(manifest)?.[1];
+  if (!version) throw new Error("no version in the CLI's Cargo.toml");
+  return version;
+}
+
+test("the installed version is shown, the one the CLI of the same release reports", async () => {
+  rustSide({ "plugin:updater|check": null });
+  render(<App />);
+
+  expect(screen.getByTitle("Installed version")).toHaveTextContent(`tizen-sim ${cliVersion()}`);
+});
+
 /** What the updater reports when the latest release is newer than the GUI. */
 const NEWER_RELEASE = { rid: 7, currentVersion: "0.2.0", version: "0.3.0", rawJson: {} };
 
@@ -283,6 +322,14 @@ test("a newer release is offered, and taking it installs it and restarts the GUI
   await waitFor(() => expect(invoked.map((i) => i.cmd)).toContain("plugin:process|restart"));
   const install = invoked.find((i) => i.cmd === "plugin:updater|download_and_install");
   expect(install?.args).toMatchObject({ rid: 7 });
+});
+
+test("with a newer release offered, both the installed and the offered version show", async () => {
+  rustSide({ "plugin:updater|check": NEWER_RELEASE });
+  render(<App />);
+
+  expect(await screen.findByRole("button", { name: /update to 0\.3\.0/i })).toBeVisible();
+  expect(screen.getByTitle("Installed version")).toHaveTextContent(`tizen-sim ${cliVersion()}`);
 });
 
 test("without a newer release, or when the check fails, no update is offered", async () => {
