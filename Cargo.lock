@@ -4629,7 +4629,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tizen-sim"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4644,7 +4644,7 @@ dependencies = [
 
 [[package]]
 name = "tizen-sim-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -4680,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "tizen-sim-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "png 0.18.1",
  "serde",

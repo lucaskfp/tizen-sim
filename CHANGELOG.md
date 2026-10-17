@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/lucaskfp/tizen-sim/compare/v0.2.0...v0.3.0) (2026-10-17)
+
+
+### Features
+
+* ask for a required gamepad at launch, per the `gamepad` metadata ([#109](https://github.com/lucaskfp/tizen-sim/issues/109)) ([#144](https://github.com/lucaskfp/tizen-sim/issues/144)) ([85f410d](https://github.com/lucaskfp/tizen-sim/commit/85f410d0c5f36dd66dcb4ad7b6b3431da35f8fd7))
+* **gui:** show a grip on the panel splitter and highlight it after a hover delay ([#132](https://github.com/lucaskfp/tizen-sim/issues/132)) ([#134](https://github.com/lucaskfp/tizen-sim/issues/134)) ([d93b5ab](https://github.com/lucaskfp/tizen-sim/commit/d93b5ab576157df0aea44a1eeb5b18dae66ef14f))
+* **gui:** show the installed tizen-sim version in the toolbar ([#122](https://github.com/lucaskfp/tizen-sim/issues/122)) ([#133](https://github.com/lucaskfp/tizen-sim/issues/133)) ([8c1fe49](https://github.com/lucaskfp/tizen-sim/commit/8c1fe491338defcbb341970070ff4e7f5749e53f))
+* **gui:** show the session panel's tabs as a dropdown when they don't fit ([#125](https://github.com/lucaskfp/tizen-sim/issues/125)) ([61e467c](https://github.com/lucaskfp/tizen-sim/commit/61e467c06ce808860151151230d8afe7fe33bc4e))
+* hide web features the TV's engine lacks ([#106](https://github.com/lucaskfp/tizen-sim/issues/106)) ([#135](https://github.com/lucaskfp/tizen-sim/issues/135)) ([b18f337](https://github.com/lucaskfp/tizen-sim/commit/b18f3379e6823fa6b60b6e78ecbec9b4a9eedbcd))
+* offer newer releases in the GUI and install them ([#101](https://github.com/lucaskfp/tizen-sim/issues/101)) ([20c5380](https://github.com/lucaskfp/tizen-sim/commit/20c53807145f818c9e6d0c586f9742a78812e6ae))
+* shim webapis.adinfo and webapis.widgetdata ([#120](https://github.com/lucaskfp/tizen-sim/issues/120)) ([#140](https://github.com/lucaskfp/tizen-sim/issues/140)) ([0f5f045](https://github.com/lucaskfp/tizen-sim/commit/0f5f045f91a96b0a8b80efd10e1279edbde35503))
+* shim webapis.avinfo and tizen.tvdisplaycontrol ([#119](https://github.com/lucaskfp/tizen-sim/issues/119)) ([#137](https://github.com/lucaskfp/tizen-sim/issues/137)) ([36af6a8](https://github.com/lucaskfp/tizen-sim/commit/36af6a854124cdb73b0ccf436e2a1a063766c785))
+* show the launch screen until its ready_when, as a TV does ([#113](https://github.com/lucaskfp/tizen-sim/issues/113)) ([#139](https://github.com/lucaskfp/tizen-sim/issues/139)) ([2dd08d3](https://github.com/lucaskfp/tizen-sim/commit/2dd08d37f45afa07521d27bab46b55f87ca8fcf9))
+* tell the App when its Engine can't play a media format its TVs play ([#105](https://github.com/lucaskfp/tizen-sim/issues/105)) ([#127](https://github.com/lucaskfp/tizen-sim/issues/127)) ([1d5f9ae](https://github.com/lucaskfp/tizen-sim/commit/1d5f9ae919dfe34fb9a23094c903d20c48592392))
+
+
+### Bug Fixes
+
+* **deps:** update rustls and zip past RustSec advisories ([#124](https://github.com/lucaskfp/tizen-sim/issues/124)) ([a35ced6](https://github.com/lucaskfp/tizen-sim/commit/a35ced6341dd5339a6a24ca54efd73bcc9efca9f))
+* **gui:** build the updater without zip, which has three new advisories ([#145](https://github.com/lucaskfp/tizen-sim/issues/145)) ([98d5751](https://github.com/lucaskfp/tizen-sim/commit/98d575142ecdde176af8c244ad6a6d7d7ee3eb90))
+
 ## [0.2.0](https://github.com/lucaskfp/tizen-sim/compare/v0.1.0...v0.2.0) (2026-10-14)
 
 
