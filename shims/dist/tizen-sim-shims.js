@@ -475,6 +475,35 @@ var tvinputdevice = {
     },
 };
 config.keys = { isRegistered: isKeyRegistered };
+var TV_DISPLAY_PRIVILEGE = "http://tizen.org/privilege/tv.display";
+var TV_DISPLAY_FEATURE = "http://tizen.org/feature/tv.display";
+function requireTvDisplay(method) {
+    if (parseFloat(config.profile.version) < 6.0) {
+        requirePrivilege(TV_DISPLAY_PRIVILEGE, "tizen.tvdisplaycontrol." + method + "()");
+    }
+    if (config.profile.capabilities[TV_DISPLAY_FEATURE] !== true) {
+        throw new WebAPIException("NotSupportedError", "These TVs don't support the TV Display Control API");
+    }
+}
+var tvdisplaycontrol = {
+    get3DEffectMode: function () {
+        requireTvDisplay("get3DEffectMode");
+        return config.profile.device.display3DEffectMode;
+    },
+    is3DModeEnabled: function () {
+        requireTvDisplay("is3DModeEnabled");
+        return config.profile.device.display3DModeState;
+    },
+    getSupported3DEffectModeList: function (successCallback, errorCallback) {
+        requireFunction(successCallback, "successCallback");
+        requireOptionalFunction(errorCallback, "errorCallback");
+        requireTvDisplay("getSupported3DEffectModeList");
+        var modes = config.profile.device.supported3DEffectModes.slice();
+        setTimeout(function () {
+            successCallback(modes);
+        }, 0);
+    },
+};
 var LONG_PRESS_MS = 1000;
 var TERMINATE = "";
 var LONG_PRESS = {
@@ -1678,6 +1707,12 @@ function requireType(value, type, argument) {
         webapisFail("TypeMismatchError", argument + " must be a " + type);
     }
 }
+function requireOneOf(value, values, argument) {
+    requireType(value, "string", argument);
+    if (values.indexOf(value) < 0) {
+        webapisFail("InvalidValuesError", argument + " must be one of " + values.join(", "));
+    }
+}
 var nextWebapisListenerId = 1;
 function addListener(listeners, entry) {
     var id = nextWebapisListenerId++;
@@ -1999,6 +2034,65 @@ function createNetwork(device) {
     }
     return network;
 }
+function createAvInfo(device) {
+    var SUB_AMP_MODES = ["NO_EXT_AUDIO", "EXT_AUDIO_TV", "EXT_AUDIO_SWITCH", "EXT_HEALTHCARE"];
+    var ENERGY_SAVING_TYPES = ["OFF", "LOW", "MEDIUM", "HIGH"];
+    var ECO_SENSOR_TYPES = ["OFF", "ON"];
+    var energySaving = device.energySaving;
+    var ecoSensor = device.ecoSensor;
+    function requireSamsungProduct(method) {
+        if (device.licensedBrand) {
+            webapisFail("NotSupportedError", "webapis.avinfo." + method + "() is available on Samsung products only");
+        }
+    }
+    var avinfo = {
+        AvInfoDigitalCompMode: { DOLBY_DIGITAL_COMP_MODE_LINE: 0, DOLBY_DIGITAL_COMP_MODE_RF: 1 },
+        getVersion: function () {
+            requireSamsungProduct("getVersion");
+            return pluginVersion();
+        },
+        getDolbyDigitalCompMode: function () {
+            webapisFail("NotSupportedError", "Dolby Digital compression mode is not supported since 2016");
+        },
+        isHdrTvSupport: function () {
+            requireSamsungProduct("isHdrTvSupport");
+            return device.hdrTvSupport;
+        },
+    };
+    if (available("webapis.avinfo.setSubAmpMode")) {
+        avinfo.setSubAmpMode = function (mode) {
+            requireOneOf(mode, SUB_AMP_MODES, "mode");
+            webapisFail("NotSupportedError", "setSubAmpMode() is available on Hotel TVs only");
+        };
+    }
+    if (available("webapis.avinfo.getEnergySaving")) {
+        avinfo.getEnergySaving = function () {
+            requireSamsungProduct("getEnergySaving");
+            return energySaving;
+        };
+    }
+    if (available("webapis.avinfo.setEnergySaving")) {
+        avinfo.setEnergySaving = function (value) {
+            requireOneOf(value, ENERGY_SAVING_TYPES, "value");
+            requireSamsungProduct("setEnergySaving");
+            energySaving = value;
+        };
+    }
+    if (available("webapis.avinfo.getEcoSensor")) {
+        avinfo.getEcoSensor = function () {
+            requireSamsungProduct("getEcoSensor");
+            return ecoSensor;
+        };
+    }
+    if (available("webapis.avinfo.setEcoSensor")) {
+        avinfo.setEcoSensor = function (value) {
+            requireOneOf(value, ECO_SENSOR_TYPES, "value");
+            requireSamsungProduct("setEcoSensor");
+            ecoSensor = value;
+        };
+    }
+    return avinfo;
+}
 function installWebapis() {
     if (window.webapis) {
         return;
@@ -2008,6 +2102,7 @@ function installWebapis() {
         productinfo: createProductInfo(device),
         tvinfo: createTvInfo(device),
         network: createNetwork(device),
+        avinfo: createAvInfo(device),
         avplay: createAVPlay(),
     };
     warnOnDeprecated("webapis");
@@ -2560,12 +2655,6 @@ function createAVPlay() {
             fail("InvalidStateError", "webapis.avplay." + method + "() can't be called in the " + state + " state");
         }
     }
-    function requireOneOf(value, values, argument) {
-        requireType(value, "string", argument);
-        if (values.indexOf(value) < 0) {
-            fail("InvalidValuesError", argument + " must be one of " + values.join(", "));
-        }
-    }
     function requireCallback(value, argument) {
         if (value !== undefined && value !== null && typeof value !== "function") {
             fail("TypeMismatchError", argument + " must be a function");
@@ -3081,6 +3170,7 @@ window.tizen = {
     application: application,
     systeminfo: systeminfo,
     tvinputdevice: tvinputdevice,
+    tvdisplaycontrol: tvdisplaycontrol,
     filesystem: createFilesystem(),
 };
 warnOnDeprecated("tizen");

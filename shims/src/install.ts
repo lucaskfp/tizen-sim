@@ -6,6 +6,7 @@
   application: application,
   systeminfo: systeminfo,
   tvinputdevice: tvinputdevice,
+  tvdisplaycontrol: tvdisplaycontrol,
   filesystem: createFilesystem(),
 };
 warnOnDeprecated("tizen");

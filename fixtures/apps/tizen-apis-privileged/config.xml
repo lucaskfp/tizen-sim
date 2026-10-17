@@ -5,4 +5,5 @@
     <name>Tizen APIs fixture</name>
     <tizen:profile name="tv"/>
     <tizen:privilege name="http://tizen.org/privilege/application.info"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.display"/>
 </widget>

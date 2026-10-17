@@ -541,3 +541,60 @@ test("a narrow panel shows its tabs as a dropdown, and widening it brings the ta
   expect(screen.queryByRole("combobox", { name: "Panel" })).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Diagnostics (1)" })).toHaveAttribute("aria-selected", "true");
 });
+
+/** A Version Profile's display and AV values, as `device_values` answers. */
+const DISPLAY_AV_VALUES = {
+  hdrTvSupport: true,
+  energySaving: "OFF",
+  ecoSensor: "OFF",
+  display3DModeState: "NOT_SUPPORTED",
+  display3DEffectMode: "OFF",
+  supported3DEffectModes: ["OFF"],
+};
+
+test("the TV settings tab shows the profile's display and AV values, and changing one restarts the App with it", async () => {
+  const invoked = rustSide({ "plugin:dialog|open": "C:/apps/hello", device_values: DISPLAY_AV_VALUES });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/hello");
+  await sessionEvents(
+    1,
+    { Lifecycle: { Starting: { app_id: "Fixture001.Hello", profile: "10.0" } } },
+    { Lifecycle: { AppLoaded: { url: "http://127.0.0.1:1/index.html" } } },
+  );
+
+  await userEvent.click(screen.getByRole("tab", { name: "TV settings" }));
+
+  expect(invoked).toContainEqual({ cmd: "device_values", args: { profile: "10.0" } });
+  const energySaving = await screen.findByRole("combobox", { name: "Energy saving" });
+  expect(energySaving).toHaveValue("OFF");
+  expect(screen.getByRole("checkbox", { name: "HDR support" })).toBeChecked();
+  expect(screen.getByRole("combobox", { name: "3D mode" })).toHaveValue("NOT_SUPPORTED");
+
+  await userEvent.selectOptions(energySaving, "HIGH");
+  expect(invoked).toContainEqual({ cmd: "set_device_value", args: { name: "energySaving", value: "HIGH" } });
+  await userEvent.click(screen.getByRole("checkbox", { name: "HDR support" }));
+  expect(invoked).toContainEqual({ cmd: "set_device_value", args: { name: "hdrTvSupport", value: false } });
+  await userEvent.click(screen.getByRole("checkbox", { name: "SIDE_BY_SIDE" }));
+  expect(invoked).toContainEqual({
+    cmd: "set_device_value",
+    args: { name: "supported3DEffectModes", value: ["OFF", "SIDE_BY_SIDE"] },
+  });
+});
+
+test("an adopted Session's TV settings are its owner's", async () => {
+  rustSide({
+    running_sessions: [{ id: "ab12cd", app_id: "Fixture001.Hello", profile: "10.0", source: "C:/apps/hello" }],
+    device_values: DISPLAY_AV_VALUES,
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /running sessions/i }));
+  await userEvent.click(within(await screen.findByRole("list", { name: "Running Sessions" })).getByRole("button", { name: /adopt/i }));
+  await sessionStarted(1, "C:/apps/hello", true);
+  await sessionEvents(1, { Lifecycle: { Starting: { app_id: "Fixture001.Hello", profile: "10.0" } } });
+
+  await userEvent.click(screen.getByRole("tab", { name: "TV settings" }));
+
+  expect(screen.getByText(/process that started this Session chose its TV settings/)).toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Energy saving" })).not.toBeInTheDocument();
+});

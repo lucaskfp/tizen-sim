@@ -34,6 +34,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -82,6 +84,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -136,6 +151,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -184,6 +201,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -238,6 +268,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -286,6 +318,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -340,6 +385,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -388,6 +435,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -442,6 +502,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -490,6 +552,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -544,6 +619,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -592,6 +669,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -646,6 +736,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -694,6 +786,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -748,6 +853,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -796,6 +903,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -850,6 +970,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -898,6 +1020,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).
@@ -952,6 +1087,8 @@ registrable_keys = [
 "http://tizen.org/feature/screen.width" = 1920
 "http://tizen.org/feature/screen.height" = 1080
 "http://tizen.org/feature/web.service" = true
+# The TV Display Control API (systeminfo_capability_keys.html).
+"http://tizen.org/feature/tv.display" = true
 
 [profile.device]
 model = "TIZEN-SIM-TV"
@@ -1000,6 +1137,19 @@ serviceCountry = "USA"
 smartRcBattery = 80
 boardTemperature = 40
 tvsPicSizeResized = false
+# webapis.avinfo (avinfo-api.html). The energy saving and eco sensor values
+# are EnergySavingType and EcoSensorType names; the App can change them.
+# Which models of each year support HDR is unverified.
+hdrTvSupport = true
+energySaving = "OFF"
+ecoSensor = "OFF"
+# tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
+# a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
+# TV without 3D is the default; what such a TV reports for the effect mode
+# and the list is unverified.
+display3DModeState = "NOT_SUPPORTED"
+display3DEffectMode = "OFF"
+supported3DEffectModes = []
 # webapis.network (network-api.html), on the connection `networkType` names.
 # Addresses use the reference's examples; the MAC is from the documentation
 # range (RFC 7042).

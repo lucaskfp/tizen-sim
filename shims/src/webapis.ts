@@ -1,5 +1,5 @@
-// The Samsung Product API (`webapis.*`): productinfo, tvinfo and network,
-// plus avplay (see avplay.ts), answered from the Version Profile's device values with the Session's
+// The Samsung Product API (`webapis.*`): productinfo, tvinfo, network and
+// avinfo, plus avplay (see avplay.ts), answered from the Version Profile's device values with the Session's
 // overrides applied.
 //
 // A TV gives a page `webapis` only once it loads `$WEBAPIS/webapis/webapis.js`
@@ -7,7 +7,7 @@
 // dev server answers that virtual script with a call to `installWebapis`.
 //
 // Sources: developer.samsung.com/smarttv/develop/api-references/
-// samsung-product-api-references/{webapi,productinfo,tvinfo,network}-api.html.
+// samsung-product-api-references/{webapi,productinfo,tvinfo,network,avinfo}-api.html.
 // "Since" versions there are Tizen versions; members newer than the Version
 // Profile are absent (see availability.ts).
 //
@@ -73,6 +73,14 @@ function requireListener(listener: any) {
 function requireType(value: any, type: string, argument: string) {
   if (typeof value !== type) {
     webapisFail("TypeMismatchError", argument + " must be a " + type);
+  }
+}
+
+/** For a value of one of the references' string enums. */
+function requireOneOf(value: any, values: string[], argument: string) {
+  requireType(value, "string", argument);
+  if (values.indexOf(value) < 0) {
+    webapisFail("InvalidValuesError", argument + " must be one of " + values.join(", "));
   }
 }
 
@@ -473,6 +481,83 @@ function createNetwork(device: { [key: string]: any }): any {
   return network;
 }
 
+// avinfo-api.html. No method names a privilege. The reference leaves the
+// order of its checks open; checking the argument before refusing an
+// unsupported call is unverified.
+function createAvInfo(device: { [key: string]: any }): any {
+  var SUB_AMP_MODES = ["NO_EXT_AUDIO", "EXT_AUDIO_TV", "EXT_AUDIO_SWITCH", "EXT_HEALTHCARE"];
+  var ENERGY_SAVING_TYPES = ["OFF", "LOW", "MEDIUM", "HIGH"];
+  var ECO_SENSOR_TYPES = ["OFF", "ON"];
+  // The App can change these; the change lasts as long as the page.
+  var energySaving: string = device.energySaving;
+  var ecoSensor: string = device.ecoSensor;
+
+  /**
+   * NotSupportedError "for non Samsung products". A licensed brand marks
+   * one, as for productinfo.getLicensedBrand; that a TV links the two is
+   * unverified.
+   */
+  function requireSamsungProduct(method: string) {
+    if (device.licensedBrand) {
+      webapisFail("NotSupportedError", "webapis.avinfo." + method + "() is available on Samsung products only");
+    }
+  }
+
+  var avinfo: any = {
+    AvInfoDigitalCompMode: { DOLBY_DIGITAL_COMP_MODE_LINE: 0, DOLBY_DIGITAL_COMP_MODE_RF: 1 },
+
+    getVersion: function () {
+      requireSamsungProduct("getVersion");
+      return pluginVersion();
+    },
+
+    // "This feature doesn't be supported since 2016", before every Version
+    // Profile.
+    getDolbyDigitalCompMode: function () {
+      webapisFail("NotSupportedError", "Dolby Digital compression mode is not supported since 2016");
+    },
+
+    isHdrTvSupport: function () {
+      requireSamsungProduct("isHdrTvSupport");
+      return device.hdrTvSupport;
+    },
+  };
+  if (available("webapis.avinfo.setSubAmpMode")) {
+    // For Hotel TVs only: NotSupportedError on any other product.
+    avinfo.setSubAmpMode = function (mode: any) {
+      requireOneOf(mode, SUB_AMP_MODES, "mode");
+      webapisFail("NotSupportedError", "setSubAmpMode() is available on Hotel TVs only");
+    };
+  }
+  if (available("webapis.avinfo.getEnergySaving")) {
+    avinfo.getEnergySaving = function () {
+      requireSamsungProduct("getEnergySaving");
+      return energySaving;
+    };
+  }
+  if (available("webapis.avinfo.setEnergySaving")) {
+    avinfo.setEnergySaving = function (value: any) {
+      requireOneOf(value, ENERGY_SAVING_TYPES, "value");
+      requireSamsungProduct("setEnergySaving");
+      energySaving = value;
+    };
+  }
+  if (available("webapis.avinfo.getEcoSensor")) {
+    avinfo.getEcoSensor = function () {
+      requireSamsungProduct("getEcoSensor");
+      return ecoSensor;
+    };
+  }
+  if (available("webapis.avinfo.setEcoSensor")) {
+    avinfo.setEcoSensor = function (value: any) {
+      requireOneOf(value, ECO_SENSOR_TYPES, "value");
+      requireSamsungProduct("setEcoSensor");
+      ecoSensor = value;
+    };
+  }
+  return avinfo;
+}
+
 /** Called by the virtual `$WEBAPIS/webapis/webapis.js`; loading it twice keeps the first. */
 function installWebapis() {
   if ((window as any).webapis) {
@@ -483,6 +568,7 @@ function installWebapis() {
     productinfo: createProductInfo(device),
     tvinfo: createTvInfo(device),
     network: createNetwork(device),
+    avinfo: createAvInfo(device),
     avplay: createAVPlay(),
   };
   warnOnDeprecated("webapis");

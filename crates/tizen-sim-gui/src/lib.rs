@@ -117,6 +117,30 @@ fn profiles() -> Vec<ProfileInfo> {
         .collect()
 }
 
+/// Version Profile `profile`'s device values, with those chosen in the GUI.
+#[tauri::command]
+fn device_values(
+    profile: String,
+    controller: State<'_, Controller>,
+) -> Result<serde_json::Value, String> {
+    controller
+        .device_values(&profile)
+        .map_err(|e| e.to_string())
+}
+
+/// Sets a device value the platform APIs report, restarting the App.
+#[tauri::command]
+async fn set_device_value(
+    name: String,
+    value: serde_json::Value,
+    controller: State<'_, Controller>,
+) -> Result<(), String> {
+    controller
+        .set_device_value(&name, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Whether the TV screen is shown inside the GUI (ADR-0006: on Windows).
 #[tauri::command]
 fn embeds_screen() -> bool {
@@ -216,7 +240,9 @@ pub fn setup<R: Runtime>(
             screenshot,
             profiles,
             embeds_screen,
-            set_screen_area
+            set_screen_area,
+            device_values,
+            set_device_value
         ])
 }
 

@@ -65,6 +65,23 @@ fn every_tizen_tv_release_from_3_0_to_10_0_is_a_version_profile() {
     }
 }
 
+/// A device value set for every Session, as the GUI does, must exist on
+/// whichever Version Profile the App runs on.
+#[test]
+fn every_version_profile_has_the_same_device_value_names() {
+    let catalog = ProfileCatalog::parse(BUNDLED_PROFILES).unwrap();
+    let names = |profile: &tizen_sim_core::profile::VersionProfile| {
+        let values = profile.device_values(&serde_json::Map::new()).unwrap();
+        let mut names: Vec<String> = values.as_object().unwrap().keys().cloned().collect();
+        names.sort();
+        names
+    };
+    let latest = names(catalog.latest());
+    for profile in catalog.all() {
+        assert_eq!(names(profile), latest, "Tizen {}", profile.version);
+    }
+}
+
 #[test]
 fn adding_an_engine_manifest_entry_is_a_data_only_change() {
     let manifest = EngineManifest::parse(&format!(

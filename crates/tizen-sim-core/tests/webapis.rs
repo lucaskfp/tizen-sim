@@ -165,6 +165,121 @@ async fn tvinfo_reports_version_profile_values() {
     t.session.stop().await;
 }
 
+/// avinfo-api.html: no method names a privilege.
+#[tokio::test]
+async fn avinfo_reports_version_profile_values() {
+    let t = start("webapis-unprivileged");
+    t.session.wait_until_loaded().await.unwrap();
+    let values = t
+        .session
+        .evaluate(
+            "(function () { var a = webapis.avinfo; return [ \
+               a.getVersion() === webapis.tvinfo.getVersion(), a.isHdrTvSupport(), \
+               a.AvInfoDigitalCompMode.DOLBY_DIGITAL_COMP_MODE_LINE, \
+               a.AvInfoDigitalCompMode.DOLBY_DIGITAL_COMP_MODE_RF \
+             ]; })()",
+        )
+        .await
+        .unwrap();
+    assert_eq!(values, json!([true, true, 0, 1]));
+    // "This feature doesn't be supported since 2016", before every Version
+    // Profile.
+    assert_eq!(
+        t.session
+            .evaluate(&attempt("webapis.avinfo.getDolbyDigitalCompMode()"))
+            .await
+            .unwrap(),
+        "NotSupportedError"
+    );
+    // Since 6.0, Hotel TV only.
+    if support::has_api("webapis.avinfo.setSubAmpMode") {
+        let errors = t
+            .session
+            .evaluate(&format!(
+                "[{}, {}, {}]",
+                attempt("webapis.avinfo.setSubAmpMode(1)"),
+                attempt("webapis.avinfo.setSubAmpMode('LOUD')"),
+                attempt("webapis.avinfo.setSubAmpMode('EXT_AUDIO_TV')"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            errors,
+            json!([
+                "TypeMismatchError",
+                "InvalidValuesError",
+                "NotSupportedError"
+            ])
+        );
+    }
+    // Since 6.5: settable, and the setting sticks.
+    if support::has_api("webapis.avinfo.getEnergySaving") {
+        let values = t
+            .session
+            .evaluate(
+                "(function () { var a = webapis.avinfo; \
+                   var before = [a.getEnergySaving(), a.getEcoSensor()]; \
+                   a.setEnergySaving('HIGH'); a.setEcoSensor('ON'); \
+                   return before.concat([a.getEnergySaving(), a.getEcoSensor()]); })()",
+            )
+            .await
+            .unwrap();
+        assert_eq!(values, json!(["OFF", "OFF", "HIGH", "ON"]));
+        let errors = t
+            .session
+            .evaluate(&format!(
+                "[{}, {}, {}, {}]",
+                attempt("webapis.avinfo.setEnergySaving(2)"),
+                attempt("webapis.avinfo.setEnergySaving('MAX')"),
+                attempt("webapis.avinfo.setEcoSensor(true)"),
+                attempt("webapis.avinfo.setEcoSensor('AUTO')"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            errors,
+            json!([
+                "TypeMismatchError",
+                "InvalidValuesError",
+                "TypeMismatchError",
+                "InvalidValuesError"
+            ])
+        );
+    }
+    t.session.stop().await;
+}
+
+/// avinfo-api.html: getVersion, isHdrTvSupport and the Energy Saving and Eco
+/// Sensor methods throw NotSupportedError "for non Samsung products", which
+/// a licensed brand marks (as for productinfo.getLicensedBrand).
+#[tokio::test]
+async fn avinfo_is_not_supported_on_licensed_products() {
+    let t = start_with("webapis-unprivileged", |c| {
+        c.device.insert("licensedBrand".into(), json!("Acme"));
+    });
+    t.session.wait_until_loaded().await.unwrap();
+    let mut calls = vec!["getVersion()", "isHdrTvSupport()"];
+    if support::has_api("webapis.avinfo.getEnergySaving") {
+        calls.extend([
+            "getEnergySaving()",
+            "setEnergySaving('LOW')",
+            "getEcoSensor()",
+            "setEcoSensor('ON')",
+        ]);
+    }
+    let attempts: Vec<String> = calls
+        .iter()
+        .map(|call| attempt(&format!("webapis.avinfo.{call}")))
+        .collect();
+    let errors = t
+        .session
+        .evaluate(&format!("[{}]", attempts.join(", ")))
+        .await
+        .unwrap();
+    assert_eq!(errors, json!(vec!["NotSupportedError"; calls.len()]));
+    t.session.stop().await;
+}
+
 /// network-api.html.
 #[tokio::test]
 async fn network_reports_version_profile_values() {

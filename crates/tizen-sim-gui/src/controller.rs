@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::home::Home;
+use tizen_sim_core::profile::{UnknownDeviceValue, UnknownProfile, VersionProfile};
 use tizen_sim_core::registry::{
     ChooseError, ClientError, ClientEvents, RegistryEntry, SessionClient, SessionRegistry,
 };
@@ -72,6 +73,14 @@ pub enum ControllerError {
     NoSession,
     #[error("that Session is the one the GUI is showing")]
     AlreadyShown,
+    #[error(
+        "another process started this Session and chose its device values; restart it from the GUI to change them"
+    )]
+    Adopted,
+    #[error(transparent)]
+    UnknownProfile(#[from] UnknownProfile),
+    #[error(transparent)]
+    UnknownDeviceValue(#[from] UnknownDeviceValue),
     #[error(transparent)]
     Session(#[from] SessionError),
     #[error(transparent)]
@@ -96,6 +105,9 @@ pub struct Controller {
     sink: Sink,
     screen: Arc<dyn Screen>,
     current: Mutex<Option<Current>>,
+    /// The device values the developer chose in the GUI, by name, for every
+    /// Session the GUI starts.
+    device: std::sync::Mutex<serde_json::Map<String, serde_json::Value>>,
     /// The id the next Session shown gets.
     next_id: std::sync::atomic::AtomicU64,
 }
@@ -137,6 +149,7 @@ impl Controller {
             sink: Arc::new(sink),
             screen: Arc::new(NoScreen),
             current: Mutex::new(None),
+            device: Default::default(),
             next_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
@@ -171,6 +184,43 @@ impl Controller {
             let shown = current.as_ref().ok_or(ControllerError::NoSession)?;
             (shown.source.clone(), shown.profile.clone())
         };
+        self.start(&mut current, source, profile).await;
+        Ok(())
+    }
+
+    /// Version Profile `profile`'s device values, with those chosen in the
+    /// GUI in their place.
+    pub fn device_values(&self, profile: &str) -> Result<serde_json::Value, ControllerError> {
+        let device = self.device.lock().unwrap();
+        Ok(VersionProfile::find(profile)?.device_values(&device)?)
+    }
+
+    /// Sets a device value the platform APIs report, and restarts the GUI's
+    /// Session so its App sees it, as switching profile does. It holds for
+    /// every Session the GUI starts from then on.
+    pub async fn set_device_value(
+        &self,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Result<(), ControllerError> {
+        let mut current = self.current.lock().await;
+        let (source, profile) = match current.as_ref() {
+            None => return Err(ControllerError::NoSession),
+            Some(Current {
+                handle: Handle::Adopted { .. },
+                ..
+            }) => return Err(ControllerError::Adopted),
+            Some(shown) => (shown.source.clone(), shown.profile.clone()),
+        };
+        {
+            let mut device = self.device.lock().unwrap();
+            let mut changed = device.clone();
+            changed.insert(name.to_string(), value);
+            // Every Version Profile in data/profiles.toml has the same device
+            // value names, so the latest stands for them all.
+            VersionProfile::latest().device_values(&changed)?;
+            *device = changed;
+        }
         self.start(&mut current, source, profile).await;
         Ok(())
     }
@@ -236,7 +286,7 @@ impl Controller {
             headless: self.options.headless,
             lenient: false,
             key_map: KeyMap::default(),
-            device: Default::default(),
+            device: self.device.lock().unwrap().clone(),
             resolution: Default::default(),
             checkerboard: false,
             home: self.options.home.clone(),
