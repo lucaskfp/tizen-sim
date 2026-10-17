@@ -11,7 +11,7 @@ mod devtools_relay;
 mod elf_exports;
 pub mod engine;
 mod es_modules;
-pub mod gamepad;
+mod gamepad;
 pub mod home;
 pub mod media;
 pub mod network;

@@ -28,7 +28,7 @@ use serde_json::Value;
 
 /// Whether launching needs the popup: the App names gamepad models and none
 /// of them is among the `connected` ones, written the same way.
-pub fn needs_popup(required: &[String], connected: &[String]) -> bool {
+pub(crate) fn needs_popup(required: &[String], connected: &[String]) -> bool {
     !required.is_empty() && !required.iter().any(|model| connected.contains(model))
 }
 

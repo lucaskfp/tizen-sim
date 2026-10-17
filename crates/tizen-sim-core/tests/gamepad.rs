@@ -148,3 +148,24 @@ async fn stopping_during_the_popup_leaves_nothing_to_press_keys_on() {
         "{pressed:?}"
     );
 }
+
+#[tokio::test]
+async fn an_engine_that_dies_during_the_popup_ends_the_session_as_crashed() {
+    let mut t = start("gamepad");
+    expect_event(&mut t.events, STARTUP_SECS, is_gamepad_required).await;
+    let pid = t
+        .session
+        .engine_pid()
+        .expect("the popup's Engine has a process");
+
+    support::kill_process(pid);
+
+    let seen = events_until(&mut t.events, |e| {
+        matches!(e, SessionEvent::Lifecycle(Lifecycle::Exited { .. }))
+    })
+    .await;
+    assert!(
+        exited_because(seen.last().unwrap(), ExitReason::EngineCrashed),
+        "{seen:#?}"
+    );
+}

@@ -467,7 +467,8 @@ async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
                         }
                         Lifecycle::GamepadRequired { models } => {
                             println!(
-                                "The App requires a {} gamepad and none is connected (see --gamepad):                                  the TV asks before launching it. Choose in the Engine window.",
+                                "The App requires a {} gamepad and none is connected (see --gamepad): the TV asks \
+                                 before launching it. Choose in the Engine window.",
                                 models.join(" or ")
                             );
                         }

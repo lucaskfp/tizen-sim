@@ -551,9 +551,9 @@ async fn run(
     };
     let mut running = match started {
         Ok(running) => running,
-        Err(StartError::Canceled) => {
+        Err(StartError::Ended(reason)) => {
             // Dropping what startup had started closes the Engine and server.
-            inner.finish(ExitReason::LaunchCanceled);
+            inner.finish(reason);
             return;
         }
         Err(StartError::Failed(error)) => {
@@ -585,11 +585,7 @@ async fn run(
                 break reason;
             }
             status = running.engine.child.wait() => {
-                // Closing its window makes the Engine quit normally.
-                break match status {
-                    Ok(status) if status.success() => ExitReason::EngineClosed,
-                    _ => ExitReason::EngineCrashed,
-                };
+                break engine_exit_reason(status);
             }
             Some(batch) = next_batch(&mut running.watcher) => {
                 inner.hot_reload(&config, &mut running, batch).await;
@@ -890,8 +886,9 @@ impl Inner {
 /// Why a Session didn't get its App running.
 enum StartError {
     Failed(String),
-    /// The developer chose not to launch the App (see `ExitReason::LaunchCanceled`).
-    Canceled,
+    /// It ended before the App launched: the developer chose not to launch
+    /// it, or the Engine went away during the gamepad popup.
+    Ended(ExitReason),
 }
 
 impl From<String> for StartError {
@@ -1120,14 +1117,14 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         _devtools_relay: devtools_relay,
         session_dir,
     };
-    let popup = gamepad::needs_popup(&required_gamepads, &config.gamepads);
-    if popup {
+    let asks_for_gamepad = gamepad::needs_popup(&required_gamepads, &config.gamepads);
+    if asks_for_gamepad {
         // Shown in the Engine window, so the Engine is recorded first.
         record_engine(inner, &running, &mut entry, config.headless).await;
         ask_for_gamepad(inner, &mut running, required_gamepads).await?;
     }
     running.network.set_logging(true);
-    let loaded = if popup {
+    let loaded = if asks_for_gamepad {
         // The App replaces the popup, which isn't in the App's history.
         let replace = format!("location.replace({}); 0", Value::String(url.clone()));
         load_page(
@@ -1207,22 +1204,54 @@ async fn ask_for_gamepad(
         .publish(SessionEvent::Lifecycle(Lifecycle::GamepadRequired {
             models,
         }));
-    // Polled rather than awaited, as M47 has no `awaitPromise`.
-    let choice = loop {
-        let value = running
-            .cdp
-            .evaluate(gamepad::CHOICE_EXPRESSION)
-            .await
-            .map_err(|e| format!("lost the gamepad popup: {e}"))?;
-        if let Some(choice) = gamepad::parse_choice(&value) {
-            break choice;
+    // An Engine closed or crashed during the popup ends the Session as it
+    // would with the App running. Its process is watched, as the page may
+    // not answer once the Engine is killed: polling the popup of a killed
+    // M47 Engine (Tizen 3.0) waited past 600 s in the gamepad tests.
+    let choice = tokio::select! {
+        status = running.engine.child.wait() => {
+            return Err(StartError::Ended(engine_exit_reason(status)));
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        choice = popup_choice(&running.cdp) => choice,
+    };
+    let choice = match choice {
+        Ok(choice) => choice,
+        Err(error) => {
+            // The page may be lost a moment before the process exits.
+            let exited = tokio::time::timeout(Duration::from_secs(5), running.engine.child.wait());
+            if let Ok(status) = exited.await {
+                return Err(StartError::Ended(engine_exit_reason(status)));
+            }
+            return Err(format!("lost the gamepad popup: {error}").into());
+        }
     };
     inner.popup.lock().unwrap().take();
     match choice {
         gamepad::Choice::Play => Ok(()),
-        gamepad::Choice::Cancel | gamepad::Choice::ConnectNow => Err(StartError::Canceled),
+        gamepad::Choice::Cancel | gamepad::Choice::ConnectNow => {
+            Err(StartError::Ended(ExitReason::LaunchCanceled))
+        }
+    }
+}
+
+/// Waits for the developer's choice in the gamepad popup. Polled rather than
+/// awaited, as `eval_callback` in the Session tests' support does: Engines
+/// without `awaitPromise` can't await a promise.
+async fn popup_choice(cdp: &Cdp) -> Result<gamepad::Choice, CdpError> {
+    loop {
+        let value = cdp.evaluate(gamepad::CHOICE_EXPRESSION).await?;
+        if let Some(choice) = gamepad::parse_choice(&value) {
+            return Ok(choice);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Why the Engine process ended: closing its window makes it quit normally.
+fn engine_exit_reason(status: std::io::Result<std::process::ExitStatus>) -> ExitReason {
+    match status {
+        Ok(status) if status.success() => ExitReason::EngineClosed,
+        _ => ExitReason::EngineCrashed,
     }
 }
 
