@@ -4,7 +4,8 @@ mod support;
 
 use support::{fixture, fixture_entries, write_package};
 use tizen_sim_core::app::{
-    AccessPolicy, AccessRequest, App, AppError, AppFiles, AppSource, CspPolicy,
+    AccessPolicy, AccessRequest, App, AppError, AppFiles, AppSource, CspPolicy, LaunchScreen,
+    ReadyWhen,
 };
 use tizen_sim_core::profile::VersionProfile;
 
@@ -215,6 +216,58 @@ fn load_xml(xml: &str) -> Result<App, AppError> {
     std::fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
     std::fs::write(dir.path().join("config.xml"), xml).unwrap();
     App::load(&AppSource::ProjectFolder(dir.path().to_path_buf()))
+}
+
+fn launch_screen(children: &str) -> Option<LaunchScreen> {
+    load_xml(&config_xml(children))
+        .unwrap()
+        .launch_screen()
+        .cloned()
+}
+
+/// `<tizen:launch_screen>` and its `ready_when` (TD reference/config-xml.md,
+/// "Tizen launch screen"). `ls_landscape` is taken over `ls_default` when
+/// both are there; which one a TV picks is unverified.
+#[test]
+fn the_launch_screen_is_read_with_when_it_hides() {
+    assert_eq!(launch_screen(""), None);
+    let default = r##"<tizen:ls_default background_image="bg.png" background_color="#ff0000"
+        image="icon.png" image_border="0px stretch"/>"##;
+    let cases = [
+        ("", ReadyWhen::FirstPaint),
+        (r#"ready_when="first-paint""#, ReadyWhen::FirstPaint),
+        (r#"ready_when="complete""#, ReadyWhen::Complete),
+        (r#"ready_when="custom""#, ReadyWhen::Custom),
+    ];
+    for (attribute, ready_when) in cases {
+        let element = format!("<tizen:launch_screen {attribute}>{default}</tizen:launch_screen>");
+        assert_eq!(
+            launch_screen(&element),
+            Some(LaunchScreen {
+                ready_when,
+                background_color: Some("#ff0000".into()),
+                background_image: Some("bg.png".into()),
+                image: Some("icon.png".into()),
+            }),
+            "{attribute}"
+        );
+    }
+
+    let both = format!(
+        r##"<tizen:launch_screen ready_when="custom">{default}
+            <tizen:ls_portrait background_color="#0000ff" background_image="p.png" image="p.png" image_border="0"/>
+            <tizen:ls_landscape background_color="#00ff00" image="l.png"/>
+        </tizen:launch_screen>"##
+    );
+    assert_eq!(
+        launch_screen(&both),
+        Some(LaunchScreen {
+            ready_when: ReadyWhen::Custom,
+            background_color: Some("#00ff00".into()),
+            background_image: None,
+            image: Some("l.png".into()),
+        })
+    );
 }
 
 fn policy(children: &str) -> AccessPolicy {

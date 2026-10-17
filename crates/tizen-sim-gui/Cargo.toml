@@ -23,7 +23,10 @@ serde_json = "1.0.151"
 tauri = { version = "2.12.3", features = [] }
 tauri-plugin-dialog = "2.8.2"
 tauri-plugin-process = "2.4.0"
-tauri-plugin-updater = "2.13.3"
+# Without the default `zip` feature: it only unpacks .zip updates on Windows,
+# and releases offer the NSIS -setup.exe and the .msi (updater-manifest.sh).
+# It pulls in zip 4.x, which has RUSTSEC-2026-0367, -0368 and -0369.
+tauri-plugin-updater = { version = "2.13.3", default-features = false, features = ["rustls-tls", "system-proxy"] }
 thiserror = "2.0.21"
 tizen-sim-core = { path = "../tizen-sim-core" }
 tokio = { version = "1.53.2", features = ["full"] }
