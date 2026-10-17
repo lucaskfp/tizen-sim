@@ -79,7 +79,8 @@ pub struct App {
 
 /// The splash screen `<tizen:launch_screen>` declares, shown from launch until
 /// `ready_when` (TD reference/config-xml.md, "Tizen launch screen"). The TV
-/// guides don't mention it. Its paths are relative to the App's root.
+/// guides don't mention it; a 2019 TV shows it (measured, #113). Its paths
+/// are relative to the App's root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchScreen {
     pub ready_when: ReadyWhen,

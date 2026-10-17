@@ -5,17 +5,20 @@
 // - `complete`: the "load,complete" callback, taken here as the load event;
 // - `custom`: the App calling `window.screen.show()`.
 //
-// Unverified, as the docs don't say:
-// - how a TV lays out `background_image`, `image` and `image_border`. Here the
-//   background image is stretched over the screen, the image is centred at
-//   its own size, and `image_border` is ignored;
-// - whether a TV has `screen.show()` for an App without a launch screen.
-//   Here every App has it;
-// - whether `screen.show()` also hides it before `first-paint` or `complete`
-//   would. Here it does;
-// - whether it shows again when the App goes to another page. Here it shows
-//   once per launch. The Host counts its reloads and restarts as launches
-//   and calls `config.forgetLaunchScreen` before them (see session.rs).
+// Measured on a 2019 TV (Tizen 5.0, #113), where the docs say nothing:
+// - every App has `screen.show()`, with or without a launch screen, and it
+//   hides the launch screen only with `custom`: under `complete` an earlier
+//   call leaves it up until the load event;
+// - `first-paint` hides it before the load event, `complete` waits for it;
+// - once hidden, it doesn't show again when the App goes to another page.
+//   Here the Host counts its reloads and restarts as launches and calls
+//   `config.forgetLaunchScreen` before them (see session.rs);
+// - with `image_border="0px stretch"`, the background image is stretched
+//   over the screen, and the image is scaled to fit the screen, keeping its
+//   proportions, and centred.
+// Unverified: what other `image_border` values do (ignored here), and whether
+// it stays up when the App goes to another page before it is hidden (it does
+// here).
 
 /** The sessionStorage mark that the launch screen was hidden. */
 var HIDDEN_KEY = "__tizen-sim:launch-screen-hidden";
@@ -54,7 +57,9 @@ config.forgetLaunchScreen = function () {
 
   Object.defineProperty(window.screen, "show", {
     value: function show() {
-      hide();
+      if (launchScreen && launchScreen.readyWhen === "custom") {
+        hide();
+      }
     },
     configurable: true,
     writable: true,
@@ -73,7 +78,7 @@ config.forgetLaunchScreen = function () {
   if (launchScreen.image) {
     images.push('url("' + launchScreen.image + '")');
     positions.push("center");
-    sizes.push("auto");
+    sizes.push("contain");
   }
   if (launchScreen.backgroundImage) {
     images.push('url("' + launchScreen.backgroundImage + '")');

@@ -3066,7 +3066,9 @@ config.forgetLaunchScreen = function () {
     }
     Object.defineProperty(window.screen, "show", {
         value: function show() {
-            hide();
+            if (launchScreen && launchScreen.readyWhen === "custom") {
+                hide();
+            }
         },
         configurable: true,
         writable: true,
@@ -3082,7 +3084,7 @@ config.forgetLaunchScreen = function () {
     if (launchScreen.image) {
         images.push('url("' + launchScreen.image + '")');
         positions.push("center");
-        sizes.push("auto");
+        sizes.push("contain");
     }
     if (launchScreen.backgroundImage) {
         images.push('url("' + launchScreen.backgroundImage + '")');
