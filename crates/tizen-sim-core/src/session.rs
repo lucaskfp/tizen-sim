@@ -1132,6 +1132,9 @@ async fn engine_window(engine: &RunningEngine) -> Option<u64> {
 async fn load_page(running: &mut Running, method: &str, params: Value) -> Result<(), String> {
     // Forget loads that finished before this one started.
     while running.page_loads.try_recv().is_ok() {}
+    // The Host's loads launch the App, so its launch screen shows again
+    // (shims/src/launch-screen.ts).
+    let _ = running.cdp.evaluate(FORGET_LAUNCH_SCREEN).await;
     running
         .cdp
         .call(method, params)
@@ -1148,6 +1151,10 @@ async fn load_page(running: &mut Running, method: &str, params: Value) -> Result
     wait_for_first_paint(&running.cdp).await;
     Ok(())
 }
+
+/// Has the page show its launch screen again (shims/src/launch-screen.ts).
+/// The page before the first load has no Shims.
+const FORGET_LAUNCH_SCREEN: &str = "(function (host) {      if (host && host.forgetLaunchScreen) host.forgetLaunchScreen();      })(window.__TIZEN_SIM__); 0";
 
 /// Waits for the page's first paint, as some Engines (M94, M108) drop key
 /// events until the page's first frame is up, which can come after the load

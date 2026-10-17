@@ -68,6 +68,12 @@ pub fn session_data(
             "privileges": app.privileges(),
             "installedAt": installed_at_ms(),
         },
+        "launchScreen": app.launch_screen().map(|screen| json!({
+            "readyWhen": screen.ready_when.as_str(),
+            "backgroundColor": screen.background_color,
+            "backgroundImage": screen.background_image.as_deref().map(|file| app.served_path(file)),
+            "image": screen.image.as_deref().map(|file| app.served_path(file)),
+        })),
         "profile": {
             "version": profile.version,
             "milestone": profile.milestone,

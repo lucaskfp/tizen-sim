@@ -30,6 +30,7 @@
     "src/video-plane.ts",
     "src/avplay.ts",
     "src/screen.ts",
+    "src/launch-screen.ts",
     "src/features.ts",
     "src/install.ts"
   ]

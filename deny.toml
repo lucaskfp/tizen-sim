@@ -11,9 +11,6 @@ ignore = [
     # 0.18, which Tauri pulls in for GTK 3 on Linux (tauri -> muda -> gtk).
     # Goes away when Tauri moves off gtk-rs 0.18.
     { id = "RUSTSEC-2024-0370", reason = "pulled in by Tauri's GTK 3 bindings; build-time only" },
-    # Every zip 4.x release is yanked, but tauri-plugin-updater 2.x still
-    # requires zip ^4. Goes away when the updater moves to a newer zip.
-    { crate = "zip@4.6.1", reason = "required by tauri-plugin-updater 2.x; no unyanked 4.x exists" },
 ]
 
 # Licenses a dependency may carry: permissive ones, plus MPL-2.0 (file-level
