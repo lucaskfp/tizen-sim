@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://example.com/gamepad" version="1.0.0">
+    <tizen:application id="Fixture109.Gamepad" package="Fixture109" required_version="2.3"/>
+    <content src="index.html"/>
+    <name>Gamepad fixture</name>
+    <tizen:profile name="tv"/>
+    <tizen:metadata key="http://samsung.com/tv/metadata/gamepad" value="dualshock4"/>
+</widget>

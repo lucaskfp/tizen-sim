@@ -108,6 +108,7 @@ async fn start_elsewhere(gui: &TestGui, name: &str) -> (Session, RegistryEntry) 
         device: Default::default(),
         resolution: Default::default(),
         checkerboard: false,
+        gamepads: Vec::new(),
         home: gui.home.clone(),
     });
     session.wait_until_loaded().await.unwrap();

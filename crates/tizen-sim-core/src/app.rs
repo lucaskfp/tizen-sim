@@ -15,6 +15,9 @@ use url::{Host, Url};
 
 const WIDGET_NS: &str = "http://www.w3.org/ns/widgets";
 const TIZEN_NS: &str = "http://tizen.org/ns/widgets";
+/// The TV metadata naming the gamepad models an App needs
+/// (TV guides/user-interaction/gamepad.html).
+const GAMEPAD_METADATA: &str = "http://samsung.com/tv/metadata/gamepad";
 
 /// Where an App's files come from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +74,7 @@ pub struct App {
     background_categories: Vec<String>,
     entry_point: String,
     access_policy: AccessPolicy,
+    required_gamepads: Vec<String>,
     launch_screen: Option<LaunchScreen>,
     files: AppFiles,
     /// Where a Package was unpacked; removed once the last clone is dropped.
@@ -342,6 +346,13 @@ impl App {
         &self.access_policy
     }
 
+    /// The gamepad models the `gamepad` metadata names, one of which must be
+    /// connected when the App launches (TV guides/user-interaction/gamepad.html,
+    /// "Checking for Specific Gamepads"). Empty without the metadata.
+    pub fn required_gamepads(&self) -> &[String] {
+        &self.required_gamepads
+    }
+
     /// The App's launch screen, if it declares one.
     pub fn launch_screen(&self) -> Option<&LaunchScreen> {
         self.launch_screen.as_ref()
@@ -550,6 +561,23 @@ fn read_config(file: &Path, shown_as: &Path, files: AppFiles) -> Result<App, App
         .unwrap_or("index.html")
         .to_string();
     let access_policy = access_policy(widget);
+    // "To add multiple gamepad models, separate the model names using '::'"
+    // (TV guides/user-interaction/gamepad.html). Which occurrence counts when
+    // the key repeats is unverified; the first is taken.
+    let required_gamepads = widget
+        .children()
+        .filter(|n| n.has_tag_name((TIZEN_NS, "metadata")))
+        .find(|n| n.attribute("key") == Some(GAMEPAD_METADATA))
+        .and_then(|n| n.attribute("value"))
+        .map(|value| {
+            value
+                .split("::")
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
     let launch_screen = launch_screen(widget);
 
     Ok(App {
@@ -563,6 +591,7 @@ fn read_config(file: &Path, shown_as: &Path, files: AppFiles) -> Result<App, App
         background_categories,
         entry_point,
         access_policy,
+        required_gamepads,
         launch_screen,
         files,
         _unpacked: None,

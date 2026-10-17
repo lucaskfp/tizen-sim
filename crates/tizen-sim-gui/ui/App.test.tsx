@@ -177,6 +177,28 @@ test("the on-screen remote sends Remote Keys, and dropped keys show in the log",
   ).toBeInTheDocument();
 });
 
+test("the TV's popup asking for a required gamepad is answered with the remote", async () => {
+  const invoked = rustSide({ "plugin:dialog|open": "C:/apps/gamepad", embeds_screen: true });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/gamepad");
+  await sessionEvents(1, { Lifecycle: { GamepadRequired: { models: ["dualshock4", "usbgamepad"] } } });
+  await screenEvent(1, true);
+
+  expect(screen.getByText("Waiting for a gamepad")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "The App requires a dualshock4 or usbgamepad gamepad and none is connected: the TV asks before launching it.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /reload/i })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "ArrowRight" }));
+  expect(invoked).toContainEqual({ cmd: "press_key", args: { key: "ArrowRight" } });
+
+  await sessionEvents(1, { Lifecycle: { Exited: { reason: "LaunchCanceled" } } });
+  expect(screen.getByText("The App was not launched.")).toBeInTheDocument();
+});
+
 test("the network panel lists requests with their Access Policy verdicts", async () => {
   rustSide({ "plugin:dialog|open": "C:/apps/network" });
   render(<App />);

@@ -117,6 +117,7 @@ fn embedded() -> Embedded {
             device: Default::default(),
             resolution: Default::default(),
             checkerboard: false,
+            gamepads: Vec::new(),
             home: home.clone(),
         });
         session.wait_until_loaded().await.unwrap();
