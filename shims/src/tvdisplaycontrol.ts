@@ -9,13 +9,15 @@ var TV_DISPLAY_PRIVILEGE = "http://tizen.org/privilege/tv.display";
 var TV_DISPLAY_FEATURE = "http://tizen.org/feature/tv.display";
 
 /**
- * Up to 5.5 every method needs `tv.display`; the 5.0 and 5.5 references mark
+ * Before 5.0 every method needs `tv.display`. The 5.0 and 5.5 references mark
  * the privilege and its SecurityError deprecated, and from 6.0 they name no
- * privilege. There is no 3.0 reference; it gets the 4.0 one, where the
- * pre-5.0 shapes of the APIs are (docs/agents/tizen-docs.md).
+ * privilege. Measured on a Tizen 5.0 TV: an App without it gets answers, no
+ * SecurityError; that 5.5 TVs don't enforce it either is unverified. There
+ * is no 3.0 reference; it gets the 4.0 one, where the pre-5.0 shapes of the
+ * APIs are (docs/agents/tizen-docs.md).
  */
 function requireTvDisplay(method: string) {
-  if (parseFloat(config.profile.version) < 6.0) {
+  if (parseFloat(config.profile.version) < 5.0) {
     requirePrivilege(TV_DISPLAY_PRIVILEGE, "tizen.tvdisplaycontrol." + method + "()");
   }
   // "NotSupportedError, if this feature is not supported" (Related Feature).

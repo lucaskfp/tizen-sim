@@ -92,8 +92,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -209,8 +209,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -326,8 +326,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -443,8 +443,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -560,8 +560,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -677,8 +677,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -794,8 +794,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -911,8 +911,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -1028,8 +1028,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []
@@ -1145,8 +1145,8 @@ energySaving = "OFF"
 ecoSensor = "OFF"
 # tizen.tvdisplaycontrol (tvdisplaycontrol.html): a Display3DModeState name,
 # a Display3DEffectMode name and the Display3DEffectModes the TV supports. A
-# TV without 3D is the default; what such a TV reports for the effect mode
-# and the list is unverified.
+# TV without 3D is the default, reporting what a Tizen 5.0 TV without 3D
+# reports (measured on a UN50RU7100); other models are unverified.
 display3DModeState = "NOT_SUPPORTED"
 display3DEffectMode = "OFF"
 supported3DEffectModes = []

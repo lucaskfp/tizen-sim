@@ -478,7 +478,7 @@ config.keys = { isRegistered: isKeyRegistered };
 var TV_DISPLAY_PRIVILEGE = "http://tizen.org/privilege/tv.display";
 var TV_DISPLAY_FEATURE = "http://tizen.org/feature/tv.display";
 function requireTvDisplay(method) {
-    if (parseFloat(config.profile.version) < 6.0) {
+    if (parseFloat(config.profile.version) < 5.0) {
         requirePrivilege(TV_DISPLAY_PRIVILEGE, "tizen.tvdisplaycontrol." + method + "()");
     }
     if (config.profile.capabilities[TV_DISPLAY_FEATURE] !== true) {

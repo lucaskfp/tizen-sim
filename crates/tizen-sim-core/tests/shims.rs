@@ -526,11 +526,12 @@ async fn tvdisplaycontrol_reports_a_3d_tv_from_session_overrides() {
     t.session.stop().await;
 }
 
-/// `tv.display` guards every tvdisplaycontrol method up to 5.5; the 5.0 and
+/// `tv.display` guards every tvdisplaycontrol method before 5.0; the 5.0 and
 /// 5.5 references mark it deprecated, and from 6.0 they name no privilege
-/// (tvdisplaycontrol.html, 4.0 to 10.0).
+/// (tvdisplaycontrol.html, 4.0 to 10.0). A Tizen 5.0 TV answers an App
+/// without it.
 #[tokio::test]
-async fn tvdisplaycontrol_needs_tv_display_before_tizen_6() {
+async fn tvdisplaycontrol_needs_tv_display_before_tizen_5() {
     let mut t = start("tizen-apis");
     t.session.wait_until_loaded().await.unwrap();
     let thrown = t
@@ -546,13 +547,13 @@ async fn tvdisplaycontrol_needs_tv_display_before_tizen_6() {
         .await
         .unwrap();
     let version: f64 = support::profile().version.parse().unwrap();
-    let expected = if version < 6.0 {
+    let expected = if version < 5.0 {
         "SecurityError"
     } else {
         "no error"
     };
     assert_eq!(thrown, json!([expected, expected, expected]));
-    if version < 6.0 {
+    if version < 5.0 {
         expect_event(&mut t.events, 10, |e| {
             matches!(e, SessionEvent::Diagnostic(d)
                 if d.code == "privilege-not-declared" && d.message.contains(TV_DISPLAY_PRIVILEGE))
