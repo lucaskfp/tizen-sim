@@ -240,3 +240,17 @@ Source: TV `guides/user-interaction/keyboardime.html`.
 
 - **Showing the virtual keyboard.** Focusing an `<input>`/`<textarea>` shows it. A focus set by script doesn't show it when `use.keypad.without.useraction` is false, and `use.ime=false` disables it.
 - **IME key codes:** Done 65376, Cancel 65385, other IME keys 229. With a physical keyboard, Enter sends Done and Esc sends Cancel.
+
+## Gamepad
+
+Source: TV `guides/user-interaction/gamepad.html`.
+
+- **Input.** Apps read gamepads through the W3C Gamepad API (`gamepadconnected`, `gamepaddisconnected`, `navigator.getGamepads()`, `vibrationActuator.playEffect`). The guide doesn't limit this to Apps declaring the `gamepad` metadata. It says nothing of gamepads producing Remote Keys either, so whether they do is **unverified**.
+- **Limits.** At most 4 gamepads at once. A connected gamepad is usable only once the user presses a button or moves an axis.
+- **Support.** "All Samsung TVs since 2016 support gamepads".
+- **`http://samsung.com/tv/metadata/gamepad`.** The value names gamepad models, separated by `::` (e.g. `dualshock4`, `usbgamepad::xxx`). When the App launches, the platform checks that one of them is connected. If none is, a popup appears before the App runs (the guide's figure): "You must connect the DUALSHOCK®4 controller to play this game. Do you want to play anyway?", with Play, Cancel and Connect Now. TV `guides/fundamentals/configuring-tv-applications.html` (Table 4) says the same: "Require a specific gamepad model to be connected."
+- **Unverified:**
+  - How a model name maps to a physical gamepad.
+  - What Cancel and Connect Now do.
+  - The popup's wording when several models are listed.
+  - Which entry counts when the key appears more than once.

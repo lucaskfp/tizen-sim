@@ -100,6 +100,7 @@ Run `tizen-sim help <command>` for every option. `run` also takes these:
 - `--map-key`: map a keyboard key to a Remote Key.
 - `--device`: override the device values the APIs report.
 - `--resolution`: 1920x1080 or 1280x720.
+- `--gamepad`: a gamepad model to take as connected, for Apps whose `gamepad` metadata requires one.
 - `--engine-path`: use your own Chromium build.
 
 ### The GUI

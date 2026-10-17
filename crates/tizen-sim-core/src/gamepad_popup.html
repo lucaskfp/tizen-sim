@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Information</title>
+<!-- The platform's gamepad popup, after the figure in TV
+     guides/user-interaction/gamepad.html. ES5 only: it runs on every Engine. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1020; color: #fff;
+    font-family: "Samsung One", "Segoe UI", Arial, sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
+  .dialog { width: 920px; background: #1d1d1d; box-shadow: 0 0 40px rgba(0, 0, 0, 0.8); }
+  h1 { margin: 0; padding: 18px; font-size: 40px; font-weight: normal; text-align: center;
+    background: linear-gradient(90deg, #6e5a4e, #8a7d93); }
+  p { margin: 0; padding: 48px 40px; font-size: 30px; line-height: 1.5; text-align: center; }
+  .buttons { display: flex; padding: 0 20px 20px; }
+  button { flex: 1; margin: 0 4px; padding: 20px 0; font: inherit; font-size: 28px; color: #ccc;
+    background: #333; border: 3px solid transparent; cursor: pointer; }
+  button.focused { color: #fff; border-color: #fff; background: #111; }
+</style>
+</head>
+<body>
+<div class="dialog" role="dialog" aria-labelledby="title">
+  <h1 id="title">Information</h1>
+  <p>You must connect the {{MODELS}} controller to play this game.<br>Do you want to play anyway?</p>
+  <div class="buttons">
+    <button data-choice="play">Play</button>
+    <button data-choice="cancel">Cancel</button>
+    <button data-choice="connect">Connect Now</button>
+  </div>
+</div>
+<script>
+  (function () {
+    var buttons = document.querySelectorAll("button");
+    var focused = 0;
+    function show() {
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].className = i === focused ? "focused" : "";
+      }
+    }
+    function choose(i) {
+      window.__tizenSimGamepadChoice = buttons[i].getAttribute("data-choice");
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.keyCode === 37) {
+        focused = Math.max(0, focused - 1);
+      } else if (event.keyCode === 39) {
+        focused = Math.min(buttons.length - 1, focused + 1);
+      } else if (event.keyCode === 13) {
+        choose(focused);
+      } else {
+        return;
+      }
+      event.preventDefault();
+      show();
+    });
+    for (var i = 0; i < buttons.length; i++) {
+      (function (i) {
+        buttons[i].addEventListener("mouseover", function () { focused = i; show(); });
+        buttons[i].addEventListener("click", function () { choose(i); });
+      })(i);
+    }
+    show();
+  })();
+</script>
+</body>
+</html>

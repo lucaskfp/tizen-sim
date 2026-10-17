@@ -724,3 +724,43 @@ fn only_http_dev_server_urls_are_supported() {
     );
     assert!(err.to_string().contains("https://localhost:5173/"), "{err}");
 }
+
+fn required_gamepads(children: &str) -> Vec<String> {
+    load_xml(&config_xml(children))
+        .unwrap()
+        .required_gamepads()
+        .to_vec()
+}
+
+/// The `http://samsung.com/tv/metadata/gamepad` metadata names the gamepad
+/// models the App needs, separated by `::` (TV guides/user-interaction/gamepad.html,
+/// "Checking for Specific Gamepads").
+#[test]
+fn the_gamepad_metadata_lists_the_required_models() {
+    let gamepad = |value: &str| {
+        format!(r#"<tizen:metadata key="http://samsung.com/tv/metadata/gamepad" value="{value}"/>"#)
+    };
+    assert!(required_gamepads("").is_empty());
+    assert!(
+        required_gamepads(
+            r#"<tizen:metadata key="http://samsung.com/tv/metadata/use.network" value="true"/>"#
+        )
+        .is_empty()
+    );
+    assert_eq!(required_gamepads(&gamepad("dualshock4")), ["dualshock4"]);
+    assert_eq!(
+        required_gamepads(&gamepad("usbgamepad::xxx")),
+        ["usbgamepad", "xxx"]
+    );
+    assert_eq!(
+        required_gamepads(&gamepad("xxx::yyy::zzz")),
+        ["xxx", "yyy", "zzz"]
+    );
+    // Only in the Tizen namespace, like every other Tizen element.
+    assert!(
+        required_gamepads(
+            r#"<metadata key="http://samsung.com/tv/metadata/gamepad" value="dualshock4"/>"#
+        )
+        .is_empty()
+    );
+}

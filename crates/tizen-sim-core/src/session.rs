@@ -12,6 +12,7 @@ use crate::devtools_relay::{self, DevtoolsRelay};
 use crate::engine::{
     self, DownloadProgress, EngineSpec, EngineWindow, LaunchOptions, RunningEngine,
 };
+use crate::gamepad;
 use crate::home::Home;
 use crate::network::{NetworkProxy, NetworkRequest, Verdict};
 use crate::profile::{ProfileCatalog, RememberedProfiles, VersionProfile};
@@ -60,6 +61,9 @@ pub struct SessionConfig {
     /// Start with the transparency checkerboard on (see
     /// `Session::set_checkerboard`).
     pub checkerboard: bool,
+    /// The gamepad models taken as connected to the TV, for Apps whose
+    /// `gamepad` metadata requires one (see `crate::gamepad`).
+    pub gamepads: Vec<String>,
     pub home: Home,
 }
 
@@ -139,6 +143,12 @@ pub enum Lifecycle {
         /// browser or with `Session::open_devtools`.
         devtools_url: String,
     },
+    /// The App requires one of these gamepad models and none is connected,
+    /// so the platform asks, in the Engine window, before launching it: Play
+    /// launches it, Cancel and Connect Now don't (see `crate::gamepad`).
+    GamepadRequired {
+        models: Vec<String>,
+    },
     AppLoaded {
         url: String,
     },
@@ -171,6 +181,9 @@ pub enum ExitReason {
     /// The Exit key was pressed or the Back key held, which makes a TV
     /// terminate the App.
     TerminatedByRemote,
+    /// The App was never launched: Cancel or Connect Now was chosen in the
+    /// popup asking for a required gamepad.
+    LaunchCanceled,
 }
 
 /// A message in the App's console: written by the App, or by the Engine
@@ -235,6 +248,9 @@ struct Inner {
     reloads: mpsc::UnboundedSender<oneshot::Sender<Result<(), String>>>,
     /// The Engine's process and window while the App is loaded.
     engine: Mutex<Option<EngineProcess>>,
+    /// The page of the platform popup shown before the App launches, which
+    /// takes the Remote Keys meanwhile.
+    popup: Mutex<Option<Arc<Cdp>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -306,6 +322,7 @@ impl Session {
             devtools: tokio::sync::Mutex::new(None),
             reloads,
             engine: Mutex::new(None),
+            popup: Mutex::new(None),
         });
         let task = tokio::spawn(run(config, inner.clone(), stop_rx, reload_rx));
         *inner.task.try_lock().expect("fresh mutex") = Some(task);
@@ -372,20 +389,18 @@ impl Session {
         key: PhysicalKey,
         action: KeyAction,
     ) -> Result<(), SessionError> {
-        let loaded = self.inner.loaded.get().ok_or(SessionError::NotLoaded)?;
+        let popup = self.inner.popup.lock().unwrap().clone();
+        let cdp = match (&popup, self.inner.loaded.get()) {
+            (Some(popup), _) => popup,
+            (None, Some(loaded)) => &loaded.cdp,
+            (None, None) => return Err(SessionError::NotLoaded),
+        };
         let (event_type, repeat) = match action {
             KeyAction::Down => ("rawKeyDown", false),
             KeyAction::Repeat => ("rawKeyDown", true),
             KeyAction::Up => ("keyUp", false),
         };
-        dispatch_key(
-            &loaded.cdp,
-            event_type,
-            key.0,
-            key.dom_key().as_deref(),
-            repeat,
-        )
-        .await
+        dispatch_key(cdp, event_type, key.0, key.dom_key().as_deref(), repeat).await
     }
 
     /// A PNG of the App's screen at the TV's resolution, whatever the size of
@@ -536,7 +551,13 @@ async fn run(
     };
     let mut running = match started {
         Ok(running) => running,
-        Err(error) => {
+        Err(StartError::Canceled) => {
+            // Dropping what startup had started closes the Engine and server.
+            inner.popup.lock().unwrap().take();
+            inner.finish(ExitReason::LaunchCanceled);
+            return;
+        }
+        Err(StartError::Failed(error)) => {
             tracing::error!(%error, "Session failed to start");
             inner
                 .log
@@ -591,6 +612,18 @@ impl Inner {
     async fn press_key(&self, name: &str) -> Result<KeyOutcome, SessionError> {
         let key = RemoteKey::find(name)
             .ok_or_else(|| SessionError::UnknownRemoteKey(name.to_string()))?;
+        let popup = self.popup.lock().unwrap().clone();
+        if let Some(popup) = popup {
+            // The platform's own popup takes every key; the App isn't running.
+            let dom_key = key.dom_key.as_deref();
+            dispatch_key(&popup, "rawKeyDown", key.code, dom_key, false).await?;
+            dispatch_key(&popup, "keyUp", key.code, dom_key, false).await?;
+            self.log.publish(SessionEvent::RemoteKey {
+                key: name.to_string(),
+                outcome: KeyOutcome::Delivered,
+            });
+            return Ok(KeyOutcome::Delivered);
+        }
         let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
         let drop_key = |reason: String| {
             let outcome = KeyOutcome::Dropped { reason };
@@ -856,7 +889,20 @@ impl Inner {
     }
 }
 
-async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, String> {
+/// Why a Session didn't get its App running.
+enum StartError {
+    Failed(String),
+    /// The developer chose not to launch the App (see `ExitReason::LaunchCanceled`).
+    Canceled,
+}
+
+impl From<String> for StartError {
+    fn from(error: String) -> StartError {
+        StartError::Failed(error)
+    }
+}
+
+async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, StartError> {
     let session_dir = SessionDir::create(&crate::session_dir::sessions_dir(&config.home))
         .map_err(|e| format!("could not create the Session directory: {e}"))?;
     let app =
@@ -1062,6 +1108,7 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
 
     let url = server.url(&app.entry_path());
     let runs_in_background = app.runs_in_background();
+    let required_gamepads = app.required_gamepads().to_vec();
     let mut running = Running {
         engine,
         server,
@@ -1075,24 +1122,20 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         _devtools_relay: devtools_relay,
         session_dir,
     };
+    if gamepad::needs_popup(&required_gamepads, &config.gamepads) {
+        // Shown in the Engine window, so the Engine is recorded first.
+        record_engine(inner, &running, &mut entry, config.headless).await;
+        ask_for_gamepad(inner, &mut running, required_gamepads).await?;
+    }
     running.network.set_logging(true);
     load_page(&mut running, "Page.navigate", json!({ "url": url }))
         .await
         .map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
     inner.restore_backdrop(&cdp).await;
-    entry.engine_pid = running.engine.child.id();
-    if !config.headless {
-        entry.window = engine_window(&running.engine).await;
+    if entry.engine_pid.is_none() {
+        record_engine(inner, &running, &mut entry, config.headless).await;
     }
-    if let Err(error) = registry::write_entry(running.session_dir.path(), &entry) {
-        tracing::warn!(%error, "could not record the Engine in the Session Registry");
-    }
-    *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
-        pid,
-        window: entry.window,
-        display: running.engine.display(),
-    });
     let _ = inner.loaded.set(Loaded {
         cdp,
         profile,
@@ -1110,6 +1153,68 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         .publish(SessionEvent::Lifecycle(Lifecycle::AppLoaded { url }));
     inner.status.send_replace(SessionStatus::Loaded);
     Ok(running)
+}
+
+/// Records the Engine's process and window, in the Session Registry and for
+/// `Session::engine_window`.
+async fn record_engine(
+    inner: &Inner,
+    running: &Running,
+    entry: &mut RegistryEntry,
+    headless: bool,
+) {
+    entry.engine_pid = running.engine.child.id();
+    if !headless {
+        entry.window = engine_window(&running.engine).await;
+    }
+    if let Err(error) = registry::write_entry(running.session_dir.path(), entry) {
+        tracing::warn!(%error, "could not record the Engine in the Session Registry");
+    }
+    *inner.engine.lock().unwrap() = entry.engine_pid.map(|pid| EngineProcess {
+        pid,
+        window: entry.window,
+        display: running.engine.display(),
+    });
+}
+
+/// Shows the platform's popup asking for one of the `models` and waits for
+/// the developer's choice: Play goes on to launch the App, Cancel and
+/// Connect Now don't (see `crate::gamepad`).
+async fn ask_for_gamepad(
+    inner: &Inner,
+    running: &mut Running,
+    models: Vec<String>,
+) -> Result<(), StartError> {
+    load_page(
+        running,
+        "Page.navigate",
+        json!({ "url": gamepad::popup_url(&models) }),
+    )
+    .await
+    .map_err(|e| format!("could not show the gamepad popup: {e}"))?;
+    *inner.popup.lock().unwrap() = Some(running.cdp.clone());
+    inner
+        .log
+        .publish(SessionEvent::Lifecycle(Lifecycle::GamepadRequired {
+            models,
+        }));
+    // Polled rather than awaited, as M47 has no `awaitPromise`.
+    let choice = loop {
+        let value = running
+            .cdp
+            .evaluate(gamepad::CHOICE_EXPRESSION)
+            .await
+            .map_err(|e| format!("lost the gamepad popup: {e}"))?;
+        if let Some(choice) = gamepad::parse_choice(&value) {
+            break choice;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    inner.popup.lock().unwrap().take();
+    match choice {
+        gamepad::Choice::Play => Ok(()),
+        gamepad::Choice::Cancel | gamepad::Choice::ConnectNow => Err(StartError::Canceled),
+    }
 }
 
 /// The Engine's window, given a moment to show if it hasn't yet.

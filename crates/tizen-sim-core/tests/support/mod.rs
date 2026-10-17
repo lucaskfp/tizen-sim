@@ -126,6 +126,7 @@ fn config(source: AppSource, state: &std::path::Path) -> SessionConfig {
         device: serde_json::Map::new(),
         resolution: Default::default(),
         checkerboard: false,
+        gamepads: Vec::new(),
         home: Home::from_env().with_state_dir(state.to_path_buf()),
     }
 }

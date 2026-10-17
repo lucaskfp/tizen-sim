@@ -164,6 +164,11 @@ struct RunArgs {
     /// black a TV shows there.
     #[arg(long)]
     checkerboard: bool,
+    /// Take a gamepad model as connected to the TV, e.g. `--gamepad dualshock4`;
+    /// repeat for several. An App whose `gamepad` metadata requires a model
+    /// not given here gets the TV's popup asking for it before it launches.
+    #[arg(long = "gamepad", value_name = "MODEL")]
+    gamepads: Vec<String>,
     /// Open DevTools for the App once it has loaded.
     #[arg(long)]
     devtools: bool,
@@ -224,6 +229,7 @@ impl RunArgs {
                 Resolution::Fhd => AppResolution::Fhd,
             },
             checkerboard: self.checkerboard,
+            gamepads: self.gamepads.clone(),
             home: Home::from_env(),
         })
     }
@@ -459,6 +465,12 @@ async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
                             println!("  DevTools endpoint: {debugger_url}");
                             println!("  DevTools: {devtools_url}");
                         }
+                        Lifecycle::GamepadRequired { models } => {
+                            println!(
+                                "The App requires a {} gamepad and none is connected (see --gamepad):                                  the TV asks before launching it. Choose in the Engine window.",
+                                models.join(" or ")
+                            );
+                        }
                         Lifecycle::AppLoaded { url } => {
                             println!("App loaded: {url} (Ctrl+C to stop)");
                             if open_devtools
@@ -478,6 +490,7 @@ async fn run(config: SessionConfig, open_devtools: bool) -> Result<()> {
                                 ExitReason::EngineCrashed => println!("The Engine crashed or was killed."),
                                 ExitReason::AppExited => println!("The App exited."),
                                 ExitReason::TerminatedByRemote => println!("Exit was pressed or Back held: the App was terminated, as on a TV."),
+                                ExitReason::LaunchCanceled => println!("The App was not launched."),
                                 ExitReason::FailedToStart => {}
                             }
                             return Ok(());

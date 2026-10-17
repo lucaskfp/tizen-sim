@@ -22,5 +22,6 @@ Tiny Tizen TV Apps used by the test suites. Each folder is a Project Folder App 
 - `filesystem-read-only`: declares only `filesystem.read`.
 - `web-features`: an inline script records in `window.seenAtLoad` whether the page had `navigator.geolocation` and `Promise` when the App's first script ran.
 - `network`: declares `internet` and no `<access>` element. An inline script defines `window.request(method, url, done)` (XHR) and sets `window.inlineScriptRan`. Tests copy it and write the `<access>` elements or CSP they need into the copy's `config.xml`, since the servers it calls listen on ports chosen at test time.
+- `gamepad`: declares the `http://samsung.com/tv/metadata/gamepad` metadata with the value `dualshock4`, so a TV checks for that gamepad when it launches.
 
 The Package (`.wgt`) tests build their archives from these folders at test time, so no binary Packages are checked in.
