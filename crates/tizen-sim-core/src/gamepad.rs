@@ -14,20 +14,22 @@
 //! - The popup's wording for several models, and how a model name like
 //!   `dualshock4` is shown (the figure shows "DUALSHOCK®4"). Here the names are
 //!   shown as written in the metadata.
+//! - What keys other than Left, Right and Enter do in the popup. Here Back,
+//!   Exit and the rest do nothing.
 //!
 //! Gamepads themselves reach every App through the W3C Gamepad API, which the
-//! Engine provides. The guide doesn't tie that to the metadata.
+//! Engine provides. The guide doesn't tie that to the metadata. Its limits (at
+//! most 4 gamepads; a gamepad is usable only once a button is pressed or an
+//! axis moved) are left to the Engine; whether every Engine applies them is
+//! unverified.
 
 use base64::Engine as _;
 use serde_json::Value;
 
 /// Whether launching needs the popup: the App names gamepad models and none
-/// of them is among the `connected` ones. Names match ignoring ASCII case.
+/// of them is among the `connected` ones, written the same way.
 pub fn needs_popup(required: &[String], connected: &[String]) -> bool {
-    !required.is_empty()
-        && !required
-            .iter()
-            .any(|model| connected.iter().any(|c| c.eq_ignore_ascii_case(model)))
+    !required.is_empty() && !required.iter().any(|model| connected.contains(model))
 }
 
 /// What the developer chose in the popup.
@@ -90,7 +92,7 @@ mod tests {
         ));
         assert!(!needs_popup(
             &names(&["usbgamepad", "dualshock4"]),
-            &names(&["DualShock4"])
+            &names(&["dualshock4"])
         ));
     }
 }

@@ -553,7 +553,6 @@ async fn run(
         Ok(running) => running,
         Err(StartError::Canceled) => {
             // Dropping what startup had started closes the Engine and server.
-            inner.popup.lock().unwrap().take();
             inner.finish(ExitReason::LaunchCanceled);
             return;
         }
@@ -615,14 +614,7 @@ impl Inner {
         let popup = self.popup.lock().unwrap().clone();
         if let Some(popup) = popup {
             // The platform's own popup takes every key; the App isn't running.
-            let dom_key = key.dom_key.as_deref();
-            dispatch_key(&popup, "rawKeyDown", key.code, dom_key, false).await?;
-            dispatch_key(&popup, "keyUp", key.code, dom_key, false).await?;
-            self.log.publish(SessionEvent::RemoteKey {
-                key: name.to_string(),
-                outcome: KeyOutcome::Delivered,
-            });
-            return Ok(KeyOutcome::Delivered);
+            return self.deliver_key(&popup, key).await;
         }
         let loaded = self.loaded.get().ok_or(SessionError::NotLoaded)?;
         let drop_key = |reason: String| {
@@ -672,11 +664,16 @@ impl Inner {
             }
         }
 
+        self.deliver_key(&loaded.cdp, key).await
+    }
+
+    /// Presses and releases `key` in the page, reporting it delivered.
+    async fn deliver_key(&self, cdp: &Cdp, key: &RemoteKey) -> Result<KeyOutcome, SessionError> {
         let dom_key = key.dom_key.as_deref();
-        dispatch_key(&loaded.cdp, "rawKeyDown", key.code, dom_key, false).await?;
-        dispatch_key(&loaded.cdp, "keyUp", key.code, dom_key, false).await?;
+        dispatch_key(cdp, "rawKeyDown", key.code, dom_key, false).await?;
+        dispatch_key(cdp, "keyUp", key.code, dom_key, false).await?;
         self.log.publish(SessionEvent::RemoteKey {
-            key: name.to_string(),
+            key: key.name.clone(),
             outcome: KeyOutcome::Delivered,
         });
         Ok(KeyOutcome::Delivered)
@@ -883,6 +880,7 @@ impl Inner {
 
     fn finish(&self, reason: ExitReason) {
         self.engine.lock().unwrap().take();
+        self.popup.lock().unwrap().take();
         self.log
             .publish(SessionEvent::Lifecycle(Lifecycle::Exited { reason }));
         self.status.send_replace(SessionStatus::Exited);
@@ -1122,15 +1120,26 @@ async fn startup(config: &SessionConfig, inner: &Arc<Inner>) -> Result<Running, 
         _devtools_relay: devtools_relay,
         session_dir,
     };
-    if gamepad::needs_popup(&required_gamepads, &config.gamepads) {
+    let popup = gamepad::needs_popup(&required_gamepads, &config.gamepads);
+    if popup {
         // Shown in the Engine window, so the Engine is recorded first.
         record_engine(inner, &running, &mut entry, config.headless).await;
         ask_for_gamepad(inner, &mut running, required_gamepads).await?;
     }
     running.network.set_logging(true);
-    load_page(&mut running, "Page.navigate", json!({ "url": url }))
+    let loaded = if popup {
+        // The App replaces the popup, which isn't in the App's history.
+        let replace = format!("location.replace({}); 0", Value::String(url.clone()));
+        load_page(
+            &mut running,
+            "Runtime.evaluate",
+            json!({ "expression": replace }),
+        )
         .await
-        .map_err(|e| format!("could not load the App at {url}: {e}"))?;
+    } else {
+        load_page(&mut running, "Page.navigate", json!({ "url": url })).await
+    };
+    loaded.map_err(|e| format!("could not load the App at {url}: {e}"))?;
     // Later documents get it from `forward_events`, once the App has loaded.
     inner.restore_backdrop(&cdp).await;
     if entry.engine_pid.is_none() {

@@ -4,7 +4,9 @@
 mod support;
 
 use support::{STARTUP_SECS, expect_event, start, start_with};
-use tizen_sim_core::session::{ExitReason, KeyOutcome, Lifecycle, SessionEvent, SessionStatus};
+use tizen_sim_core::session::{
+    ExitReason, KeyOutcome, Lifecycle, SessionError, SessionEvent, SessionStatus,
+};
 
 fn is_gamepad_required(event: &SessionEvent) -> bool {
     matches!(
@@ -58,6 +60,20 @@ async fn without_a_required_gamepad_the_platform_asks_before_launching_and_play_
     expect_event(&mut t.events, 30, is_app_loaded).await;
     let title = t.session.evaluate("document.title").await.unwrap();
     assert_eq!(title, "Gamepad fixture");
+    // The popup belongs to the platform, so it isn't in the App's history:
+    // the App has the history it has when launched without the popup.
+    let history = t.session.evaluate("history.length").await.unwrap();
+    let without_popup = start_with("gamepad", |config| {
+        config.gamepads = vec!["dualshock4".into()]
+    });
+    without_popup.session.wait_until_loaded().await.unwrap();
+    let expected = without_popup
+        .session
+        .evaluate("history.length")
+        .await
+        .unwrap();
+    without_popup.session.stop().await;
+    assert_eq!(history, expected);
     t.session.stop().await;
 }
 
@@ -102,7 +118,7 @@ async fn connect_now_in_the_popup_does_not_launch_the_app() {
 #[tokio::test]
 async fn a_connected_required_gamepad_launches_the_app_without_asking() {
     let mut t = start_with("gamepad", |config| {
-        config.gamepads = vec!["usbgamepad".into(), "DualShock4".into()];
+        config.gamepads = vec!["usbgamepad".into(), "dualshock4".into()];
     });
     let seen = events_until(&mut t.events, is_app_loaded).await;
     assert!(!seen.iter().any(is_gamepad_required), "{seen:#?}");
@@ -115,4 +131,20 @@ async fn an_app_without_the_metadata_launches_without_asking() {
     let seen = events_until(&mut t.events, is_app_loaded).await;
     assert!(!seen.iter().any(is_gamepad_required), "{seen:#?}");
     t.session.stop().await;
+}
+
+#[tokio::test]
+async fn stopping_during_the_popup_leaves_nothing_to_press_keys_on() {
+    let mut t = start("gamepad");
+    expect_event(&mut t.events, STARTUP_SECS, is_gamepad_required).await;
+    t.session.stop().await;
+    expect_event(&mut t.events, 30, |e| {
+        exited_because(e, ExitReason::Stopped)
+    })
+    .await;
+    let pressed = t.session.press_key("Enter").await;
+    assert!(
+        matches!(pressed, Err(SessionError::NotLoaded)),
+        "{pressed:?}"
+    );
 }

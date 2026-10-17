@@ -251,6 +251,6 @@ Source: TV `guides/user-interaction/gamepad.html`.
 - **`http://samsung.com/tv/metadata/gamepad`.** The value names gamepad models, separated by `::` (e.g. `dualshock4`, `usbgamepad::xxx`). When the App launches, the platform checks that one of them is connected. If none is, a popup appears before the App runs (the guide's figure): "You must connect the DUALSHOCK®4 controller to play this game. Do you want to play anyway?", with Play, Cancel and Connect Now. TV `guides/fundamentals/configuring-tv-applications.html` (Table 4) says the same: "Require a specific gamepad model to be connected."
 - **Unverified:**
   - How a model name maps to a physical gamepad.
-  - What Cancel and Connect Now do.
+  - What Cancel and Connect Now do, and what Back, Exit and the other keys do in the popup.
   - The popup's wording when several models are listed.
   - Which entry counts when the key appears more than once.
