@@ -10,15 +10,15 @@
 //   hides the launch screen only with `custom`: under `complete` an earlier
 //   call leaves it up until the load event;
 // - `first-paint` hides it before the load event, `complete` waits for it;
-// - once hidden, it doesn't show again when the App goes to another page.
-//   Here the Host counts its reloads and restarts as launches and calls
+// - it stays up when the App goes to another page before hiding it, until
+//   that page calls `show()`; once hidden, it doesn't show again. Here the
+//   Host counts its reloads and restarts as launches and calls
 //   `config.forgetLaunchScreen` before them (see session.rs);
-// - with `image_border="0px stretch"`, the background image is stretched
-//   over the screen, and the image is scaled to fit the screen, keeping its
-//   proportions, and centred.
-// Unverified: what other `image_border` values do (ignored here), and whether
-// it stays up when the App goes to another page before it is hidden (it does
-// here).
+// - the background image is stretched over the screen, and the image is
+//   scaled to fit the screen, keeping its proportions, and centred.
+//   `image_border` changed nothing visible: "0px stretch", "40px stretch",
+//   "40px repeat" and "40px round" all drew the image the same, so it is
+//   ignored here. The docs don't list its values; others are unverified.
 
 /** The sessionStorage mark that the launch screen was hidden. */
 var HIDDEN_KEY = "__tizen-sim:launch-screen-hidden";
