@@ -70,6 +70,14 @@ jobs:
       # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs.
       - if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The runner's display is 1024x768; the embedding tests need a screen
+      # area larger than an App's resolution (#148) on screen.
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
       - run: cargo test --workspace
       # The GUI's Session control with Engines in windows: on Linux each
       # keeps its own (ADR-0006), on a virtual display.
