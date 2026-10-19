@@ -315,7 +315,9 @@ impl Screen {
             },
         };
         *self.fit.lock().unwrap() = fit;
-        apply(cdp, self.resolution, fit).await
+        apply(cdp, self.resolution, fit).await?;
+        show_whole_window(cdp, content).await;
+        Ok(())
     }
 }
 
@@ -627,6 +629,23 @@ async fn frame_resized(events: &mut tokio::sync::broadcast::Receiver<CdpEvent>) 
             Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
         }
+    }
+}
+
+/// Has the Engine draw the page in all of the window's `content` area. From
+/// M63 to M130, a loaded document stays drawn in a frame of the App's size in
+/// device pixels however far the metrics override scales it up, cutting the
+/// App off at 1920x1080 px; a document loaded after the scale-up isn't, and
+/// M47 isn't (measured, #148). Only after the override: before it, the frame
+/// is still cut off (measured on M63 to M130). An Engine that refuses the
+/// call is left as it is.
+async fn show_whole_window(cdp: &Cdp, content: (f64, f64)) {
+    let size = json!({
+        "width": content.0.round() as i64,
+        "height": content.1.round() as i64,
+    });
+    if let Err(error) = cdp.call("Emulation.setVisibleSize", size).await {
+        tracing::debug!(%error, "the page's frame is left at the Engine's size");
     }
 }
 
