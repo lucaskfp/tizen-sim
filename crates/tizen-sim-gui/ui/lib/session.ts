@@ -217,10 +217,14 @@ function lifecycle(view: SessionView, event: Lifecycle): SessionView {
       : reason === "EngineCrashed"
         ? { kind: "crashed" }
         : { kind: "exited", reason };
+  // A Session that ended before saying which profile it runs on, e.g. one the
+  // App's required_version refused, ran on none: the App's last profile kept
+  // at SessionStarted would leave the switcher unable to pick it again.
+  const profile = view.appId === null ? null : view.profile;
   return reason === "FailedToStart"
-    ? { ...view, status, embedded: false }
+    ? { ...view, status, profile, embedded: false }
     : withLog(
-        { ...view, status, embedded: false },
+        { ...view, status, profile, embedded: false },
         "session",
         reason === "EngineCrashed" ? "error" : "info",
         exitText[reason],
