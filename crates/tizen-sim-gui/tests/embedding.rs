@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tizen_sim_core::app::AppSource;
 use tizen_sim_core::home::Home;
 use tizen_sim_core::registry::SessionRegistry;
+use tizen_sim_core::screen::AppResolution;
 use tizen_sim_core::session::{Session, SessionConfig};
 use tizen_sim_gui::embed::{Embedder, ScreenArea};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -40,7 +41,7 @@ fn pump(duration: Duration) {
 
 /// A gray window standing in for the GUI's, above every other window so
 /// the screen shows what is embedded in it.
-fn gui_window() -> HWND {
+fn gui_window(width: i32, height: i32) -> HWND {
     unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         unsafe { DefWindowProcW(h, m, w, l) }
     }
@@ -61,8 +62,8 @@ fn gui_window() -> HWND {
             WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
             0,
             0,
-            1300,
-            740,
+            width,
+            height,
             None,
             None,
             Some(instance.into()),
@@ -85,7 +86,7 @@ fn screen_color(window: HWND, x: i32, y: i32) -> (u32, u32, u32) {
 }
 
 /// A windowed Session on the `screen` fixture, its Engine window embedded in
-/// a stand-in for the GUI's window.
+/// a stand-in for the GUI's window, on a 1280x720 screen area.
 struct Embedded {
     gui: HWND,
     host: HWND,
@@ -96,7 +97,13 @@ struct Embedded {
 }
 
 fn embedded() -> Embedded {
-    let gui = gui_window();
+    embedded_in(AppResolution::Uhd, 1280.0, 720.0)
+}
+
+/// As `embedded`, for an App at `resolution` on a `width` by `height` screen
+/// area.
+fn embedded_in(resolution: AppResolution, width: f64, height: f64) -> Embedded {
+    let gui = gui_window(width as i32 + 20, height as i32 + 20);
     let state = tempfile::tempdir().unwrap();
     let home = Home::from_env().with_state_dir(state.path().to_path_buf());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -115,7 +122,7 @@ fn embedded() -> Embedded {
             lenient: false,
             key_map: Default::default(),
             device: Default::default(),
-            resolution: Default::default(),
+            resolution,
             checkerboard: false,
             gamepads: Vec::new(),
             home: home.clone(),
@@ -134,8 +141,8 @@ fn embedded() -> Embedded {
         Some(ScreenArea {
             x: 10.0,
             y: 10.0,
-            width: 1280.0,
-            height: 720.0,
+            width,
+            height,
         }),
         1.0,
     );
@@ -195,6 +202,35 @@ fn a_screenshot_of_an_embedded_session_is_the_whole_app() {
     for (x, y) in [(5, 5), (1915, 5), (5, 1075), (1915, 1075)] {
         assert_eq!(pixel(&shot, x, y), [0, 0, 255], "at ({x}, {y})");
     }
+}
+
+/// An App scaled up to a screen area larger than its resolution fills it
+/// (#148): Chromium kept drawing it in a frame of the App's size, so it was
+/// cut off at 1280x720 px, as a 1920x1080 App on a larger area is at
+/// 1920x1080. The FHD resolution keeps the area within a small display.
+#[test]
+fn an_app_scaled_up_fills_the_screen_area() {
+    let t = embedded_in(AppResolution::Fhd, 1440.0, 810.0);
+    t.runtime
+        .block_on(t.session.evaluate(
+            "var fill = document.createElement('div');              fill.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;background:#00f';              document.body.appendChild(fill); 0",
+        ))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut color = screen_color(t.host, 1430, 800);
+    while !is_blue(color) && Instant::now() < deadline {
+        pump(Duration::from_millis(200));
+        color = screen_color(t.host, 1430, 800);
+    }
+    t.end();
+    assert!(
+        is_blue(color),
+        "the screen shows {color:?} at the bottom right of the App"
+    );
+}
+
+fn is_blue((r, g, b): (u32, u32, u32)) -> bool {
+    r < 60 && g < 60 && b > 200
 }
 
 fn is_red((r, g, b): (u32, u32, u32)) -> bool {
