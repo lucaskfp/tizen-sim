@@ -36,6 +36,36 @@ A Tizen TV runs your App on an old, fixed version of Chromium, with its own plat
 - **Linux** is a tier 2 platform. [docs/linux.md](docs/linux.md) lists where it differs from Windows and what it needs from the system, such as GConf for the Tizen 3.0 to 5.0 Engines.
 - **macOS** is not supported.
 
+## Common use cases
+
+### Catching CSS and JS incompatibilities on older TV engines
+
+A real TV runs your App on a fixed Chromium milestone that never updates. Features taken for granted on desktop browsers fail on older TV generations:
+
+- **Flexbox `gap`** was added in Chromium M84 (Tizen 6.5). On Tizen 3.0 to 6.0 (2017 to 2021 TVs), `gap` is ignored and elements collapse together unless a margin fallback is used.
+- **Modern JavaScript syntax**, such as optional chaining (`?.`) and nullish coalescing (`??`), arrived in Chromium M80 (Tizen 6.0). Running untranspiled ES2020 code on Tizen 3.0 to 5.5 throws `SyntaxError` on load.
+
+Running with `--profile 5.0` or choosing it in the GUI runs your App in Chromium M63, exposing these layout and syntax bugs immediately.
+
+![Side-by-side comparison of a movie card row on Tizen 5.0 where flexbox gap is ignored and cards touch, versus a modern engine or margin fallback where cards are properly spaced](docs/images/use-case-css-gap.png)
+
+### Catching undeclared network requests (WARP)
+
+Tizen TVs run in **WARP mode** by default: any request to an external origin (APIs, asset CDNs) is refused unless declared in `<access origin="..." subdomains="true"/>` in `config.xml`. Desktop browsers allow these requests without warning.
+
+tizen-sim routes network traffic through a proxy that enforces the Access Policy. Denied requests are blocked, flagged in the **Network Log** panel with what was missing, and reported as an `access-not-declared` Diagnostic.
+
+![The tizen-sim GUI running a network demo with the Network Log panel open, showing an undeclared TMDB API request marked as Blocked with the required access origin](docs/images/use-case-network-access.png)
+
+### Enforcing platform privileges and diagnosing video layering
+
+- **Platform privileges.** Calling `tizen.*` and `webapis.*` APIs without declaring the required `<tizen:privilege>` in `config.xml` throws `SecurityError` on a TV. In Lenient Mode (`--lenient`), tizen-sim allows execution to continue while recording a `privilege-not-declared` Diagnostic.
+- **Video Plane layering.** AVPlay renders hardware-decoded video to a plane *behind* the web page. An opaque CSS background on `<body>` or a container covers the video, leaving only audio playing. tizen-sim emulates the Video Plane and raises a `video-plane-hidden` Diagnostic when opaque content conceals the playback area.
+- **Media decoders.** When an App plays or probes formats that the target TV supports but the desktop Engine lacks (e.g. H.264 on snapshot milestones or MPEG-TS), tizen-sim raises `media-format-unsupported` to confirm the TV would play it.
+
+![The tizen-sim GUI running the media formats demo with the Diagnostics panel open, listing media-format-unsupported, video-plane-hidden, and privilege-not-declared](docs/images/use-case-diagnostics.png)
+
+
 ## Getting started
 
 Download the latest release from [GitHub Releases](https://github.com/lucaskfp/tizen-sim/releases):
