@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/lucaskfp/tizen-sim/compare/v0.3.0...v0.3.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* draw an App scaled past its resolution in the whole window ([#148](https://github.com/lucaskfp/tizen-sim/issues/148)) ([#149](https://github.com/lucaskfp/tizen-sim/issues/149)) ([6b0d84b](https://github.com/lucaskfp/tizen-sim/commit/6b0d84b275d42d9d614ea731544fa154b5e3c3f6))
+* **gui:** clear the Version Profile when a Session ends before starting ([#150](https://github.com/lucaskfp/tizen-sim/issues/150)) ([#151](https://github.com/lucaskfp/tizen-sim/issues/151)) ([cbc7b5a](https://github.com/lucaskfp/tizen-sim/commit/cbc7b5aed14791c1d3aa2aff2183a98aa1ba6314))
+
 ## [0.3.0](https://github.com/lucaskfp/tizen-sim/compare/v0.2.0...v0.3.0) (2026-10-17)
 
 
