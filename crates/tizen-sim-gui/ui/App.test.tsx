@@ -599,6 +599,29 @@ const DISPLAY_AV_VALUES = {
   supported3DEffectModes: ["OFF"],
 };
 
+test("a profile the App can't start on leaves no profile chosen, so the earlier one can be picked again", async () => {
+  const invoked = rustSide({ "plugin:dialog|open": "C:/apps/hello" });
+  render(<App />);
+  await userEvent.click(screen.getByRole("button", { name: /open folder/i }));
+  await sessionStarted(1, "C:/apps/hello");
+  await sessionEvents(1, { Lifecycle: { Starting: { app_id: "Fixture001.Hello", profile: "10.0" } } });
+
+  const select = screen.getByRole("combobox", { name: "Version Profile" });
+  await userEvent.selectOptions(select, "9.0");
+  await sessionEvents(1, { Lifecycle: { Exited: { reason: "Stopped" } } });
+  await sessionStarted(2, "C:/apps/hello");
+  // The App refuses the profile before its Session says which it runs on.
+  await sessionEvents(
+    2,
+    { Lifecycle: { Failed: { error: "the App's required_version is 10.0" } } },
+    { Lifecycle: { Exited: { reason: "FailedToStart" } } },
+  );
+
+  expect(select).toHaveValue("");
+  await userEvent.selectOptions(select, "10.0");
+  expect(invoked).toContainEqual({ cmd: "switch_profile", args: { profile: "10.0" } });
+});
+
 test("the TV settings tab shows the profile's display and AV values, and changing one restarts the App with it", async () => {
   const invoked = rustSide({ "plugin:dialog|open": "C:/apps/hello", device_values: DISPLAY_AV_VALUES });
   render(<App />);
