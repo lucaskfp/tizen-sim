@@ -18,9 +18,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GW_CHILD, GetWindow,
-    GetWindowRect, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, TranslateMessage, WNDCLASSW,
-    WS_CLIPCHILDREN, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GW_CHILD, GetSystemMetrics,
+    GetWindow, GetWindowRect, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SM_CXSCREEN,
+    SM_CYSCREEN, TranslateMessage, WNDCLASSW, WS_CLIPCHILDREN, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::w;
 
@@ -210,6 +210,12 @@ fn a_screenshot_of_an_embedded_session_is_the_whole_app() {
 /// 1920x1080. The FHD resolution keeps the area within a small display.
 #[test]
 fn an_app_scaled_up_fills_the_screen_area() {
+    // Off the display, the screen's colour can't be read.
+    let display = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    assert!(
+        display.0 >= 1460 && display.1 >= 830,
+        "the display is {display:?}, too small for the screen area"
+    );
     let t = embedded_in(AppResolution::Fhd, 1440.0, 810.0);
     t.runtime
         .block_on(t.session.evaluate(
