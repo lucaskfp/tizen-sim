@@ -52,6 +52,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # A hung Engine otherwise holds the runner for GitHub's 6-hour limit;
+    # a passing run takes up to ~21 minutes on Windows.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -102,6 +105,7 @@ jobs:
   test-m47-linux:
     name: test (ubuntu-22.04, Tizen 3.0)
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
