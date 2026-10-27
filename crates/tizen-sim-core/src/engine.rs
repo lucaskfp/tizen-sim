@@ -631,7 +631,7 @@ async fn try_launch_on(
     if options.disable_web_security {
         command.arg("--disable-web-security");
     }
-    if !options.sandbox {
+    if !sandbox_on(options.sandbox) {
         command.arg("--no-sandbox");
     }
     if !options.gpu_compositing {
@@ -822,6 +822,14 @@ fn devtools_url(debug_port: u16, page_ws_url: &str) -> String {
     )
 }
 
+/// Whether Chromium's sandbox stays on: off where the Engine needs it off
+/// (`EngineSpec::sandbox`), and for every Engine with `TIZEN_SIM_NO_SANDBOX`
+/// set. On GitHub's Windows runners M47's sandbox keeps it from starting any
+/// child process, so the page never loads (#157).
+fn sandbox_on(engine_wants_it: bool) -> bool {
+    engine_wants_it && std::env::var_os("TIZEN_SIM_NO_SANDBOX").is_none()
+}
+
 /// Opens `url` in a window of its own, in a separate instance of the Engine
 /// at `executable` with its own data directory: the bundled inspector then
 /// runs on the Engine it came from, outside the App's network proxy. The
@@ -840,7 +848,7 @@ pub async fn open_window(
         .arg(format!("--user-data-dir={}", user_data_dir.display()))
         .args(QUIET_START)
         .arg(format!("--app={url}"))
-        .args((!sandbox).then_some("--no-sandbox"))
+        .args((!sandbox_on(sandbox)).then_some("--no-sandbox"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
