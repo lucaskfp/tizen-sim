@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scope: [avplay-nosandbox]
+        scope: [acl]
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
@@ -30,21 +30,10 @@ jobs:
           key: engines-${{ runner.os }}-${{ hashFiles('crates/tizen-sim-core/data/engines.toml') }}
       - shell: pwsh
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
-      - if: matrix.scope == 'probe'
-        shell: pwsh
-        run: .github/scripts/probe-m47.ps1
-      - if: matrix.scope == 'avplay-nosandbox'
-        shell: pwsh
-        run: |
-          $f = 'crates/tizen-sim-core/data/engines.toml'
-          $t = Get-Content $f -Raw
-          $r = [regex]'(?m)^gpu_compositing = false'
-          Set-Content $f $r.Replace($t, "gpu_compositing = false`nsandbox = false", 1) -NoNewline
-          Get-Content $f | Select-Object -Skip 17 -First 11
-      - if: matrix.scope == 'avplay-nosandbox'
-        run: cargo test -p tizen-sim-core --no-run
-      - if: matrix.scope == 'avplay-nosandbox'
-        shell: pwsh
+      - shell: pwsh
+        run: .github/scripts/acl-m47.ps1
+      - run: cargo test -p tizen-sim-core --no-run
+      - shell: pwsh
         env:
           TIZEN_SIM_TEST_PROFILE: "3.0"
           SCOPE: avplay
