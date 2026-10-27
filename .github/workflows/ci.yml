@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scope: [probe, avplay-nosandbox]
+        scope: [avplay-nosandbox]
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
@@ -38,8 +38,8 @@ jobs:
         run: |
           $f = 'crates/tizen-sim-core/data/engines.toml'
           $t = Get-Content $f -Raw
-          $i = $t.IndexOf('gpu_compositing = false')
-          Set-Content $f ($t.Insert($i, "sandbox = false`n")) -NoNewline
+          $r = [regex]'(?m)^gpu_compositing = false'
+          Set-Content $f $r.Replace($t, "gpu_compositing = false`nsandbox = false", 1) -NoNewline
           Get-Content $f | Select-Object -Skip 17 -First 11
       - if: matrix.scope == 'avplay-nosandbox'
         run: cargo test -p tizen-sim-core --no-run
