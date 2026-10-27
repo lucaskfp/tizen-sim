@@ -9,7 +9,7 @@ $p = Start-Process $exe -ArgumentList @('--no-first-run', '--disable-gpu-composi
 Start-Sleep 20
 Write-Host "[DEBUG-157] children=$(@(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)").Count) alive=$(-not $p.HasExited)"
 if ($cdb) {
-  & $cdb.FullName -p $p.Id -y 'srv*C:\symbols*https://msdl.microsoft.com/download/symbols' -c '.reload /f ntdll.dll kernel32.dll kernelbase.dll user32.dll; ~*kv 30; q' 2>&1 |
+  & $cdb.FullName -p $p.Id -y 'srv*C:\symbols*https://msdl.microsoft.com/download/symbols' -c '.reload; ~*kb 25; q' 2>&1 |
     Tee-Object hang-out/stacks.txt | Select-String -Pattern '^\s*\.?\s*\d+\s+Id:|ntdll!|KERNELBASE!|USER32!|kernel32!' |
     Select-Object -First 120 | ForEach-Object { "[DEBUG-157] $_" }
 }
