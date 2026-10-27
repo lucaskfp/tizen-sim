@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scope: [acl]
+        scope: [stack]
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
@@ -31,13 +31,7 @@ jobs:
       - shell: pwsh
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
       - shell: pwsh
-        run: .github/scripts/acl-m47.ps1
-      - run: cargo test -p tizen-sim-core --no-run
-      - shell: pwsh
-        env:
-          TIZEN_SIM_TEST_PROFILE: "3.0"
-          SCOPE: avplay
-        run: .github/scripts/hang-watchdog.ps1
+        run: .github/scripts/stack-m47.ps1
       - if: always()
         uses: actions/upload-artifact@v4
         with:
