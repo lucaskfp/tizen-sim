@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scope: [avplay, core]
+        scope: [probe, avplay-nosandbox]
     runs-on: windows-latest
     timeout-minutes: 50
     steps:
@@ -30,11 +30,24 @@ jobs:
           key: engines-${{ runner.os }}-${{ hashFiles('crates/tizen-sim-core/data/engines.toml') }}
       - shell: pwsh
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
-      - run: cargo test -p tizen-sim-core --no-run
-      - shell: pwsh
+      - if: matrix.scope == 'probe'
+        shell: pwsh
+        run: .github/scripts/probe-m47.ps1
+      - if: matrix.scope == 'avplay-nosandbox'
+        shell: pwsh
+        run: |
+          $f = 'crates/tizen-sim-core/data/engines.toml'
+          $t = Get-Content $f -Raw
+          $i = $t.IndexOf('gpu_compositing = false')
+          Set-Content $f ($t.Insert($i, "sandbox = false`n")) -NoNewline
+          Get-Content $f | Select-Object -Skip 17 -First 11
+      - if: matrix.scope == 'avplay-nosandbox'
+        run: cargo test -p tizen-sim-core --no-run
+      - if: matrix.scope == 'avplay-nosandbox'
+        shell: pwsh
         env:
           TIZEN_SIM_TEST_PROFILE: "3.0"
-          SCOPE: ${{ matrix.scope }}
+          SCOPE: avplay
         run: .github/scripts/hang-watchdog.ps1
       - if: always()
         uses: actions/upload-artifact@v4
