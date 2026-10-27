@@ -89,16 +89,19 @@ jobs:
         env:
           TIZEN_SIM_TEST_HEADED: "1"
       # The Session suite again on the oldest Version Profile's Engine (M47).
-      # Its Linux build runs in `test-m47-linux`.
+      # Its Linux build runs in `test-m47-linux`. On these runners M47's
+      # sandbox keeps it from starting a renderer, so it runs without (#157).
       - if: runner.os == 'Windows'
         run: cargo test -p tizen-sim-core
         env:
           TIZEN_SIM_TEST_PROFILE: "3.0"
+          TIZEN_SIM_NO_SANDBOX: "1"
       # M47's window embedded in the GUI (#59).
       - if: runner.os == 'Windows'
         run: cargo test -p tizen-sim-gui --test embedding
         env:
           TIZEN_SIM_TEST_PROFILE: "3.0"
+          TIZEN_SIM_NO_SANDBOX: "1"
 
   # The Session suite on the M47 Linux Engine, which links GConf: Ubuntu
   # dropped it in 24.04, so this runs on 22.04 (docs/linux.md).
