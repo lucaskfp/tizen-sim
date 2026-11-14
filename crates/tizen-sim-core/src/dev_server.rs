@@ -237,17 +237,14 @@ async fn serve_app_file(state: &ServerState, root: &Path, request: Request) -> R
         add_csp(state, response.headers_mut());
         return response;
     }
-    match ServeDir::new(root).oneshot(request).await {
-        // Revalidate every time, so a hot reload never runs a stale file.
-        Ok(mut response) => {
-            response.headers_mut().insert(
-                header::CACHE_CONTROL,
-                header::HeaderValue::from_static("no-cache"),
-            );
-            response.into_response()
-        }
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
-    }
+    // ServeDir reports its own I/O errors as responses, so oneshot is infallible.
+    let Ok(mut response) = ServeDir::new(root).oneshot(request).await;
+    // Revalidate every time, so a hot reload never runs a stale file.
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    response.into_response()
 }
 
 /// The CSP headers for a server at `addr`, letting its Shims through.
